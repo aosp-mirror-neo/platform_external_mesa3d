@@ -1,24 +1,6 @@
 """
-Copyright © 2024 Google, Inc.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the "Software"),
-to deal in the Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice (including the next
-paragraph) shall be included in all copies or substantial portions of the
-Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
-THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+Copyright 2024 Google LLC
+SPDX-License-Identifier: MIT
 """
 
 import os
@@ -26,122 +8,95 @@ import meson_impl as impl
 import tomllib
 import re
 
+from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
+
+from meson_build_state import *
+
+jinja_env = Environment(
+    loader=FileSystemLoader(Path(__file__).parent.resolve() / 'templates/')
+)
 
 # A map that holds the build-system to build file
 # Keep the keys lower-case for non-case sensitivity
 OUTPUT_FILES = {'soong': r'Android.bp', 'bazel': r'BUILD.bazel'}
 
 
-class ProjectConfig:
-    """
-    Class that represents a singular project_config within aosp.toml/fuchsia.toml
-    in python objects. There are multiple project_config within each .toml
-    file
-    """
+def generate_build_file(translator, build_type: str):
+    defaults_gen = jinja_env.get_template('defaults/all_defaults.txt')
+    defaults = defaults_gen.render()
+    # Write our manually defined defaults
+    with open(OUTPUT_FILES[build_type], 'w') as file:
+        if build_type == 'soong':
+            file.write(defaults)
+        path = build_type + '/'
+        # Render all static libraries
+        static_libs_template = jinja_env.get_template(path + 'static_library.txt')
+        for static_lib in translator.meson_state.static_libraries:
+            if static_lib.library_type is LibraryType.LibraryShared:
+                static_libs_template = jinja_env.get_template(
+                    path + 'shared_library.txt'
+                )
+                print(static_lib)
+            cc_lib = static_libs_template.render(
+                name=static_lib.name,
+                host_supported='false',  # TODO(bpnguyen): Fix hardcoded host_supported
+                srcs=static_lib.srcs,
+                hdrs=static_lib.generated_headers,
+                generated_headers=static_lib.generated_headers,
+                generated_sources=static_lib.generated_sources,
+                copts=static_lib.copts,
+                c_std_val=static_lib.cstd,
+                cpp_std_val=static_lib.cpp_std,
+                cflags=static_lib.conlyflags,
+                cppflags=static_lib.cppflags,
+                include_directories=static_lib.local_include_dirs,
+                static_libs=static_lib.static_libs,
+                whole_static_libs=static_lib.whole_static_libs,
+                shared_libs=static_lib.shared_libs,
+                header_libs=static_lib.header_libs,
+                target_compatible_with=static_lib.target_compatible_with,
+                deps=static_lib.deps,
+            )
+            # Set the template back to static by default
+            if static_lib.library_type is LibraryType.LibraryShared:
+                static_libs_template = jinja_env.get_template(
+                    path + 'static_library.txt'
+                )
+            file.write(cc_lib)
 
-    def __init__(self):
-        self._build: str = ''  # Global across all configs
-        self._name: str = ''  # name of this config
-        # project_config.host_machine
-        self._cpu_family: str = ''
-        self._cpu: str = ''
-        self._host_machine: str = ''
-        self._build_machine: str = ''
-        # project_config.meson_options
-        self._meson_options: dict[str, int | str] = {}
-        # project_config.header_not_supported
-        self._headers_not_supported: list[str] = []
-        # project_config.symbol_not_supported
-        self._symbols_not_supported: list[str] = []
-        # project_config.function_not_supported
-        self._functions_not_supported: list[str] = []
-        # project_config.link_not_supported
-        self._links_not_supported: list[str] = []
-        # project_config.ext_dependencies
-        self._ext_dependencies: dict[str, list[dict[str, str | int]]] = {}
-        # Example structure for ext_dependencies
-        # {
-        #   zlib = [
-        #       {
-        #           'target_name': '@zlib//:zlib',
-        #           'target_type': 2
-        #       },
-        #       ...
-        #   ]
+        # Render genrules / custom targets
+        custom_target_template = jinja_env.get_template(path + 'genrule.txt')
+        for custom_target in translator.meson_state.custom_targets:
+            genrule = custom_target_template.render(
+                name=custom_target.name,
+                srcs=custom_target.srcs,
+                outs=custom_target.out,
+                tools=custom_target.tools,
+                export=len(custom_target.export_include_dirs) > 0,
+                export_include_dirs=custom_target.export_include_dirs,
+                cmd=custom_target.cmd,
+            )
+            file.write(genrule)
 
-    @staticmethod
-    def create_project_config(build, **kwargs):
-        project_config = ProjectConfig()
-        project_config._build = kwargs.get(build)  # Global across all configs
-        project_config._name = kwargs.get('name')  # name of this config
-        project_config._cpu_family = kwargs.get('host_machine').get('cpu_family')
-        project_config._cpu = kwargs.get('host_machine').get('cpu')
-        project_config._host_machine = kwargs.get('host_machine').get('host_machine')
-        project_config._build_machine = kwargs.get('host_machine').get('build_machine')
-        project_config._meson_options = kwargs.get('meson_options')
-        project_config._headers_not_supported = kwargs.get('header_not_supported').get(
-            'headers'
-        )
-        project_config._symbols_not_supported = kwargs.get('symbol_not_supported').get(
-            'symbols'
-        )
-        project_config._functions_not_supported = kwargs.get(
-            'function_not_supported'
-        ).get('functions')
-        project_config._links_not_supported = kwargs.get('link_not_supported').get(
-            'links'
-        )
-        project_config._ext_dependencies = kwargs.get('ext_dependencies')
-        return project_config
+        # python binary hosts
+        py_binary_host_template = jinja_env.get_template(path + 'py_binary.txt')
+        for py_binary in translator.meson_state.custom_py_targets:
+            py_binary_render = py_binary_host_template.render(
+                name=py_binary.name,
+                main=py_binary.main,
+                srcs=py_binary.srcs,
+                imports=py_binary.imports,
+            )
+            file.write(py_binary_render)
 
-    @property
-    def build(self):
-        return self._build
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def cpu(self):
-        return self._cpu
-
-    @property
-    def cpu_family(self):
-        return self._cpu_family
-
-    @property
-    def host_machine(self):
-        return self._host_machine
-
-    @property
-    def build_machine(self):
-        return self._build_machine
-
-    @property
-    def meson_options(self):
-        return self._meson_options
-
-    @property
-    def headers_not_supported(self):
-        return self._headers_not_supported
-
-    @property
-    def symbols_not_supported(self):
-        return self._symbols_not_supported
-
-    @property
-    def functions_not_supported(self):
-        return self._functions_not_supported
-
-    @property
-    def links_not_supported(self):
-        return self._links_not_supported
-
-    @property
-    def ext_dependencies(self):
-        return self._ext_dependencies
+        include_dir_template = jinja_env.get_template(path + 'include_directories.txt')
+        for include_dir in translator.meson_state.include_dirs:
+            include_dir_render = include_dir_template.render(
+                name=include_dir.name,
+                hdrs=include_dir.dirs,
+            )
+            file.write(include_dir_render)
 
 
 class SoongGenerator(impl.Compiler):
@@ -177,6 +132,14 @@ class SoongGenerator(impl.Compiler):
         result = self.is_link_supported(name)
         print("links '%s': %s" % (name, str(result)))
         return result
+
+    def generate(self, translator):
+        """
+        Generates a Soong valid build file
+        :return: None
+        """
+        # Render all the defaults to the file first.
+        generate_build_file(translator, 'soong')
 
 
 class BazelGenerator(impl.Compiler):
@@ -238,9 +201,22 @@ class BazelGenerator(impl.Compiler):
         print(f"links '{name}': {result}")
         return result
 
+    def generate(self, translator):
+        generate_build_file(translator, 'bazel')
+
 
 class BazelPkgConfigModule(impl.PkgConfigModule):
-    def generate(self, lib, name='', description='', extra_cflags=None):
+    def generate(
+        self,
+        lib,
+        name='',
+        description='',
+        extra_cflags=None,
+        filebase='',
+        version='',
+        libraries=None,
+        libraries_private=None,
+    ):
         if extra_cflags is None:
             extra_cflags = []
         impl.fprint('# package library')
@@ -265,7 +241,9 @@ class MesonTranslator:
         self._generator = None
         self._config_file = None
         self._build = ''
+        # configs and meson_project_states are ordered with each other.
         self._configs: list[ProjectConfig] = []
+        self._meson_project_states: list[MesonProjectState] = []
         # TODO(357080225): Fix the use hardcoded state 0
         self._state = 0  # index of self._configs
 
@@ -274,7 +252,9 @@ class MesonTranslator:
         print('CONFIG:', self._config_file)
         self._init_metadata()
         _generator = (
-            SoongGenerator(self.config.cpu_family) if self._build.lower() == 'soong' else BazelGenerator(self.config.cpu_family)
+            SoongGenerator(self.config.cpu_family)
+            if self._build.lower() == 'soong'
+            else BazelGenerator(self.config.cpu_family)
         )
         self._generator: impl.Compiler = _generator
         return self
@@ -306,6 +286,10 @@ class MesonTranslator:
         """
         return self._configs[self._state]
 
+    @property
+    def meson_state(self):
+        return self._meson_project_states[self._state]
+
     def is_soong(self):
         return self._build.lower() == 'soong'
 
@@ -330,6 +314,7 @@ class MesonTranslator:
                 self._configs.append(
                     ProjectConfig.create_project_config(self._build, **config)
                 )
+                self._meson_project_states.append(MesonProjectState())
 
 
 # Declares an empty attribute data class
@@ -349,10 +334,6 @@ def open_output_file():
 
 def close_output_file():
     impl.close_output_file()
-
-
-def load_config_file():
-    impl.load_config_file(meson_translator.config_file)
 
 
 def add_subdirs_to_set(dir_, dir_set):
@@ -390,23 +371,15 @@ def include_directories(*paths, is_system=False):
             if dir_ in paths_needing_two_levels:
                 add_subdirs_to_set(dir_, dir_set)
 
-        impl.fprint('# header library')
-        impl.fprint('cc_library(')
-        impl.fprint('  name = "%s",' % name)
-        impl.fprint('  hdrs = []')
-        for dir_ in dir_set:
-            impl.fprint(
-                '    + glob(["%s"])' % os.path.normpath(os.path.join(dir_, '*.h'))
-            )
-            # C files included because...
-            impl.fprint(
-                '    + glob(["%s"])' % os.path.normpath(os.path.join(dir_, '*.c'))
-            )
-        impl.fprint('  ,')
-        impl.fprint('  visibility = [ "//visibility:public" ],')
-        impl.fprint(')')
-        _gIncludeDirectories[name] = impl.IncludeDirectories(name, dirs)
+        include_dir = IncludeDirectories()
+        include_dir.name = name
 
+        for dir_ in dir_set:
+            include_dir.dirs.append(os.path.normpath(os.path.join(dir_, '*.h')))
+            include_dir.dirs.append(os.path.normpath(os.path.join(dir_, '*.c')))
+        include_dir.visibility.append('//visibility:public')
+        _gIncludeDirectories[name] = impl.IncludeDirectories(name, dirs)
+        meson_translator.meson_state.include_dirs.append(include_dir)
     return _gIncludeDirectories[name]
 
 
@@ -419,7 +392,9 @@ def module_import(name: str):
         return impl.PkgConfigModule()
     if name == 'pkgconfig' and meson_translator.host_machine.lower() == 'linux':
         return impl.PkgConfigModule()
-    exit(f'Unhandled module: "{name}" for host machine: "{meson_translator.host_machine}"')
+    exit(
+        f'Unhandled module: "{name}" for host machine: "{meson_translator.host_machine}"'
+    )
 
 
 def load_dependencies():
@@ -503,6 +478,7 @@ def static_library(
         link_whole=link_whole,
         builtin_type_name='cc_library_static',
         static=meson_translator.is_bazel(),
+        library_type=LibraryType.LibraryStatic,
     )
 
     return impl.StaticLibrary(target_name, link_with=link_with, link_whole=link_whole)
@@ -560,11 +536,13 @@ def _emit_builtin_target_fuchsia(
     include_directories=[],
     link_with=[],
     link_whole=[],
+    library_type=LibraryType.Library,
 ):
-    impl.fprint('cc_library(')
+    sl = StaticLibrary()
     target_name_so = target_name
     target_name = target_name if static else '_' + target_name
-    impl.fprint('  name = "%s",' % target_name)
+    sl.name = target_name
+    sl.library_type = library_type
 
     srcs = set()
     generated_sources = set()
@@ -628,12 +606,10 @@ def _emit_builtin_target_fuchsia(
     )
 
     has_c_files = False
-    impl.fprint('  srcs = [')
     for src in srcs:
         if src.endswith('.c'):
             has_c_files = True
-        impl.fprint('    "%s",' % src)
-    impl.fprint('  ],')
+        sl.srcs.append(src)
 
     # For Bazel to find headers in the "current area", we have to include
     # not just the headers in the relative dir, but also relative subdirs
@@ -650,40 +626,28 @@ def _emit_builtin_target_fuchsia(
             if 'meson.build' not in subdir_entries:
                 local_include_dirs.append(entry)
 
-    impl.fprint(
-        '  # hdrs are our files that might be included; listed here so Bazel will'
-        ' allow them to be included'
-    )
-    impl.fprint('  hdrs = [')
     for hdr in set(generated_header_files):
-        impl.fprint('    "%s",' % hdr)
-    impl.fprint('   ]')
+        sl.generated_headers.append(hdr)
     for hdr in local_include_dirs:
-        impl.fprint('    + glob(["%s"])' % os.path.normpath(os.path.join(hdr, '*.h')))
-
-    impl.fprint('  ,')
-
-    impl.fprint('  copts = [')
+        sl.local_include_dirs.append(os.path.normpath(os.path.join(hdr, '*.h')))
     # Needed for subdir sources
-    impl.fprint('    "-I %s",' % impl.get_relative_dir())
-    impl.fprint('    "-I $(GENDIR)/%s",' % impl.get_relative_dir())
+    sl.copts.append(f'-I {impl.get_relative_dir()}')
+    sl.copts.append(f'-I $(GENDIR)/{impl.get_relative_dir()}')
     for inc in include_directories:
         for dir in inc.dirs:
-            impl.fprint('    "-I %s",' % dir)
-            impl.fprint('    "-I $(GENDIR)/%s",' % dir)
+            sl.copts.append(f'-I {dir}')
+            sl.copts.append(f'-I $(GENDIR)/{dir}')
 
     if has_c_files:
         for arg in cflags:
             # Double escape double quotations
             arg = re.sub(r'"', '\\\\\\"', arg)
-            impl.fprint("    '%s'," % arg)
+            sl.copts.append(arg)
     else:
         for arg in cppflags:
             # Double escape double quotations
             arg = re.sub(r'"', '\\\\\\"', arg)
-            impl.fprint("    '%s'," % arg)
-
-    impl.fprint('  ],')
+            sl.copts.append(arg)
 
     # Ensure bazel deps are unique
     bazel_deps = set()
@@ -698,22 +662,20 @@ def _emit_builtin_target_fuchsia(
     for target in generated_sources:
         bazel_deps.add(target)
 
-    impl.fprint('  deps = [')
     for bdep in bazel_deps:
-        impl.fprint('    "%s",' % bdep)
-    impl.fprint('  ],')
+        sl.deps.append(bdep)
 
-    impl.fprint('  target_compatible_with = [ "@platforms//os:fuchsia" ],')
-    impl.fprint('  visibility = [ "//visibility:public" ],')
-    impl.fprint(')')
+    sl.target_compatible_with.append('@platforms//os:fuchsia')
+    sl.visibility.append('//visibility:public')
+
+    meson_translator.meson_state.static_libraries.append(sl)
 
     if not static:
-        impl.fprint('cc_shared_library(')
-        impl.fprint('  name = "%s",' % target_name_so)
-        impl.fprint('  deps = [')
-        impl.fprint('    "%s",' % target_name)
-        impl.fprint('  ],')
-        impl.fprint(')')
+        shared_sl = StaticLibrary()
+        shared_sl.library_type = LibraryType.LibraryShared
+        shared_sl.name = target_name_so
+        shared_sl.deps.append(target_name)
+        meson_translator.meson_state.static_libraries.append(shared_sl)
 
 
 # TODO(bpnguyen): Implement some bazel/soong parser that would merge
@@ -729,9 +691,11 @@ def _emit_builtin_target_android(
     link_whole=[],
     builtin_type_name='',
     static=False,
+    library_type=LibraryType.Library,
 ):
-    impl.fprint('%s {' % builtin_type_name)
-    impl.fprint('  name: "%s",' % target_name)
+    static_lib = StaticLibrary()
+    static_lib.name = target_name
+    static_lib.library_type = library_type
 
     srcs = set()
     generated_sources = set()
@@ -792,68 +756,46 @@ def _emit_builtin_target_android(
         impl.get_project_cppflags() + cpp_args
     )
 
-    impl.fprint('  srcs: [')
     for src in srcs:
         # Filter out header files
         if not src.endswith('.h'):
-            impl.fprint('    "%s",' % src)
-    impl.fprint('  ],')
-
-    impl.fprint('  generated_headers: [')
+            static_lib.srcs.append(src)
     for generated in generated_headers:
-        impl.fprint('    "%s",' % generated)
-    impl.fprint('  ],')
-
-    impl.fprint('  generated_sources: [')
+        static_lib.generated_headers.append(generated)
     for generated in generated_sources:
-        impl.fprint('    "%s",' % generated)
-    impl.fprint('  ],')
+        static_lib.generated_sources.append(generated)
 
     for arg in impl.get_project_options():
         if arg.name == 'c_std':
-            impl.fprint('  c_std: "%s",' % arg.value)
+            static_lib.cstd = arg.value
         elif arg.name == 'cpp_std':
-            impl.fprint('  cpp_std: "%s",' % arg.value)
+            static_lib.cpp_std = arg.value
 
-    impl.fprint('  conlyflags: [')
     for arg in cflags:
         # Escape double quotations
         arg = re.sub(r'"', '\\"', arg)
-        impl.fprint('    "%s",' % arg)
-    impl.fprint('  ],')
-    impl.fprint('  cppflags: [')
+        static_lib.conlyflags.append(arg)
     for arg in cppflags:
         # Escape double quotations
         arg = re.sub(r'"', '\\"', arg)
-        impl.fprint('    "%s",' % arg)
-    impl.fprint('  ],')
+        static_lib.cppflags.append(arg)
 
-    impl.fprint('  local_include_dirs: [')
     for inc in include_directories:
-        impl.fprint('    "%s",' % inc)
-    impl.fprint('  ],')
+        static_lib.local_include_dirs.append(inc)
 
-    impl.fprint('  static_libs: [')
     for lib in static_libs:
-        impl.fprint('    "%s",' % lib)
-    impl.fprint('  ],')
+        static_lib.static_libs.append(lib)
 
-    impl.fprint('  whole_static_libs: [')
     for lib in whole_static_libs:
-        impl.fprint('    "%s",' % lib)
-    impl.fprint('  ],')
+        static_lib.whole_static_libs.append(lib)
 
-    impl.fprint('  shared_libs: [')
     for lib in shared_libs:
-        impl.fprint('    "%s",' % lib)
-    impl.fprint('  ],')
+        static_lib.shared_libs.append(lib)
 
-    impl.fprint('  header_libs: [')
     for lib in header_libs:
-        impl.fprint('    "%s",' % lib)
-    impl.fprint('  ],')
+        static_lib.header_libs.append(lib)
 
-    impl.fprint('}')
+    meson_translator.meson_state.static_libraries.append(static_lib)
 
 
 def _emit_builtin_target(
@@ -867,6 +809,7 @@ def _emit_builtin_target(
     link_whole=[],
     builtin_type_name='',
     static=False,
+    library_type=LibraryType.Library,
 ):
     if meson_translator.is_bazel():
         _emit_builtin_target_fuchsia(
@@ -879,6 +822,7 @@ def _emit_builtin_target(
             link_with=link_with,
             link_whole=link_whole,
             static=static,
+            library_type=library_type,
         )
     else:  # meson_translator.is_soong()
         _emit_builtin_target_android(
@@ -891,6 +835,7 @@ def _emit_builtin_target(
             link_with=link_with,
             link_whole=link_whole,
             builtin_type_name=builtin_type_name,
+            library_type=library_type,
         )
 
 
@@ -954,6 +899,7 @@ def shared_library(
         link_with=link_with,
         link_whole=link_whole,
         builtin_type_name='cc_library_shared',
+        library_type=LibraryType.LibraryStatic,
     )
     return impl.SharedLibrary(target_name)
 
@@ -997,10 +943,12 @@ def _get_command_args(
     for command_item in command[1:]:
         if isinstance(command_item, list):
             for item in command_item:
-                assert type(item) is impl.File
-                args.append(
-                    _location_wrapper(item.name) if location_wrap else item.name
-                )
+                if type(item) is impl.File:
+                    args.append(
+                        _location_wrapper(item.name) if location_wrap else item.name
+                    )
+                elif type(item) is str:
+                    args.append(item)
             continue
 
         assert type(command_item) is str
@@ -1124,7 +1072,9 @@ def _process_wrapped_args_for_python(
     # ensure the script is in the list of sources even when it's used as the command directly.
     python_path += '`dirname $(location %s)`' % python_script
     # Also ensure that scripts generated by dependent custom targets can be imported.
-    if len(deps) > 0:
+    if type(deps) is impl.CustomTarget:
+        python_path += ':' + _get_python_path([deps])
+    if type(deps) is list:
         python_path += ':' + _get_python_path(deps)
     args.insert(0, python_path)
     return args
@@ -1182,40 +1132,17 @@ def custom_target(
     if python_script != '':
         python_script_target_name = target_name + '_' + os.path.basename(python_script)
         srcs = [python_script] + impl.get_list_of_relative_inputs(depend_files)
-        if meson_translator.is_soong():
-            impl.fprint('python_binary_host {')
-            impl.fprint('  name: "%s",' % python_script_target_name)
-            impl.fprint('  main: "%s",' % python_script)
-            impl.fprint('  srcs: [')
-            for src in srcs:
-                if src.endswith('.py'):
-                    impl.fprint('    "%s",' % src)
-            impl.fprint('  ],')
-            impl.fprint('  libs: ["mako"],')
-            # For the PYTHONPATH to work in our genrules command, we need the python interpreter,
-            # not a compiled binary, so disable embedded_launcher.
-            impl.fprint('  version: {')
-            impl.fprint('    py3: {')
-            impl.fprint('      embedded_launcher: false,')
-            impl.fprint('    },')
-            impl.fprint('  },')
-            impl.fprint('}')
-        else:  # is_bazel
-            impl.fprint('py_binary(')
-            impl.fprint('  name = "%s",' % python_script_target_name)
-            impl.fprint('  main = "%s",' % python_script)
-            impl.fprint('  srcs = [')
-            for src in set(srcs):
-                if src.endswith('.py'):
-                    impl.fprint('    "%s",' % src)
-            impl.fprint('  ],')
-            # So scripts can find other scripts
-            impl.fprint('  imports = [')
-            for src in set(srcs):
-                if src.endswith('.py'):
-                    impl.fprint('    "%s",' % os.path.dirname(src))
-            impl.fprint('  ],')
-            impl.fprint(')')
+        python_custom_target = PythonCustomTarget()
+        python_custom_target.name = python_script_target_name
+        python_custom_target.main = python_script
+        for src in srcs:
+            if src.endswith('.py'):
+                python_custom_target.srcs.append(src)
+        for src in set(srcs):
+            if src.endswith('.py'):
+                python_custom_target.imports.append(os.path.dirname(src))
+
+        meson_translator.meson_state.custom_py_targets.append(python_custom_target)
 
     relative_inputs = impl.get_list_of_relative_inputs(input)
     # We use python_host_binary instead of calling python scripts directly;
@@ -1256,7 +1183,6 @@ def custom_target(
         custom_target_ = impl.CustomTarget(target_name, relative_outputs)
 
     program_command = program.command
-
     if meson_translator.is_soong():
         if program_command == 'bison':
             program_command_arg = 'M4=$(location m4) $(location bison)'
@@ -1291,43 +1217,34 @@ def custom_target(
                 command_line += ' > %s' % _location_wrapper(
                     impl.get_relative_gen_dir(output)
                 )
-
-            impl.fprint('genrule {')
-            impl.fprint('  name: "%s",' % custom_target_.target_name_h())
-            impl.fprint('  srcs: [')
+            ct = CustomTarget()
+            ct.name = custom_target_.target_name_h()
             for src in relative_inputs_set:
-                impl.fprint('    "%s",' % src)
+                ct.srcs.append(src)
             for dep in depends:
                 assert type(dep) is impl.CustomTarget
-                impl.fprint('    ":%s",' % dep.target_name())
-            impl.fprint('  ],')
-            impl.fprint('  out: [')
+                ct.srcs.append(':' + dep.target_name())
             for out in relative_outputs:
                 if _is_source(out):
                     out += obfuscate_suffix
-                    impl.fprint('    "%s",' % out)
                     # The scripts may still write to the assumed .c file, ensure the obfuscated
                     # file exists
                     command_line += (
                         "; echo '//nothing to see here' > " + _location_wrapper(out)
                     )
-                else:
-                    impl.fprint('    "%s",' % out)
-            impl.fprint('  ],')
-            impl.fprint('  tools: [')
+                ct.out.append(out)
             if python_script_target_name != '':
-                impl.fprint('    "%s",' % python_script_target_name)
-            if program_command == 'bison' or program_command == 'flex':
-                impl.fprint('    "%s",' % 'm4')
-                impl.fprint('    "%s",' % program_command)
-            impl.fprint('  ],')
-            impl.fprint('  export_include_dirs: [')
-            for dir in _get_export_include_dirs():
-                impl.fprint('    "%s",' % dir)
-            impl.fprint('  ],')
-            impl.fprint('  cmd: "%s"' % command_line)
-            impl.fprint('}')
+                ct.tools.append(python_script_target_name)
 
+            if program_command == 'bison' or program_command == 'flex':
+                ct.tools.append('m4')
+                ct.tools.append(program_command)
+
+            for dir in _get_export_include_dirs():
+                ct.export_include_dirs.append(dir)
+
+            ct.cmd = command_line
+            meson_translator.meson_state.custom_targets.append(ct)
             # Make a rule for only the sources
             obfuscate_suffix = '.dummy.c'
             wrapped_args = program_args + _get_command_args(
@@ -1354,37 +1271,30 @@ def custom_target(
             # on having --out-h (like vk_entrypoints_gen.py). When Soong depends on this genrule
             # it'll insist on compiling all the outputs, so we replace the content of all header
             # outputs.
-            impl.fprint('genrule {')
-            impl.fprint('  name: "%s",' % custom_target_.target_name_c())
-            impl.fprint('  srcs: [')
+            ct_ = CustomTarget()
+            ct_.name = custom_target_.target_name_c()
+
             for src in relative_inputs_set:
-                impl.fprint('    "%s",' % src)
+                ct_.srcs.append(src)
             for dep in depends:
                 assert type(dep) is impl.CustomTarget
-                impl.fprint('    ":%s",' % dep.target_name())
-            impl.fprint('  ],')
-            impl.fprint('  out: [')
+                ct_.srcs.append(':' + dep.target_name())
             for out in relative_outputs:
                 if _is_header(out):
                     out += obfuscate_suffix
-                    impl.fprint('    "%s",' % out)
+                    ct_.out.append(out)
                     # Remove the content because Soong will compile this dummy source file
                     command_line += (
                         "; echo '//nothing to see here' > " + _location_wrapper(out)
                     )
-                else:
-                    impl.fprint('    "%s",' % out)
-            impl.fprint('  ],')
-            impl.fprint('  tools: [')
+                ct_.out.append(out)
             if python_script_target_name != '':
-                impl.fprint('    "%s",' % python_script_target_name)
+                ct_.tools.append(python_script_target_name)
             if program_command == 'bison' or program_command == 'flex':
-                impl.fprint('    "%s",' % 'm4')
-                impl.fprint('    "%s",' % program_command)
-            impl.fprint('  ],')
-            impl.fprint('  cmd: "%s"' % command_line)
-            impl.fprint('}')
-
+                ct.tools.append('m4')
+                ct.tools.append(program_command)
+            ct_.cmd = command_line
+            meson_translator.meson_state.custom_targets.append(ct_)
             return custom_target_
         else:
             wrapped_args = program_args + _get_command_args(
@@ -1400,34 +1310,24 @@ def custom_target(
                 command_line += ' > %s' % _location_wrapper(
                     impl.get_relative_gen_dir(output)
                 )
-
-            impl.fprint('genrule {')
-            impl.fprint('  name: "%s",' % custom_target_.target_name())
-            impl.fprint('  srcs: [')
+            ct = CustomTarget()
+            ct.name = custom_target_.target_name()
             for src in relative_inputs_set:
-                impl.fprint('    "%s",' % src)
+                ct.srcs.append(src)
             for dep in depends:
                 assert type(dep) is impl.CustomTarget
-                impl.fprint('    ":%s",' % dep.target_name())
-            impl.fprint('  ],')
-            impl.fprint('  out: [')
+                ct.srcs.append(':' + dep.target_name())
             for out in relative_outputs:
-                impl.fprint('    "%s",' % out)
-            impl.fprint('  ],')
-            impl.fprint('  tools: [')
+                ct.out.append(out)
             if python_script_target_name != '':
-                impl.fprint('    "%s",' % python_script_target_name)
+                ct.tools.append(python_script_target_name)
             if program_command == 'bison' or program_command == 'flex':
-                impl.fprint('    "%s",' % 'm4')
-                impl.fprint('    "%s",' % program_command)
-            impl.fprint('  ],')
-            impl.fprint('  export_include_dirs: [')
+                ct.tools.append('m4')
+                ct.tools.append(program_command)
             for dir_ in _get_export_include_dirs():
-                impl.fprint('    "%s",' % dir_)
-            impl.fprint('  ],')
-            impl.fprint('  cmd: "%s"' % command_line)
-            impl.fprint('}')
-        # TODO(bpnguyen): implement fuchsia logic below
+                ct.export_include_dirs.append(dir_)
+            ct.cmd = command_line
+            meson_translator.meson_state.custom_targets.append(ct)
     else:  # is_bazel
         if program_command.endswith('.py'):
             program_command_arg = _location_wrapper(program_command)
@@ -1450,22 +1350,18 @@ def custom_target(
                 impl.get_relative_gen_dir(output)
             )
 
-        impl.fprint('genrule(')
-        impl.fprint('  name = "%s",' % custom_target_.target_name())
-        impl.fprint('  srcs = [')
+        ct = CustomTarget()
+        ct.name = custom_target_.target_name()
         for src in set(relative_inputs):
-            impl.fprint('    "%s",' % src)
+            ct.srcs.append(src)
         for dep in depends:
             assert type(dep) is impl.CustomTarget
-            impl.fprint('    ":%s",' % dep.target_name())
-        impl.fprint('  ],')
-        impl.fprint('  outs = [')
+            ct.srcs.append(dep.target_name())
         for out in set(relative_outputs):
-            impl.fprint('    "%s",' % out)
-        impl.fprint('  ],')
+            ct.out.append(out)
         if python_script_target_name != '':
-            impl.fprint('  tools = [ "%s" ],' % python_script_target_name)
-        impl.fprint('  cmd = "%s"' % command_line)
-        impl.fprint(')')
+            ct.tools.append(python_script_target_name)
+        ct.cmd = command_line
+        meson_translator.meson_state.custom_targets.append(ct)
 
     return custom_target_

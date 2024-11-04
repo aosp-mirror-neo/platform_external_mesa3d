@@ -510,7 +510,17 @@ class Compiler(ABC):
 
 
 class PkgConfigModule:
-    def generate(self, lib, name='', description='', extra_cflags=None):
+    def generate(
+        self,
+        lib,
+        name='',
+        description='',
+        extra_cflags=None,
+        filebase='',
+        version='',
+        libraries=None,
+        libraries_private=None,
+    ):
         pass
 
 
@@ -651,7 +661,7 @@ def dependency(*names, required=True, version=''):
                 version=version,
                 found=True,
             )
-
+        # TODO(bpnguyen): Move these hardcoded dependencies to a global config
         if (
             name == 'backtrace'
             or name == 'curses'
@@ -669,6 +679,7 @@ def dependency(*names, required=True, version=''):
             or name == 'lua54'
             or name == 'valgrind'
             or name == 'wayland-scanner'
+            or name == 'SPIRV-Tools'
         ):
             return Dependency(name, version, found=False)
 
