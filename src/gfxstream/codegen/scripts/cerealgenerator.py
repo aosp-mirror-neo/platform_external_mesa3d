@@ -48,6 +48,7 @@ SUPPORTED_FEATURES = [
     "VK_KHR_shader_subgroup_extended_types",
     "VK_EXT_provoking_vertex",
     "VK_EXT_line_rasterization",
+    "VK_KHR_line_rasterization",
     "VK_EXT_transform_feedback",
     "VK_EXT_primitive_topology_list_restart",
     "VK_EXT_index_type_uint8",
@@ -234,7 +235,8 @@ def banner_command(argv):
        paths removed."""
 
     def makePosixRelative(someArg):
-        if os.path.exists(someArg):
+        # Do not use relative for /tmp/ to avoid effects of checkout location
+        if os.path.exists(someArg) and someArg != "/tmp/":
             return str(PurePosixPath(Path(os.path.relpath(someArg))))
         return someArg
 
