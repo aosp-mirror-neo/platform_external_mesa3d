@@ -642,10 +642,16 @@ custom_decodes = {
     "vkBindBufferMemory2KHR" : emit_global_state_wrapped_decoding,
 
     "vkCreateDevice" : emit_global_state_wrapped_decoding,
-    "vkGetDeviceQueue" : emit_global_state_wrapped_decoding,
     "vkDestroyDevice" : emit_global_state_wrapped_decoding,
 
+    "vkGetDeviceQueue" : emit_global_state_wrapped_decoding,
     "vkGetDeviceQueue2" : emit_global_state_wrapped_decoding,
+
+    "vkGetPhysicalDeviceQueueFamilyProperties" : emit_global_state_wrapped_decoding,
+    "vkGetPhysicalDeviceQueueFamilyProperties2" : emit_global_state_wrapped_decoding,
+
+    "vkQueueBindSparse" : emit_global_state_wrapped_decoding,
+    "vkQueuePresentKHR" : emit_global_state_wrapped_decoding,
 
     "vkBindImageMemory" : emit_global_state_wrapped_decoding,
     "vkBindImageMemory2" : emit_global_state_wrapped_decoding,
@@ -957,6 +963,7 @@ size_t VkDecoder::Impl::decode(void* buf, size_t len, IOStream* ioStream,
         self.cgen.endBlock() # switch stmt
 
         self.cgen.stmt("ptr += packetLen")
+        self.cgen.stmt("vkStream->clearPool()")
         self.cgen.endBlock() # while loop
 
         self.cgen.beginIf("m_forSnapshotLoad")
