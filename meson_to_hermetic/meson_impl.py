@@ -510,7 +510,17 @@ class Compiler(ABC):
 
 
 class PkgConfigModule:
-    def generate(self, lib, name='', description='', extra_cflags=None):
+    def generate(
+        self,
+        lib,
+        name='',
+        description='',
+        extra_cflags=None,
+        filebase='',
+        version='',
+        libraries=None,
+        libraries_private=None,
+    ):
         pass
 
 
@@ -625,6 +635,14 @@ def load_dependencies(config):
     with open(config, 'rb') as f:
         data = tomllib.load(f)
         project_configs = data.get('project_config')
+        base_config = data.get('base_project_config')
+        # global dependencies
+        for dep_name, targets in base_config.get('ext_dependencies').items():
+            dep_targets = {
+                t.get('target_name'): t.get('target_type') for t in targets
+            }
+            external_dep[dep_name] = dep_targets
+        # project specific dependencies
         for project_config in project_configs:
             dependencies = project_config.get('ext_dependencies')
             for dep_name, targets in dependencies.items():
@@ -651,7 +669,7 @@ def dependency(*names, required=True, version=''):
                 version=version,
                 found=True,
             )
-
+        # TODO(bpnguyen): Move these hardcoded dependencies to a global config
         if (
             name == 'backtrace'
             or name == 'curses'
@@ -669,6 +687,7 @@ def dependency(*names, required=True, version=''):
             or name == 'lua54'
             or name == 'valgrind'
             or name == 'wayland-scanner'
+            or name == 'SPIRV-Tools'
         ):
             return Dependency(name, version, found=False)
 
