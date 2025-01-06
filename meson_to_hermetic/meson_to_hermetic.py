@@ -19,7 +19,7 @@ jinja_env = Environment(
 
 # A map that holds the build-system to build file
 # Keep the keys lower-case for non-case sensitivity
-OUTPUT_FILES = {'soong': r'Android.bp', 'bazel': r'BUILD.bazel'}
+OUTPUT_FILES = {'soong': r'Android_res.bp', 'bazel': r'BUILD.bazel'}
 
 
 def generate_build_file(translator, build_type: str):
@@ -37,7 +37,6 @@ def generate_build_file(translator, build_type: str):
                 static_libs_template = jinja_env.get_template(
                     path + 'shared_library.txt'
                 )
-                print(static_lib)
             cc_lib = static_libs_template.render(
                 name=static_lib.name,
                 host_supported='false',  # TODO(bpnguyen): Fix hardcoded host_supported
@@ -51,6 +50,7 @@ def generate_build_file(translator, build_type: str):
                 cflags=static_lib.conlyflags,
                 cppflags=static_lib.cppflags,
                 include_directories=static_lib.local_include_dirs,
+                system_include_directories=static_lib.system_include_dirs,
                 static_libs=static_lib.static_libs,
                 whole_static_libs=static_lib.whole_static_libs,
                 shared_libs=static_lib.shared_libs,
@@ -217,18 +217,14 @@ class BazelPkgConfigModule(impl.PkgConfigModule):
         libraries=None,
         libraries_private=None,
     ):
-        if extra_cflags is None:
-            extra_cflags = []
-        impl.fprint('# package library')
-        impl.fprint('cc_library(')
-        impl.fprint('  name = "%s",' % name)
         assert type(lib) is impl.StaticLibrary
-        impl.fprint('  deps = [ "%s" ],' % lib.target_name)
-        # This line tells Bazel to use -isystem for targets that depend on this one,
-        # which is needed for clients that include package headers with angle brackets.
-        impl.fprint('  includes = [ "." ],')
-        impl.fprint('  visibility = [ "//visibility:public" ],')
-        impl.fprint(')')
+        sl = StaticLibrary()
+        sl.name = name
+        sl.deps = lib.target_name
+        sl.system_include_dirs.append(".")
+        sl.visibility.append('//visibility:public')
+        meson_translator.meson_state.static_libraries.append(sl)
+
 
 
 class MesonTranslator:
@@ -281,9 +277,6 @@ class MesonTranslator:
 
     @property
     def config(self) -> ProjectConfig:
-        """
-        :return:
-        """
         return self._configs[self._state]
 
     @property
@@ -309,12 +302,35 @@ class MesonTranslator:
         with open(self._config_file, 'rb') as f:
             data = tomllib.load(f)
             self._build = data.get('build')
+            base_config = data.get('base_project_config')
+
             configs = data.get('project_config')
             for config in configs:
+                proj_config = ProjectConfig.create_project_config(self._build, **config)
                 self._configs.append(
-                    ProjectConfig.create_project_config(self._build, **config)
+                    proj_config
                 )
                 self._meson_project_states.append(MesonProjectState())
+
+            new_configs = []
+            # Handle Inheritance
+            for config in self._configs:
+                # Parent config, that contains shared attributes
+                base_proj_config = ProjectConfig.create_project_config(self._build, **base_config)
+                if not config.inherits_from:
+                    new_configs.append(config)
+                    continue
+                if config.inherits_from == 'base_project_config':
+                    new_configs.append(
+                        base_proj_config.extend(config).deepcopy()
+                    )
+                else:
+                    for proj_config in self._configs:
+                        if config.inherits_from == proj_config.name:
+                            new_configs.append(
+                                proj_config.extend(config).deepcopy()
+                            )
+            self._configs = new_configs
 
 
 # Declares an empty attribute data class
@@ -1135,7 +1151,7 @@ def custom_target(
         python_custom_target = PythonCustomTarget()
         python_custom_target.name = python_script_target_name
         python_custom_target.main = python_script
-        for src in srcs:
+        for src in set(srcs):
             if src.endswith('.py'):
                 python_custom_target.srcs.append(src)
         for src in set(srcs):

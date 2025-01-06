@@ -17,9 +17,17 @@ cc_library(
         + glob(["{{ include_dir }}"])
     {%- endfor %}
     ,
+    {# Tells Bazel to use -isystem for targets that depend on this one,
+       which is needed for clients that include package headers with angle brackets.
+    #}
+    includes = [
+    {%- for include_dir in system_include_directories %}
+        "{{ include_dir }}"
+    {%- endfor %}
+    ],
     copts = [
     {%- for copt in copts %}
-        "{{ copt }}",
+        '{{ copt }}',
     {%- endfor %}
     ],
     deps = [
@@ -33,4 +41,9 @@ cc_library(
     {%- endfor %}
     ],
     visibility = [ "//visibility:public" ],
+    {# Bazel doesn't seem to have a 'whole_static_libs'
+      option for targets that link against static libs;
+      workaround is to specify every static lib as alwaysLink
+    #}
+    alwayslink = True,
 )
