@@ -42,7 +42,9 @@
 #define GFXSTREAM_TRACE_DEFAULT_CATEGORY "gfxstream.default"
 
 PERFETTO_DEFINE_CATEGORIES(
-    perfetto::Category(GFXSTREAM_TRACE_DEFAULT_CATEGORY));
+    perfetto::Category(GFXSTREAM_TRACE_DEFAULT_CATEGORY)
+                       .SetDescription("Default events")
+                       .SetTags("default"));
 
 #endif // HAVE_PERFETTO
 
