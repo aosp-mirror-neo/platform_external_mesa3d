@@ -9,6 +9,7 @@ from pathlib import Path
 def main():
     parser = argparse.ArgumentParser(description="Build Meson project using AMC toolchain.")
     parser.add_argument("--build-config", required=True, help="Path to the build config file.")
+    parser.add_argument("--install-dir", help="Optional directory to copy build artifacts to.")
     parser.add_argument("meson_project_dir", help="Directory of the Meson project.")
     
     args = parser.parse_args()
@@ -23,6 +24,12 @@ def main():
     if not meson_project_dir.exists():
         print(f"Error: Directory '{meson_project_dir}' not found.")
         sys.exit(1)
+
+    if args.install_dir:
+        install_dir = Path(args.install_dir).resolve()
+        if not install_dir.exists():
+            print(f"Error: Install directory '{install_dir}' not found.")
+            sys.exit(1)
 
     # Set paths relative to this script
     script_dir = Path(__file__).resolve().parent
@@ -106,6 +113,25 @@ def main():
 
     print("--- Build complete ---")
     print(f"Output directory: {output_dir}")
+
+    if args.install_dir:
+        install_dir = Path(args.install_dir).resolve()
+        install_dir.mkdir(parents=True, exist_ok=True)
+        print(f"--- Copying artifacts to {install_dir} ---")
+
+        # Files to copy and their destination names (optional)
+        artifacts = [
+            (output_dir / "build" / "release" / "share" / "vulkan" / "icd.d" / "lvp_icd.x86_64.json", "lvp_icd.json"),
+            (output_dir / "build" / "release" / "lib" / "x86_64-linux-gnu" / "libvulkan_lvp.so", "libvulkan_lvp.so")
+        ]
+
+        for artifact_path, dest_name in artifacts:
+            if artifact_path.exists():
+                dest_path = install_dir / dest_name
+                print(f"Copying {artifact_path} to {dest_path}")
+                shutil.copy2(artifact_path, dest_path)
+            else:
+                print(f"Warning: Artifact {artifact_path} not found.")
 
 if __name__ == "__main__":
     main()
