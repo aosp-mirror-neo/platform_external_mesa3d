@@ -41,6 +41,10 @@
   },
   "platforms": {
     "linux-x64": {
+      "meson_options": {
+        "-Dcpp_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'",
+        "-Dc_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'"
+      },
       // binaries are a set of bazel targets for which we will create programs
       "binaries": {
           "python3": "@lavapipe_bazel_deps//:python3",
