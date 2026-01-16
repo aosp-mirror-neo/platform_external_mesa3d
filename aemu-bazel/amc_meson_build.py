@@ -4,7 +4,10 @@ import os
 import shutil
 import subprocess
 import sys
+import json
 from pathlib import Path
+
+VK_ICD_LIBPATH = "./libvulkan_lvp.so"
 
 def main():
     parser = argparse.ArgumentParser(description="Build Meson project using AMC toolchain.")
@@ -113,6 +116,24 @@ def main():
 
     print("--- Build complete ---")
     print(f"Output directory: {output_dir}")
+
+    # Post-process the ICD JSON file in the build output to use a relative path
+    # This ensures the modified version is copied if install_dir is provided.
+    icd_src_path = output_dir / "build" / "release" / "share" / "vulkan" / "icd.d" / "lvp_icd.x86_64.json"
+    if icd_src_path.exists():
+        print(f"--- Post-processing {icd_src_path} ---")
+        try:
+            with open(icd_src_path, "r") as f:
+                icd_data = json.load(f)
+
+            print(f"Updating library_path from '{icd_data.get('ICD', {}).get('library_path')}' to '{VK_ICD_LIBPATH}'")
+            icd_data["ICD"]["library_path"] = VK_ICD_LIBPATH
+
+            with open(icd_src_path, "w") as f:
+                json.dump(icd_data, f, indent=4)
+            print(f"Successfully updated {icd_src_path}")
+        except Exception as e:
+            print(f"Error post-processing {icd_src_path}: {e}")
 
     if args.install_dir:
         install_dir = Path(args.install_dir).resolve()
