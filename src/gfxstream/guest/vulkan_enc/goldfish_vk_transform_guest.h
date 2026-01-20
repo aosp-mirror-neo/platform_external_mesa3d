@@ -3007,6 +3007,30 @@ DEFINE_ALIAS_FUNCTION(transform_fromhost_VkDescriptorPoolInlineUniformBlockCreat
                       transform_fromhost_VkDescriptorPoolInlineUniformBlockCreateInfoEXT)
 
 #endif
+#ifdef VK_EXT_blend_operation_advanced
+void transform_tohost_VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT(
+    ResourceTracker* resourceTracker,
+    VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT(
+    ResourceTracker* resourceTracker,
+    VkPhysicalDeviceBlendOperationAdvancedFeaturesEXT* toTransform);
+
+void transform_tohost_VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT(
+    ResourceTracker* resourceTracker,
+    VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT(
+    ResourceTracker* resourceTracker,
+    VkPhysicalDeviceBlendOperationAdvancedPropertiesEXT* toTransform);
+
+void transform_tohost_VkPipelineColorBlendAdvancedStateCreateInfoEXT(
+    ResourceTracker* resourceTracker, VkPipelineColorBlendAdvancedStateCreateInfoEXT* toTransform);
+
+void transform_fromhost_VkPipelineColorBlendAdvancedStateCreateInfoEXT(
+    ResourceTracker* resourceTracker, VkPipelineColorBlendAdvancedStateCreateInfoEXT* toTransform);
+
+#endif
 #ifdef VK_EXT_image_drm_format_modifier
 void transform_tohost_VkDrmFormatModifierPropertiesEXT(
     ResourceTracker* resourceTracker, VkDrmFormatModifierPropertiesEXT* toTransform);
@@ -3482,6 +3506,20 @@ void transform_tohost_VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT(
 void transform_fromhost_VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT(
     ResourceTracker* resourceTracker,
     VkPhysicalDevicePrimitiveTopologyListRestartFeaturesEXT* toTransform);
+
+#endif
+#ifdef VK_EXT_frame_boundary
+void transform_tohost_VkPhysicalDeviceFrameBoundaryFeaturesEXT(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceFrameBoundaryFeaturesEXT* toTransform);
+
+void transform_fromhost_VkPhysicalDeviceFrameBoundaryFeaturesEXT(
+    ResourceTracker* resourceTracker, VkPhysicalDeviceFrameBoundaryFeaturesEXT* toTransform);
+
+void transform_tohost_VkFrameBoundaryEXT(ResourceTracker* resourceTracker,
+                                         VkFrameBoundaryEXT* toTransform);
+
+void transform_fromhost_VkFrameBoundaryEXT(ResourceTracker* resourceTracker,
+                                           VkFrameBoundaryEXT* toTransform);
 
 #endif
 #ifdef VK_EXT_extended_dynamic_state2
