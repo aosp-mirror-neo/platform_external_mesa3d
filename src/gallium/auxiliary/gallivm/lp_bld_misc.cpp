@@ -176,6 +176,51 @@ typedef llvm::RTDyldMemoryManager BaseMemoryManager;
 
 
 /*
+ * libunwind's __register_frame() and __unw_add_dynamic_fde() are strict
+ * and expect to be called for each FDE individually. If we pass the
+ * entire .eh_frame section (which starts with a CIE), libunwind will
+ * complain that "FDE is really a CIE".
+ *
+ * In theory, registering each FDE individually would work with both
+ * libgcc_s and libunwind's implementations, but we are limiting the
+ * scope of this change to specific platforms/builds where needed
+ * (e.g. Linux with bundled libunwind) via the USE_UNW_DYNAMIC_FDE macro.
+ */
+#ifdef USE_UNW_DYNAMIC_FDE
+/**
+ * This is a helper function that walks through an .eh_frame section
+ * and calls a callback for each FDE (Frame Description Entry) it finds.
+ *
+ * Logic adapted from LLVM's RegisterEHFrames.cpp.
+ */
+template <typename HandleFDEFn>
+static void walkLibunwindEHFrameSection(const uint8_t *Addr, size_t Size,
+                                        HandleFDEFn HandleFDE) {
+   const char *CurCFIRecord = reinterpret_cast<const char *>(Addr);
+   const char *End = CurCFIRecord + Size;
+   uint64_t RecordSize = *reinterpret_cast<const uint32_t *>(CurCFIRecord);
+
+   while (CurCFIRecord != End && RecordSize != 0) {
+      const char *OffsetField = CurCFIRecord + (RecordSize == 0xffffffff ? 12 : 4);
+      if (RecordSize == 0xffffffff)
+         RecordSize = *reinterpret_cast<const uint64_t *>(CurCFIRecord + 4) + 12;
+      else
+         RecordSize += 4;
+      uint32_t Offset = *reinterpret_cast<const uint32_t *>(OffsetField);
+
+      if (Offset != 0)
+         HandleFDE(reinterpret_cast<const uint8_t *>(CurCFIRecord), RecordSize);
+
+      CurCFIRecord += RecordSize;
+      if (CurCFIRecord >= End)
+         break;
+
+      RecordSize = *reinterpret_cast<const uint32_t *>(CurCFIRecord);
+   }
+}
+#endif
+
+/*
  * Delegating is tedious but the default manager class is hidden in an
  * anonymous namespace in LLVM, so we cannot just derive from it to change
  * its behavior.
@@ -206,7 +251,22 @@ class DelegatingJITMemoryManager : public BaseMemoryManager {
                                            IsReadOnly);
       }
       virtual void registerEHFrames(uint8_t *Addr, uint64_t LoadAddr, size_t Size) {
+#ifdef USE_UNW_DYNAMIC_FDE
+         /*
+          * libunwind's __register_frame() and __unw_add_dynamic_fde() are strict
+          * and expect to be called for each FDE individually. If we pass the
+          * entire .eh_frame section (which starts with a CIE), libunwind will
+          * complain that "FDE is really a CIE".
+          *
+          * To work around this, we parse the section and register only the FDEs.
+          */
+         walkLibunwindEHFrameSection(Addr, Size, [&](const uint8_t *Record, size_t RecordSize) {
+            uint64_t DynamicAddr = LoadAddr + (Record - Addr);
+            mgr()->registerEHFrames(const_cast<uint8_t *>(Record), DynamicAddr, RecordSize);
+         });
+#else
          mgr()->registerEHFrames(Addr, LoadAddr, Size);
+#endif
       }
       virtual void deregisterEHFrames() {
          mgr()->deregisterEHFrames();

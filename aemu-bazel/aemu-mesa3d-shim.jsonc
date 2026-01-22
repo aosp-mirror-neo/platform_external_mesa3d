@@ -1,0 +1,71 @@
+{
+  "shims": [
+    {
+      "target": ".*",
+      "shims": {
+        "restrict_to": "cc_library|cc_binary|cc_interface_binary",
+        // Our sysroot is too old so we need to introduce these
+        "+copts": [
+          // asprintf, vasprintf
+          "-Wno-implicit-function-declaration"
+        ]
+      }
+    }
+  ],
+  // These are the bazel mappings we are going to use for
+  // external dependencies. For every pkg config dependency
+  // you will need to provide a bazel target
+  "external_deps": {
+    "libdrm": [
+      "@libdrm//:drm"
+    ],
+    "zlib": [
+      "@zlib//:zlib"
+    ],
+    "x11-xcb": [
+      "@libx11//:libx11"
+    ],
+    "xcb": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-dri3": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-present": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-randr": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-shm": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-sync": [
+      "@libxcb//:libxcb"
+    ],
+    "xcb-xfixes": [
+      "@libxcb//:libxcb"
+    ],
+    "wayland-client": [
+      "@wayland//:wayland-client"
+    ],
+    "wayland-server": [
+      "@wayland//:wayland-server"
+    ],
+    "wayland-scanner": [
+      "@wayland//:wayland-scanner"
+    ],
+    "xrandr": [
+      "@libxrandr//:libxrandr"
+    ],
+    "xshmfence": [
+      "@libxshmfence//:xshmfence"
+    ]
+  },
+  // The actual set of targets you wish to generate bazel targets for.
+  // These are the targets that will be exported.
+  "export": [
+    "vulkan_lvp"
+  ],
+  "exclude": []
+}

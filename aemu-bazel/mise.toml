@@ -1,0 +1,56 @@
+# IMPORTANT (if using mise + vscode):
+# To allow vscode to see this file, you can symlink this to mise.local.toml in the root directory:
+# > ln sf mise.toml ../../../mise.local.toml
+[env]
+# The root of our bazel workspace
+BAZEL_ROOT = "{{config_root}}"
+'_'.path = [
+    "{{config_root}}/prebuilts/bazel/{% if os() == 'linux' %}linux-x86_64{% elif os() == 'macos' %}darwin-x86_64{% else %}windows-x86_64{% endif %}",
+    "{{config_root}}/prebuilts/clang/host/{% if os() == 'linux' %}linux-x86{% elif os() == 'macos' %}darwin-x86{% else %}windows-x86{% endif %}/{{ exec(command='jq -r .clang build/bazel/toolchains/tool_versions.json') }}/bin",
+    "$ANDROID_HOME/platform-tools/"
+]
+# DISPLAY = ":0"
+# VULKAN_SDK = "<path-to-your-vulkan-sdk>"
+
+############ BEGIN bazel commands ######################
+
+[tasks.bazel-clean]
+description = "Runs bazel clean --expunge"
+run = "cd $BAZEL_ROOT && bazel clean --expunge"
+
+############ END bazel commands ######################
+
+############ BEGIN mesa/lavapipe commands ######################
+
+[tasks.build-lavapipe-amc-meson]
+description = "Build libvulkan_lvp.so using meson + amc-generated toolchain"
+run = "cd $BAZEL_ROOT/third_party/mesa3d/aemu-bazel && python3 amc_meson_build.py --build-config aemu-mesa3d-build-config.jsonc --install-dir $BAZEL_ROOT/prebuilts/android-emulator-build/common/vulkan/linux-x86_64/icds .. 2>&1 | tee test-amc-meson.log"
+
+[tasks.run-vulkaninfo-lavapipe]
+description = "Run vulkaninfo from the vulkan sdk against the lavapipe library."
+env  = { VK_DRIVER_FILES = "./lvp_icd.json" }
+run = "cd $BAZEL_ROOT/prebuilts/android-emulator-build/common/vulkan/linux-x86_64/icds && $VULKAN_SDK/x86_64/bin/vulkaninfo"
+
+# generate_bazel_files.sh is not working yet.
+[tasks.gen-bazel-amc-lavapipe-amc]
+description = "Run generate_bazel_files.sh to generate bazel build files for mesa3d."
+run = "cd $BAZEL_ROOT/third_party/mesa3d/aemu-bazel && ./generate_bazel_files.sh 2>&1 | tee gen-bazel-amc-lavapipe-amc.log"
+
+# TODO: This should be a part of amc_meson_build.py
+[tasks.copy-lavapipe-deps-prebuilts]
+description = "Copy libvulkan_lvp.so deps to prebuilts"
+run = "cd $BAZEL_ROOT/prebuilts/android-emulator-build/common/vulkan/linux-x86_64/icds && cp $BAZEL_ROOT/bazel-out/k8-fastbuild/bin/external/libxcb+/libxcb-aemu.so . && ./update_runpath.sh"
+
+####### END mesa/lavapipe commands ######################
+
+############ BEGIN bazel gen commands ######################
+
+[tasks.gen-bazel-libdrm]
+description = "Generate bazel files for libdrm"
+run = "cd $BAZEL_ROOT/third_party/libdrm && aemu-bazel/generate_bazel_files.sh"
+
+[tasks.gen-bazel-wayland]
+description = "Generate bazel files for wayland"
+run = "cd $BAZEL_ROOT/third_party/wayland && aemu-bazel/generate_bazel_files.sh"
+
+############ END bazel gen commands ######################
