@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import json
+import platform
 from pathlib import Path
 
 VK_ICD_LIBPATH = "./libvulkan_lvp.so"
@@ -14,7 +15,7 @@ def main():
     parser.add_argument("--build-config", required=True, help="Path to the build config file.")
     parser.add_argument("--install-dir", help="Optional directory to copy build artifacts to.")
     parser.add_argument("meson_project_dir", help="Directory of the Meson project.")
-    
+
     args = parser.parse_args()
 
     build_config_path = Path(args.build_config).resolve()
@@ -78,16 +79,16 @@ def main():
     if not toolchain_dir.is_dir():
         print(f"Error: '{toolchain_dir}' directory not found after setup.")
         sys.exit(1)
-    
+
     print("--- Verification successful ---")
 
     # Step 2: Compile the Project with Ninja
     print("--- Compiling with ninja ---")
-    
+
     # Update PATH to include toolchain dir
     env = os.environ.copy()
     env["PATH"] = str(toolchain_dir) + os.pathsep + env["PATH"]
-    
+
     print(f"MY_PATH=[{env['PATH']}]")
 
     # Determine ninja executable name
@@ -96,7 +97,7 @@ def main():
 
     # The shell script runs `./ninja` from inside `toolchain_dir`.
     # We replicate this behavior.
-    
+
     try:
         # Build
         subprocess.check_call(
@@ -119,15 +120,42 @@ def main():
 
     # Post-process the ICD JSON file in the build output to use a relative path
     # This ensures the modified version is copied if install_dir is provided.
-    icd_src_path = output_dir / "build" / "release" / "share" / "vulkan" / "icd.d" / "lvp_icd.x86_64.json"
+
+    # Determine platform specific paths
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    if system == "darwin":
+        icd_filename_arch = "aarch64" if machine == "arm64" else "x86_64" # mac reports arm64
+        shared_lib_ext = ".dylib"
+        lib_subdir = ""
+    else:
+        # Linux assumption from original script
+        icd_filename_arch = "x86_64"
+        shared_lib_ext = ".so"
+        lib_subdir = "x86_64-linux-gnu"
+
+    icd_basename = f"lvp_icd.{icd_filename_arch}.json"
+    icd_src_path = output_dir / "build" / "release" / "share" / "vulkan" / "icd.d" / icd_basename
+
+    # Fallback if specific arch not found (maybe just lvp_icd.json?)
+    if not icd_src_path.exists():
+         # check for other likely names if needed, but logs showed lvp_icd.aarch64.json
+         pass
+
     if icd_src_path.exists():
         print(f"--- Post-processing {icd_src_path} ---")
         try:
             with open(icd_src_path, "r") as f:
                 icd_data = json.load(f)
 
-            print(f"Updating library_path from '{icd_data.get('ICD', {}).get('library_path')}' to '{VK_ICD_LIBPATH}'")
-            icd_data["ICD"]["library_path"] = VK_ICD_LIBPATH
+            # Check if this needs to vary by platform (dylib vs so)
+            target_lib_name = f"libvulkan_lvp{shared_lib_ext}"
+            # Original script forced ./libvulkan_lvp.so, let's respect that structure but use correct extension
+            target_lib_path = f"./{target_lib_name}"
+
+            print(f"Updating library_path from '{icd_data.get('ICD', {}).get('library_path')}' to '{target_lib_path}'")
+            icd_data["ICD"]["library_path"] = target_lib_path
 
             with open(icd_src_path, "w") as f:
                 json.dump(icd_data, f, indent=4)
@@ -140,10 +168,15 @@ def main():
         install_dir.mkdir(parents=True, exist_ok=True)
         print(f"--- Copying artifacts to {install_dir} ---")
 
-        # Files to copy and their destination names (optional)
+        lib_src_path = output_dir / "build" / "release" / "lib"
+        if lib_subdir:
+            lib_src_path = lib_src_path / lib_subdir
+
+        lib_src_path = lib_src_path / f"libvulkan_lvp{shared_lib_ext}"
+
         artifacts = [
-            (output_dir / "build" / "release" / "share" / "vulkan" / "icd.d" / "lvp_icd.x86_64.json", "lvp_icd.json"),
-            (output_dir / "build" / "release" / "lib" / "x86_64-linux-gnu" / "libvulkan_lvp.so", "libvulkan_lvp.so")
+            (icd_src_path, "lvp_icd.json"),
+            (lib_src_path, f"libvulkan_lvp{shared_lib_ext}")
         ]
 
         for artifact_path, dest_name in artifacts:
