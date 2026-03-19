@@ -600,9 +600,6 @@ cc_defaults {
     ],
     whole_static_libs: [
         "mesa_platform_virtgpu",
-        "platform_virtgpu_drm",
-        "libvirtgpu_kumquat_ffi",
-        "gfxstream_vulkan_mapper",
     ],
     shared_libs: [
         "libdrm",
@@ -640,8 +637,11 @@ cc_library_static {
     host_supported: true,
     whole_static_libs: [
         "platform_virtgpu",
-        "vulkan_util",
         "platform_virtgpu_kumquat",
+        "vulkan_util",
+        "platform_virtgpu_drm",
+        "libvirtgpu_kumquat_ffi",
+        "gfxstream_vulkan_mapper",
     ],
     shared_libs: [
         "libdrm",
