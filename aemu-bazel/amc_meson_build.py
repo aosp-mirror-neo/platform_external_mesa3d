@@ -8,8 +8,6 @@ import json
 import platform
 from pathlib import Path
 
-VK_ICD_LIBPATH = "./libvulkan_lvp.so"
-
 def main():
     parser = argparse.ArgumentParser(description="Build Meson project using AMC toolchain.")
     parser.add_argument("--build-config", required=True, help="Path to the build config file.")
@@ -163,29 +161,70 @@ def main():
         except Exception as e:
             print(f"Error post-processing {icd_src_path}: {e}")
 
+    # Copy artifacts if install_dir is specified
     if args.install_dir:
         install_dir = Path(args.install_dir).resolve()
         install_dir.mkdir(parents=True, exist_ok=True)
         print(f"--- Copying artifacts to {install_dir} ---")
 
-        lib_src_path = output_dir / "build" / "release" / "lib"
-        if lib_subdir:
-            lib_src_path = lib_src_path / lib_subdir
+        # Determine source lib directory
+        base_lib_dir = output_dir / "build" / "release"
+        if lib_subdir == "bin":
+             lib_src_dir = base_lib_dir / "bin"
+             # Windows DLLs might not be in a subdir if using some layouts, but strict check above suggests bin.
+        else:
+             lib_src_dir = base_lib_dir / "lib"
+             if lib_subdir:
+                lib_src_dir = lib_src_dir / lib_subdir
 
-        lib_src_path = lib_src_path / f"libvulkan_lvp{shared_lib_ext}"
+        # Define artifacts to copy
+        artifacts_to_copy = []
 
-        artifacts = [
-            (icd_src_path, "lvp_icd.json"),
-            (lib_src_path, f"libvulkan_lvp{shared_lib_ext}")
-        ]
+        # Vulkan artifacts
+        artifacts_to_copy.append((icd_src_path, "lvp_icd.json"))
+        artifacts_to_copy.append((lib_src_dir / f"libvulkan_lvp{shared_lib_ext}", f"libvulkan_lvp{shared_lib_ext}"))
 
-        for artifact_path, dest_name in artifacts:
-            if artifact_path.exists():
-                dest_path = install_dir / dest_name
-                print(f"Copying {artifact_path} to {dest_path}")
-                shutil.copy2(artifact_path, dest_path)
+        # OpenGL / GLES / EGL / GBM libraries
+        gl_libs = ["libGL", "libEGL", "libGLESv2", "libGLESv1_CM", "libgbm"]
+        for lib in gl_libs:
+             so_name = f"{lib}{shared_lib_ext}"
+             artifacts_to_copy.append((lib_src_dir / so_name, so_name))
+
+        # Libgallium (glob)
+        # Find files matching libgallium*.so*
+        if lib_src_dir.exists():
+            for gallium_lib in lib_src_dir.glob(f"libgallium*{shared_lib_ext}*"):
+                 # Only copy regular files
+                 if gallium_lib.is_file():
+                    artifacts_to_copy.append((gallium_lib, gallium_lib.name))
+
+        # DRI drivers
+        dri_src_dir = lib_src_dir / "dri"
+        if dri_src_dir.exists():
+            (install_dir / "dri").mkdir(parents=True, exist_ok=True)
+            dri_drivers = ["swrast_dri.so", "kms_swrast_dri.so", "libdril_dri.so", "virtio_gpu_dri.so"]
+            for driver in dri_drivers:
+                if (dri_src_dir / driver).exists():
+                    artifacts_to_copy.append((dri_src_dir / driver, f"dri/{driver}"))
+
+        # GBM backends (gbm/dri_gbm.so)
+        gbm_backend_src_dir = lib_src_dir / "gbm"
+        if gbm_backend_src_dir.exists():
+             (install_dir / "gbm").mkdir(parents=True, exist_ok=True)
+             if (gbm_backend_src_dir / "dri_gbm.so").exists():
+                 artifacts_to_copy.append((gbm_backend_src_dir / "dri_gbm.so", "gbm/dri_gbm.so"))
+
+        for src_path, dest_rel_path in artifacts_to_copy:
+            if src_path.exists():
+                dest_path = install_dir / dest_rel_path
+                # Ensure parent dir exists
+                dest_path.parent.mkdir(parents=True, exist_ok=True)
+                print(f"Copying {src_path} to {dest_path}")
+                shutil.copy2(src_path, dest_path, follow_symlinks=True)
             else:
-                print(f"Warning: Artifact {artifact_path} not found.")
+                # Only warn if it was an explicitly listed artifact (not generic logic)
+                # But since we check exists() before append for dynamic ones, this warning is fine for static list.
+                print(f"Warning: Artifact {src_path} not found.")
 
 if __name__ == "__main__":
     main()

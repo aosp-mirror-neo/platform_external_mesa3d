@@ -23,10 +23,10 @@
     "meson_options": {
       "-Dvulkan-drivers": "swrast",
       "-Dgallium-drivers": "llvmpipe",
-      "-Dopengl": "false",
-      "-Degl": "disabled",
-      "-Dgles1": "disabled",
-      "-Dgles2": "disabled",
+      "-Dopengl": "true",
+      "-Degl": "enabled",
+      "-Dgles1": "enabled",
+      "-Dgles2": "enabled",
       "-Dvideo-codecs": "[]",
       "-Dzstd": "disabled",
       "-Dshared-llvm": "enabled",
@@ -42,7 +42,8 @@
         "-Dcpp_args": "-DUSE_UNW_DYNAMIC_FDE",
         "-Dc_args": "-DUSE_UNW_DYNAMIC_FDE",
         "-Dcpp_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'",
-        "-Dc_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'"
+        "-Dc_link_args": "-Wl,-rpath,'$ORIGIN/:$ORIGIN/lib64:$ORIGIN/../lib64:$ORIGIN/../../lib64:$ORIGIN/../../../lib64'",
+        "-Dglx-direct": "false"
       },
       // binaries are a set of bazel targets for which we will create programs
       "binaries": {
@@ -87,6 +88,15 @@
           "shim": {
             "name": "ffi",
             "Libs": "-lffi"
+          }
+        },
+        "x11": {
+          "lib_type": "bazel",
+          "bazel_target": "@libx11//:libx11",
+          "version": "1.8.12.bcr.3.aemu",
+          "shim": {
+            "name": "x11",
+            "Libs": "-lx11"
           }
         },
         // libx11-xcb is built into the libx11 library
@@ -170,6 +180,16 @@
             "include_target": "@libxcb//:xcb_lib"
           }
         },
+        "xcb-glx": {
+          "lib_type": "bazel",
+          "bazel_target": "@libxcb//:libxcb",
+          "version": "1.17.0.bcr.2.aemu",
+          "shim": {
+            "name": "xcb-glx",
+            "Libs": "-lxcb-aemu",
+            "include_target": "@libxcb//:xcb_lib"
+          }
+        },
         "wayland-client": {
           "lib_type": "bazel",
           "bazel_target": "@wayland//:wayland-client",
@@ -199,6 +219,34 @@
               // This value is how mesa finds the wayland-scanner binary.
               "wayland_scanner": "${libdir}/wayland-scanner"
             }
+          }
+        },
+        "wayland-egl-backend": {
+          "lib_type": "bazel",
+          "bazel_target": "@wayland//:wayland-server",
+          "version": "3",
+          "shim": {
+            "name": "wayland-egl-backend",
+            "Libs": "",
+            "Requires": "wayland-server"
+          }
+        },
+        "xext": {
+          "lib_type": "bazel",
+          "bazel_target": "@libxext//:libxext",
+          "version": "1.3.6",
+          "shim": {
+            "name": "xext",
+            "Libs": "-lxext"
+          }
+        },
+        "glproto": {
+          "lib_type": "bazel",
+          "bazel_target": "@xorgproto//:xorgproto",
+          "version": "2024.1.bcr.1",
+          "shim": {
+            "name": "glproto",
+            "Libs": ""
           }
         },
         "libxrandr": {

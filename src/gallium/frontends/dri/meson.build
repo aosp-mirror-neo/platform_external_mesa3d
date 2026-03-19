@@ -23,7 +23,7 @@ if with_platform_x11
   deps_for_libdri += dep_xcb
   if with_dri_platform == 'drm'
     deps_for_libdri += [dep_xcb_dri3, dep_xcb_present, dep_xcb_sync,
-                        dep_xshmfence, dep_xcb_xfixes]
+                        dep_xshmfence, dep_xcb_xfixes, dep_x11_xcb]
     files_libdri += files('loader_dri3_helper.c')
   endif
 endif
