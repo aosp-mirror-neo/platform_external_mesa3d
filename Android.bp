@@ -38,6 +38,12 @@ cc_defaults {
         "-Werror=vla",
         "-Wgnu-pointer-arith",
     ],
+    cppflags: [
+        "-Werror=gnu-empty-initializer",
+        "-Werror=pointer-arith",
+        "-Werror=vla",
+        "-Wgnu-pointer-arith",
+    ],
 }
 
 cc_defaults {
@@ -577,9 +583,6 @@ cc_library_headers {
     ],
 }
 
-/*
- * This is such a hack, when you consider hardware/google/aemu.
- */
 cc_library_headers {
     name: "mesa_gfxstream_aemu_headers",
     vendor: true,

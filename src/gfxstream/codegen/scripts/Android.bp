@@ -14,15 +14,9 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "genvk",
-    srcs: [
-        "genvk.py",
-    ],
-}
-
-filegroup {
-    name: "genvk_depends",
+python_binary_host {
+    name: "genvk_py_binary",
+    main: "genvk.py",
     srcs: [
         "cereal/__init__.py",
         "cereal/api_log_decoder.py",
@@ -51,16 +45,8 @@ filegroup {
         "cerealgenerator.py",
         "cgenerator.py",
         "generator.py",
+        "genvk.py",
         "reg.py",
-    ],
-}
-
-python_binary_host {
-    name: "genvk_py_binary",
-    main: "genvk.py",
-    srcs: [
-        ":genvk",
-        ":genvk_depends",
     ],
     libs: [
         "mako",

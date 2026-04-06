@@ -29,7 +29,7 @@ python_binary_host {
 genrule {
     name: "astc_spv.h",
     out: [
-        "astc_spv.h",
+        "src/vulkan/runtime/astc_spv.h",
     ],
     srcs: [
         ":astc_decoder_glsl_file",
@@ -37,14 +37,20 @@ genrule {
     tools: [
         "glslangValidator",
     ],
-    cmd: "$(location glslangValidator) -V -S comp -x -o $(location astc_spv.h) " +
-        "$(location :astc_decoder_glsl_file) --quiet --depfile astc_spv.h.d",
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
+    cmd: "$(location glslangValidator) -V -S comp -x -o $(location " +
+        "src/vulkan/runtime/astc_spv.h) $(location :astc_decoder_glsl_file) " +
+        "--quiet --depfile astc_spv.h.d",
 }
 
 genrule {
     name: "vk_cmd_enqueue_entrypoints_headers",
     out: [
-        "vk_cmd_enqueue_entrypoints.h",
+        "src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -52,16 +58,22 @@ genrule {
     tools: [
         "vk_entrypoints_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(location vk_cmd_enqueue_entrypoints.h) " +
-        "--out-c $(genDir)/vk_cmd_enqueue_entrypoints.c --prefix vk_cmd_enqueue " +
-        "--prefix vk_cmd_enqueue_unless_primary --beta false",
+        "--proto --weak --out-h $(location " +
+        "src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h) --out-c " +
+        "$(genDir)/src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c --prefix " +
+        "vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
 }
 
 genrule {
     name: "vk_cmd_enqueue_entrypoints_impl",
     out: [
-        "vk_cmd_enqueue_entrypoints.c",
+        "src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -70,15 +82,16 @@ genrule {
         "vk_entrypoints_py_binary",
     ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(genDir)/vk_cmd_enqueue_entrypoints.h --out-c " +
-        "$(location vk_cmd_enqueue_entrypoints.c) --prefix vk_cmd_enqueue " +
-        "--prefix vk_cmd_enqueue_unless_primary --beta false",
+        "--proto --weak --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h --out-c " +
+        "$(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c) --prefix " +
+        "vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
 }
 
 genrule {
     name: "vk_cmd_queue_headers",
     out: [
-        "vk_cmd_queue.h",
+        "src/vulkan/runtime/vk_cmd_queue.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -86,15 +99,20 @@ genrule {
     tools: [
         "vk_cmd_queue_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_cmd_queue_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(genDir)/vk_cmd_queue.c --out-h $(location vk_cmd_queue.h) " +
-        "--beta false",
+        "--out-c $(genDir)/src/vulkan/runtime/vk_cmd_queue.c --out-h $(location " +
+        "src/vulkan/runtime/vk_cmd_queue.h) --beta false",
 }
 
 genrule {
     name: "vk_cmd_queue_impl",
     out: [
-        "vk_cmd_queue.c",
+        "src/vulkan/runtime/vk_cmd_queue.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -103,14 +121,14 @@ genrule {
         "vk_cmd_queue_py_binary",
     ],
     cmd: "$(location vk_cmd_queue_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(location vk_cmd_queue.c) --out-h $(genDir)/vk_cmd_queue.h " +
-        "--beta false",
+        "--out-c $(location src/vulkan/runtime/vk_cmd_queue.c) --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_cmd_queue.h --beta false",
 }
 
 genrule {
     name: "vk_common_entrypoints_headers",
     out: [
-        "vk_common_entrypoints.h",
+        "src/vulkan/runtime/vk_common_entrypoints.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -118,15 +136,22 @@ genrule {
     tools: [
         "vk_entrypoints_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(location vk_common_entrypoints.h) --out-c " +
-        "$(genDir)/vk_common_entrypoints.c --prefix vk_common --beta false",
+        "--proto --weak --out-h $(location " +
+        "src/vulkan/runtime/vk_common_entrypoints.h) --out-c " +
+        "$(genDir)/src/vulkan/runtime/vk_common_entrypoints.c --prefix " +
+        "vk_common --beta false",
 }
 
 genrule {
     name: "vk_common_entrypoints_impl",
     out: [
-        "vk_common_entrypoints.c",
+        "src/vulkan/runtime/vk_common_entrypoints.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -135,14 +160,16 @@ genrule {
         "vk_entrypoints_py_binary",
     ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(genDir)/vk_common_entrypoints.h --out-c " +
-        "$(location vk_common_entrypoints.c) --prefix vk_common --beta false",
+        "--proto --weak --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_common_entrypoints.h --out-c " +
+        "$(location src/vulkan/runtime/vk_common_entrypoints.c) --prefix " +
+        "vk_common --beta false",
 }
 
 genrule {
     name: "vk_dispatch_trampolines_headers",
     out: [
-        "vk_dispatch_trampolines.h",
+        "src/vulkan/runtime/vk_dispatch_trampolines.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -150,15 +177,21 @@ genrule {
     tools: [
         "vk_dispatch_trampolines_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_dispatch_trampolines_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(genDir)/vk_dispatch_trampolines.c --out-h " +
-        "$(location vk_dispatch_trampolines.h) --beta false",
+        ":vk_api_xml) --out-c " +
+        "$(genDir)/src/vulkan/runtime/vk_dispatch_trampolines.c --out-h " +
+        "$(location src/vulkan/runtime/vk_dispatch_trampolines.h) --beta false",
 }
 
 genrule {
     name: "vk_dispatch_trampolines_impl",
     out: [
-        "vk_dispatch_trampolines.c",
+        "src/vulkan/runtime/vk_dispatch_trampolines.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -167,14 +200,15 @@ genrule {
         "vk_dispatch_trampolines_py_binary",
     ],
     cmd: "$(location vk_dispatch_trampolines_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(location vk_dispatch_trampolines.c) --out-h " +
-        "$(genDir)/vk_dispatch_trampolines.h --beta false",
+        ":vk_api_xml) --out-c $(location " +
+        "src/vulkan/runtime/vk_dispatch_trampolines.c) --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_dispatch_trampolines.h --beta false",
 }
 
 genrule {
     name: "vk_format_info_headers",
     out: [
-        "vk_format_info.h",
+        "src/vulkan/runtime/vk_format_info.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -182,15 +216,20 @@ genrule {
     tools: [
         "vk_format_info_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_format_info_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(genDir)/vk_format_info.c --out-h $(location " +
-        "vk_format_info.h)",
+        "--out-c $(genDir)/src/vulkan/runtime/vk_format_info.c --out-h " +
+        "$(location src/vulkan/runtime/vk_format_info.h)",
 }
 
 genrule {
     name: "vk_format_info_impl",
     out: [
-        "vk_format_info.c",
+        "src/vulkan/runtime/vk_format_info.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -199,14 +238,14 @@ genrule {
         "vk_format_info_py_binary",
     ],
     cmd: "$(location vk_format_info_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(location vk_format_info.c) --out-h " +
-        "$(genDir)/vk_format_info.h",
+        "--out-c $(location src/vulkan/runtime/vk_format_info.c) --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_format_info.h",
 }
 
 genrule {
     name: "vk_physical_device_features_headers",
     out: [
-        "vk_physical_device_features.h",
+        "src/vulkan/runtime/vk_physical_device_features.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -214,15 +253,22 @@ genrule {
     tools: [
         "vk_physical_device_features_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_physical_device_features_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(genDir)/vk_physical_device_features.c --out-h " +
-        "$(location vk_physical_device_features.h) --beta false",
+        ":vk_api_xml) --out-c " +
+        "$(genDir)/src/vulkan/runtime/vk_physical_device_features.c --out-h " +
+        "$(location src/vulkan/runtime/vk_physical_device_features.h) --beta " +
+        "false",
 }
 
 genrule {
     name: "vk_physical_device_features_impl",
     out: [
-        "vk_physical_device_features.c",
+        "src/vulkan/runtime/vk_physical_device_features.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -231,14 +277,16 @@ genrule {
         "vk_physical_device_features_py_binary",
     ],
     cmd: "$(location vk_physical_device_features_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(location vk_physical_device_features.c) --out-h " +
-        "$(genDir)/vk_physical_device_features.h --beta false",
+        ":vk_api_xml) --out-c $(location " +
+        "src/vulkan/runtime/vk_physical_device_features.c) --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_physical_device_features.h --beta " +
+        "false",
 }
 
 genrule {
     name: "vk_physical_device_properties_headers",
     out: [
-        "vk_physical_device_properties.h",
+        "src/vulkan/runtime/vk_physical_device_properties.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -246,15 +294,22 @@ genrule {
     tools: [
         "vk_physical_device_properties_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/runtime",
+    ],
     cmd: "$(location vk_physical_device_properties_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(genDir)/vk_physical_device_properties.c --out-h " +
-        "$(location vk_physical_device_properties.h) --beta false",
+        ":vk_api_xml) --out-c " +
+        "$(genDir)/src/vulkan/runtime/vk_physical_device_properties.c --out-h " +
+        "$(location src/vulkan/runtime/vk_physical_device_properties.h) --beta " +
+        "false",
 }
 
 genrule {
     name: "vk_physical_device_properties_impl",
     out: [
-        "vk_physical_device_properties.c",
+        "src/vulkan/runtime/vk_physical_device_properties.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -263,8 +318,10 @@ genrule {
         "vk_physical_device_properties_py_binary",
     ],
     cmd: "$(location vk_physical_device_properties_py_binary) --xml $(location " +
-        ":vk_api_xml) --out-c $(location vk_physical_device_properties.c) " +
-        "--out-h $(genDir)/vk_physical_device_properties.h --beta false",
+        ":vk_api_xml) --out-c $(location " +
+        "src/vulkan/runtime/vk_physical_device_properties.c) --out-h " +
+        "$(genDir)/src/vulkan/runtime/vk_physical_device_properties.h --beta " +
+        "false",
 }
 
 genrule {
@@ -305,6 +362,7 @@ cc_library_headers {
     host_supported: true,
     export_include_dirs: [
         ".",
+        "bvh",
     ],
 }
 
@@ -652,8 +710,7 @@ cc_library_static {
         "vk_synchronization_helpers",
     ],
     srcs: [
-        ":vk_rmv_common_c_impl",
-        ":vk_rmv_exporter_c_impl",
+        ":vulkan_lite_runtime_files",
         "vk_blend.c",
         "vk_buffer.c",
         "vk_buffer_view.c",
@@ -758,18 +815,17 @@ cc_library_static {
         "vulkan_wsi_list",
     ],
     header_libs: [
-        "barrier_h_headers",
         "inc_compiler",
         "inc_include",
         "inc_nir",
         "inc_src",
+        "inc_src_vulkan_runtime_radix_sort",
+        "inc_src_vulkan_runtime_radix_sort_common",
+        "inc_src_vulkan_runtime_radix_sort_common_vk",
+        "inc_src_vulkan_runtime_radix_sort_shaders",
         "inc_src_vulkan_util",
         "inc_util",
         "inc_util_c11",
-        "macros_h_headers",
-        "push_h_headers",
-        "radix_sort_files_headers",
-        "util_h_headers",
     ] + select(os(), {
         "android": [
             "hwvulkan_headers",
@@ -814,9 +870,9 @@ cc_library_static {
         "vk_struct_type_cast",
     ],
     srcs: [
-        ":barrier_c_impl",
-        ":radix_sort_files_impl",
-        ":util_c_impl",
+        ":radix_sort_files",
+        ":radix_sort_files_1",
+        ":radix_sort_files_2",
         "vk_acceleration_structure.c",
         "vk_meta.c",
         "vk_meta_blit_resolve.c",

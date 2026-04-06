@@ -24,10 +24,9 @@ cc_library_static {
         "aosp_mesa3d_cpp_project_args",
     ],
     header_libs: [
-        "inc_src_gtest_include",
+        "inc_src_gtest",
     ],
     srcs: [
-        ":gtest-all_cc_impl",
-        ":gtest_main_cc_impl",
+        ":gtest_fg",
     ],
 }

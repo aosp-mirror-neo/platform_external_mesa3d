@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_mesa_format_impl",
+    name: "files_mesa_format",
     srcs: [
         "u_format.c",
         "u_format_bptc.c",
@@ -69,7 +69,7 @@ genrule {
 genrule {
     name: "u_format_pack.h",
     out: [
-        "u_format_pack.h",
+        "src/util/format/u_format_pack.h",
     ],
     srcs: [
         "u_format.yaml",
@@ -77,8 +77,13 @@ genrule {
     tools: [
         "u_format_table_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/util",
+        "src/util/format",
+    ],
     cmd: "$(location u_format_table_py_binary) $(location u_format.yaml) " +
-        "--header > $(location u_format_pack.h)",
+        "--header > $(location src/util/format/u_format_pack.h)",
 }
 
 genrule {
@@ -97,7 +102,7 @@ genrule {
 }
 
 cc_library_headers {
-    name: "inc_src_util_format",
+    name: "inc_src_util",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

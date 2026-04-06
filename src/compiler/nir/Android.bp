@@ -126,13 +126,18 @@ python_binary_host {
 genrule {
     name: "nir_builder_opcodes.h",
     out: [
-        "nir_builder_opcodes.h",
+        "src/compiler/nir/nir_builder_opcodes.h",
     ],
     tools: [
         "nir_builder_opcodes_h_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+        "src/compiler/nir",
+    ],
     cmd: "$(location nir_builder_opcodes_h_py_binary) > $(location " +
-        "nir_builder_opcodes.h)",
+        "src/compiler/nir/nir_builder_opcodes.h)",
 }
 
 genrule {
@@ -162,25 +167,35 @@ genrule {
 genrule {
     name: "nir_intrinsics.h",
     out: [
-        "nir_intrinsics.h",
+        "src/compiler/nir/nir_intrinsics.h",
     ],
     tools: [
         "nir_intrinsics_h_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+        "src/compiler/nir",
+    ],
     cmd: "$(location nir_intrinsics_h_py_binary) --out $(location " +
-        "nir_intrinsics.h)",
+        "src/compiler/nir/nir_intrinsics.h)",
 }
 
 genrule {
     name: "nir_intrinsics_indices.h",
     out: [
-        "nir_intrinsics_indices.h",
+        "src/compiler/nir/nir_intrinsics_indices.h",
     ],
     tools: [
         "nir_intrinsics_indices_h_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+        "src/compiler/nir",
+    ],
     cmd: "$(location nir_intrinsics_indices_h_py_binary) --out $(location " +
-        "nir_intrinsics_indices.h)",
+        "src/compiler/nir/nir_intrinsics_indices.h)",
 }
 
 genrule {
@@ -197,12 +212,18 @@ genrule {
 genrule {
     name: "nir_opcodes.h",
     out: [
-        "nir_opcodes.h",
+        "src/compiler/nir/nir_opcodes.h",
     ],
     tools: [
         "nir_opcodes_h_py_binary",
     ],
-    cmd: "$(location nir_opcodes_h_py_binary) > $(location nir_opcodes.h)",
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+        "src/compiler/nir",
+    ],
+    cmd: "$(location nir_opcodes_h_py_binary) > $(location " +
+        "src/compiler/nir/nir_opcodes.h)",
 }
 
 genrule {

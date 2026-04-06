@@ -54,24 +54,33 @@ genrule {
 genrule {
     name: "builtin_types.h",
     out: [
-        "builtin_types.h",
+        "src/compiler/builtin_types.h",
     ],
     tools: [
         "builtin_types_h_py_binary",
     ],
-    cmd: "$(location builtin_types_h_py_binary) $(location builtin_types.h)",
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+    ],
+    cmd: "$(location builtin_types_h_py_binary) $(location " +
+        "src/compiler/builtin_types.h)",
 }
 
 genrule {
     name: "ir_expression_operation.h",
     out: [
-        "ir_expression_operation.h",
+        "src/compiler/ir_expression_operation.h",
     ],
     tools: [
         "ir_expression_operation_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+    ],
     cmd: "$(location ir_expression_operation_py_binary) enum > $(location " +
-        "ir_expression_operation.h)",
+        "src/compiler/ir_expression_operation.h)",
 }
 
 cc_library_headers {

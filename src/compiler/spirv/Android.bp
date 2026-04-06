@@ -75,13 +75,14 @@ genrule {
     ],
     cmd: "$(location spirv_info_py_binary) --json $(location " +
         "spirv.core.grammar.json) --out-h $(location " +
-        "src/compiler/spirv/spirv_info.h) --out-c $(genDir)/spirv_info.c",
+        "src/compiler/spirv/spirv_info.h) --out-c " +
+        "$(genDir)/src/compiler/spirv/spirv_info.c",
 }
 
 genrule {
     name: "spirv_info_impl",
     out: [
-        "spirv_info.c",
+        "src/compiler/spirv/spirv_info.c",
     ],
     srcs: [
         "spirv.core.grammar.json",
@@ -90,8 +91,9 @@ genrule {
         "spirv_info_py_binary",
     ],
     cmd: "$(location spirv_info_py_binary) --json $(location " +
-        "spirv.core.grammar.json) --out-h $(genDir)/spirv_info.h --out-c " +
-        "$(location spirv_info.c)",
+        "spirv.core.grammar.json) --out-h " +
+        "$(genDir)/src/compiler/spirv/spirv_info.h --out-c $(location " +
+        "src/compiler/spirv/spirv_info.c)",
 }
 
 genrule {
@@ -112,7 +114,7 @@ genrule {
 genrule {
     name: "vtn_generator_ids.h",
     out: [
-        "vtn_generator_ids.h",
+        "src/compiler/spirv/vtn_generator_ids.h",
     ],
     srcs: [
         "spir-v.xml",
@@ -120,8 +122,13 @@ genrule {
     tools: [
         "vtn_generator_ids_h_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/compiler",
+        "src/compiler/spirv",
+    ],
     cmd: "$(location vtn_generator_ids_h_py_binary) $(location spir-v.xml) " +
-        "$(location vtn_generator_ids.h)",
+        "$(location src/compiler/spirv/vtn_generator_ids.h)",
 }
 
 cc_defaults {

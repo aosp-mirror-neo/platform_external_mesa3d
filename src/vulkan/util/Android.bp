@@ -14,76 +14,6 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "vk_cmd_queue_gen",
-    srcs: [
-        "vk_cmd_queue_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_dispatch_trampolines_gen",
-    srcs: [
-        "vk_dispatch_trampolines_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_entrypoints_gen",
-    srcs: [
-        "vk_entrypoints_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_entrypoints_py",
-    srcs: [
-        "vk_entrypoints.py",
-    ],
-}
-
-filegroup {
-    name: "vk_extensions_py",
-    srcs: [
-        "vk_extensions.py",
-    ],
-}
-
-filegroup {
-    name: "vk_icd_gen",
-    srcs: [
-        "vk_icd_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_physical_device_features_gen",
-    srcs: [
-        "vk_physical_device_features_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_physical_device_properties_gen",
-    srcs: [
-        "vk_physical_device_properties_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_physical_device_spirv_caps_gen",
-    srcs: [
-        "vk_physical_device_spirv_caps_gen.py",
-    ],
-}
-
-filegroup {
-    name: "vk_synchronization_helpers_gen",
-    srcs: [
-        "vk_synchronization_helpers_gen.py",
-    ],
-}
-
 python_binary_host {
     name: "gen_enum_to_str_py_binary",
     main: "gen_enum_to_str.py",
@@ -101,9 +31,9 @@ python_binary_host {
     name: "vk_cmd_queue_py_binary",
     main: "vk_cmd_queue_gen.py",
     srcs: [
-        ":vk_cmd_queue_gen",
-        ":vk_entrypoints_py",
-        ":vk_extensions_py",
+        "vk_cmd_queue_gen.py",
+        "vk_entrypoints.py",
+        "vk_extensions.py",
     ],
     libs: [
         "mako",
@@ -129,9 +59,9 @@ python_binary_host {
     name: "vk_dispatch_trampolines_py_binary",
     main: "vk_dispatch_trampolines_gen.py",
     srcs: [
-        ":vk_dispatch_trampolines_gen",
-        ":vk_entrypoints_py",
-        ":vk_extensions_py",
+        "vk_dispatch_trampolines_gen.py",
+        "vk_entrypoints.py",
+        "vk_extensions.py",
     ],
     libs: [
         "mako",
@@ -143,9 +73,9 @@ python_binary_host {
     name: "vk_entrypoints_py_binary",
     main: "vk_entrypoints_gen.py",
     srcs: [
-        ":vk_entrypoints_gen",
-        ":vk_entrypoints_py",
-        ":vk_extensions_py",
+        "vk_entrypoints.py",
+        "vk_entrypoints_gen.py",
+        "vk_extensions.py",
     ],
     libs: [
         "mako",
@@ -170,7 +100,7 @@ python_binary_host {
     name: "vk_icd_py_binary",
     main: "vk_icd_gen.py",
     srcs: [
-        ":vk_icd_gen",
+        "vk_icd_gen.py",
     ],
     libs: [
         "mako",
@@ -182,8 +112,8 @@ python_binary_host {
     name: "vk_physical_device_features_py_binary",
     main: "vk_physical_device_features_gen.py",
     srcs: [
-        ":vk_extensions_py",
-        ":vk_physical_device_features_gen",
+        "vk_extensions.py",
+        "vk_physical_device_features_gen.py",
     ],
     libs: [
         "mako",
@@ -195,8 +125,8 @@ python_binary_host {
     name: "vk_physical_device_properties_py_binary",
     main: "vk_physical_device_properties_gen.py",
     srcs: [
-        ":vk_extensions_py",
-        ":vk_physical_device_properties_gen",
+        "vk_extensions.py",
+        "vk_physical_device_properties_gen.py",
     ],
     libs: [
         "mako",
@@ -208,9 +138,9 @@ python_binary_host {
     name: "vk_physical_device_spirv_caps_py_binary",
     main: "vk_physical_device_spirv_caps_gen.py",
     srcs: [
-        ":vk_extensions_py",
-        ":vk_physical_device_features_gen",
-        ":vk_physical_device_spirv_caps_gen",
+        "vk_extensions.py",
+        "vk_physical_device_features_gen.py",
+        "vk_physical_device_spirv_caps_gen.py",
     ],
     libs: [
         "mako",
@@ -235,8 +165,8 @@ python_binary_host {
     name: "vk_synchronization_helpers_py_binary",
     main: "vk_synchronization_helpers_gen.py",
     srcs: [
-        ":vk_extensions_py",
-        ":vk_synchronization_helpers_gen",
+        "vk_extensions.py",
+        "vk_synchronization_helpers_gen.py",
     ],
     libs: [
         "mako",
@@ -247,7 +177,7 @@ python_binary_host {
 genrule {
     name: "vk_dispatch_table_headers",
     out: [
-        "vk_dispatch_table.h",
+        "src/vulkan/util/vk_dispatch_table.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -255,15 +185,20 @@ genrule {
     tools: [
         "vk_dispatch_table_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/util",
+    ],
     cmd: "$(location vk_dispatch_table_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(genDir)/vk_dispatch_table.c --out-h $(location " +
-        "vk_dispatch_table.h) --beta false",
+        "--out-c $(genDir)/src/vulkan/util/vk_dispatch_table.c --out-h " +
+        "$(location src/vulkan/util/vk_dispatch_table.h) --beta false",
 }
 
 genrule {
     name: "vk_dispatch_table_impl",
     out: [
-        "vk_dispatch_table.c",
+        "src/vulkan/util/vk_dispatch_table.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -272,15 +207,15 @@ genrule {
         "vk_dispatch_table_py_binary",
     ],
     cmd: "$(location vk_dispatch_table_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(location vk_dispatch_table.c) --out-h " +
-        "$(genDir)/vk_dispatch_table.h --beta false",
+        "--out-c $(location src/vulkan/util/vk_dispatch_table.c) --out-h " +
+        "$(genDir)/src/vulkan/util/vk_dispatch_table.h --beta false",
 }
 
 genrule {
     name: "vk_enum_to_str_headers",
     out: [
-        "vk_enum_defines.h",
-        "vk_enum_to_str.h",
+        "src/vulkan/util/vk_enum_defines.h",
+        "src/vulkan/util/vk_enum_to_str.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -288,15 +223,21 @@ genrule {
     tools: [
         "gen_enum_to_str_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/util",
+    ],
     cmd: "$(location gen_enum_to_str_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(genDir)/vk_enum_to_str.c --out-h $(location " +
-        "vk_enum_to_str.h) --out-d $(location vk_enum_defines.h) --beta false",
+        "--out-c $(genDir)/src/vulkan/util/vk_enum_to_str.c --out-h $(location " +
+        "src/vulkan/util/vk_enum_to_str.h) --out-d $(location " +
+        "src/vulkan/util/vk_enum_defines.h) --beta false",
 }
 
 genrule {
     name: "vk_enum_to_str_impl",
     out: [
-        "vk_enum_to_str.c",
+        "src/vulkan/util/vk_enum_to_str.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -305,15 +246,15 @@ genrule {
         "gen_enum_to_str_py_binary",
     ],
     cmd: "$(location gen_enum_to_str_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(location vk_enum_to_str.c) --out-h " +
-        "$(genDir)/vk_enum_to_str.h --out-d $(genDir)/vk_enum_defines.h --beta " +
-        "false",
+        "--out-c $(location src/vulkan/util/vk_enum_to_str.c) --out-h " +
+        "$(genDir)/src/vulkan/util/vk_enum_to_str.h --out-d " +
+        "$(genDir)/src/vulkan/util/vk_enum_defines.h --beta false",
 }
 
 genrule {
     name: "vk_extensions_headers",
     out: [
-        "vk_extensions.h",
+        "src/vulkan/util/vk_extensions.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -321,14 +262,20 @@ genrule {
     tools: [
         "vk_extensions_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/util",
+    ],
     cmd: "$(location vk_extensions_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(genDir)/vk_extensions.c --out-h $(location vk_extensions.h)",
+        "--out-c $(genDir)/src/vulkan/util/vk_extensions.c --out-h $(location " +
+        "src/vulkan/util/vk_extensions.h)",
 }
 
 genrule {
     name: "vk_extensions_impl",
     out: [
-        "vk_extensions.c",
+        "src/vulkan/util/vk_extensions.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -337,13 +284,14 @@ genrule {
         "vk_extensions_py_binary",
     ],
     cmd: "$(location vk_extensions_py_binary) --xml $(location :vk_api_xml) " +
-        "--out-c $(location vk_extensions.c) --out-h $(genDir)/vk_extensions.h",
+        "--out-c $(location src/vulkan/util/vk_extensions.c) --out-h " +
+        "$(genDir)/src/vulkan/util/vk_extensions.h",
 }
 
 genrule {
     name: "vk_struct_type_cast",
     out: [
-        "vk_struct_type_cast.h",
+        "src/vulkan/util/vk_struct_type_cast.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -351,8 +299,14 @@ genrule {
     tools: [
         "vk_struct_type_cast_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/vulkan",
+        "src/vulkan/util",
+    ],
     cmd: "$(location vk_struct_type_cast_py_binary) --xml $(location " +
-        ":vk_api_xml) --out $(location vk_struct_type_cast.h) --beta false",
+        ":vk_api_xml) --out $(location src/vulkan/util/vk_struct_type_cast.h) " +
+        "--beta false",
 }
 
 cc_library_headers {

@@ -15,88 +15,22 @@ package {
 }
 
 filegroup {
-    name: "font_c_impl",
+    name: "files_libgallium_5",
     srcs: [
         "font.c",
-    ],
-}
-
-filegroup {
-    name: "hud_context_c_impl",
-    srcs: [
         "hud_context.c",
-    ],
-}
-
-filegroup {
-    name: "hud_cpu_c_impl",
-    srcs: [
         "hud_cpu.c",
-    ],
-}
-
-filegroup {
-    name: "hud_cpufreq_c_impl",
-    srcs: [
         "hud_cpufreq.c",
-    ],
-}
-
-filegroup {
-    name: "hud_diskstat_c_impl",
-    srcs: [
         "hud_diskstat.c",
-    ],
-}
-
-filegroup {
-    name: "hud_driver_query_c_impl",
-    srcs: [
         "hud_driver_query.c",
-    ],
-}
-
-filegroup {
-    name: "hud_fps_c_impl",
-    srcs: [
         "hud_fps.c",
-    ],
-}
-
-filegroup {
-    name: "hud_nic_c_impl",
-    srcs: [
         "hud_nic.c",
-    ],
-}
-
-filegroup {
-    name: "hud_sensors_temp_c_impl",
-    srcs: [
         "hud_sensors_temp.c",
     ],
 }
 
 cc_library_headers {
-    name: "font_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "hud_context_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "hud_private_h_headers",
+    name: "inc_src_gallium_auxiliary_hud",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

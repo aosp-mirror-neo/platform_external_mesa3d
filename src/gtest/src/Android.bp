@@ -15,15 +15,9 @@ package {
 }
 
 filegroup {
-    name: "gtest-all_cc_impl",
+    name: "gtest_fg",
     srcs: [
         "gtest-all.cc",
-    ],
-}
-
-filegroup {
-    name: "gtest_main_cc_impl",
-    srcs: [
         "gtest_main.cc",
     ],
 }

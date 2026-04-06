@@ -15,21 +15,15 @@ package {
 }
 
 filegroup {
-    name: "noop_pipe_c_impl",
+    name: "files_libgallium_3",
     srcs: [
         "noop_pipe.c",
-    ],
-}
-
-filegroup {
-    name: "noop_state_c_impl",
-    srcs: [
         "noop_state.c",
     ],
 }
 
 cc_library_headers {
-    name: "noop_public_h_headers",
+    name: "inc_src_gallium_auxiliary_driver_noop",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

@@ -17,7 +17,7 @@ package {
 genrule {
     name: "lvp_entrypoints_headers",
     out: [
-        "lvp_entrypoints.h",
+        "src/gallium/frontends/lavapipe/lvp_entrypoints.h",
     ],
     srcs: [
         ":vk_api_xml",
@@ -25,15 +25,23 @@ genrule {
     tools: [
         "vk_entrypoints_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/gallium",
+        "src/gallium/frontends",
+        "src/gallium/frontends/lavapipe",
+    ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(location lvp_entrypoints.h) --out-c " +
-        "$(genDir)/lvp_entrypoints.c --prefix lvp --beta false",
+        "--proto --weak --out-h $(location " +
+        "src/gallium/frontends/lavapipe/lvp_entrypoints.h) --out-c " +
+        "$(genDir)/src/gallium/frontends/lavapipe/lvp_entrypoints.c --prefix " +
+        "lvp --beta false",
 }
 
 genrule {
     name: "lvp_entrypoints_impl",
     out: [
-        "lvp_entrypoints.c",
+        "src/gallium/frontends/lavapipe/lvp_entrypoints.c",
     ],
     srcs: [
         ":vk_api_xml",
@@ -42,8 +50,10 @@ genrule {
         "vk_entrypoints_py_binary",
     ],
     cmd: "$(location vk_entrypoints_py_binary) --xml $(location :vk_api_xml) " +
-        "--proto --weak --out-h $(genDir)/lvp_entrypoints.h --out-c $(location " +
-        "lvp_entrypoints.c) --prefix lvp --beta false",
+        "--proto --weak --out-h " +
+        "$(genDir)/src/gallium/frontends/lavapipe/lvp_entrypoints.h --out-c " +
+        "$(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --prefix " +
+        "lvp --beta false",
 }
 
 cc_defaults {
@@ -91,7 +101,6 @@ cc_library_static {
         "inc_nir",
         "inc_src",
         "inc_src_vulkan_runtime",
-        "inc_src_vulkan_runtime_bvh",
         "inc_src_vulkan_util",
         "inc_src_vulkan_wsi",
         "inc_util",
@@ -129,14 +138,7 @@ cc_library_static {
         "lvp_entrypoints_impl",
     ],
     srcs: [
-        ":lvp_nir_lower_cooperative_matrix_c_impl",
-        ":lvp_nir_lower_exec_graph_c_impl",
-        ":lvp_nir_lower_input_attachments_c_impl",
-        ":lvp_nir_lower_pipeline_layout_c_impl",
-        ":lvp_nir_lower_ray_queries_c_impl",
-        ":lvp_nir_lower_sparse_residency_c_impl",
-        ":lvp_nir_opt_robustness_c_impl",
-        ":lvp_nir_ray_tracing_c_impl",
+        ":liblvp_files",
         "lvp_acceleration_structure.c",
         "lvp_cmd_buffer.c",
         "lvp_descriptor_set.c",

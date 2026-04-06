@@ -15,57 +15,15 @@ package {
 }
 
 filegroup {
-    name: "lvp_nir_lower_cooperative_matrix_c_impl",
+    name: "liblvp_files",
     srcs: [
         "lvp_nir_lower_cooperative_matrix.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_lower_exec_graph_c_impl",
-    srcs: [
         "lvp_nir_lower_exec_graph.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_lower_input_attachments_c_impl",
-    srcs: [
         "lvp_nir_lower_input_attachments.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_lower_pipeline_layout_c_impl",
-    srcs: [
         "lvp_nir_lower_pipeline_layout.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_lower_ray_queries_c_impl",
-    srcs: [
         "lvp_nir_lower_ray_queries.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_lower_sparse_residency_c_impl",
-    srcs: [
         "lvp_nir_lower_sparse_residency.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_opt_robustness_c_impl",
-    srcs: [
         "lvp_nir_opt_robustness.c",
-    ],
-}
-
-filegroup {
-    name: "lvp_nir_ray_tracing_c_impl",
-    srcs: [
         "lvp_nir_ray_tracing.c",
     ],
 }

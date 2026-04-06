@@ -15,23 +15,14 @@ package {
 }
 
 filegroup {
-    name: "util_c_impl",
+    name: "radix_sort_files_1",
     srcs: [
         "util.c",
     ],
 }
 
 cc_library_headers {
-    name: "macros_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "util_h_headers",
+    name: "inc_src_vulkan_runtime_radix_sort_common",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

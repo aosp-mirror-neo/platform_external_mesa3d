@@ -15,15 +15,9 @@ package {
 }
 
 filegroup {
-    name: "vk_rmv_common_c_impl",
+    name: "vulkan_lite_runtime_files",
     srcs: [
         "vk_rmv_common.c",
-    ],
-}
-
-filegroup {
-    name: "vk_rmv_exporter_c_impl",
-    srcs: [
         "vk_rmv_exporter.c",
     ],
 }

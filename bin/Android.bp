@@ -14,25 +14,11 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "gen_vs_module_defs_py",
-    srcs: [
-        "gen_vs_module_defs.py",
-    ],
-}
-
-filegroup {
-    name: "git_sha1_gen_py",
-    srcs: [
-        "git_sha1_gen.py",
-    ],
-}
-
 python_binary_host {
     name: "gen_vs_module_defs_py_binary",
     main: "gen_vs_module_defs.py",
     srcs: [
-        ":gen_vs_module_defs_py",
+        "gen_vs_module_defs.py",
     ],
     libs: [
         "mako",
@@ -44,7 +30,7 @@ python_binary_host {
     name: "git_sha1_py_binary",
     main: "git_sha1_gen.py",
     srcs: [
-        ":git_sha1_gen_py",
+        "git_sha1_gen.py",
     ],
     libs: [
         "mako",

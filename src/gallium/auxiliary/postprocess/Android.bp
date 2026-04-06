@@ -15,112 +15,19 @@ package {
 }
 
 filegroup {
-    name: "pp_celshade_c_impl",
+    name: "files_libgallium_8",
     srcs: [
         "pp_celshade.c",
-    ],
-}
-
-filegroup {
-    name: "pp_colors_c_impl",
-    srcs: [
         "pp_colors.c",
-    ],
-}
-
-filegroup {
-    name: "pp_init_c_impl",
-    srcs: [
         "pp_init.c",
-    ],
-}
-
-filegroup {
-    name: "pp_mlaa_c_impl",
-    srcs: [
         "pp_mlaa.c",
-    ],
-}
-
-filegroup {
-    name: "pp_program_c_impl",
-    srcs: [
         "pp_program.c",
-    ],
-}
-
-filegroup {
-    name: "pp_run_c_impl",
-    srcs: [
         "pp_run.c",
     ],
 }
 
 cc_library_headers {
-    name: "filters_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "postprocess_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_celshade_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_colors_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_filters_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_mlaa_areamap_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_mlaa_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "pp_private_h_headers",
+    name: "inc_src_gallium_auxiliary_postprocess",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

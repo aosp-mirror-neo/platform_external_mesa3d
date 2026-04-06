@@ -100,8 +100,8 @@ cc_library_shared {
         "gfxstream_vk_entrypoints_impl",
     ],
     srcs: [
-        ":files_lib_vulkan_enc_android_impl",
-        ":files_lib_vulkan_enc_impl",
+        ":files_lib_vulkan_enc",
+        ":files_lib_vulkan_enc_android",
         "gfxstream_vk_cmd.cpp",
         "gfxstream_vk_device.cpp",
         "gfxstream_vk_wsi.cpp",

@@ -60,7 +60,7 @@ python_binary_host {
 genrule {
     name: "driconf_static.h",
     out: [
-        "driconf_static.h",
+        "src/util/driconf_static.h",
     ],
     srcs: [
         "00-mesa-defaults.conf",
@@ -68,8 +68,12 @@ genrule {
     tools: [
         "driconf_static_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/util",
+    ],
     cmd: "$(location driconf_static_py_binary) $(location 00-mesa-defaults.conf) " +
-        "$(location driconf_static.h)",
+        "$(location src/util/driconf_static.h)",
 }
 
 genrule {
@@ -86,7 +90,7 @@ genrule {
 genrule {
     name: "shader_stats.h",
     out: [
-        "shader_stats.h",
+        "src/util/shader_stats.h",
     ],
     srcs: [
         "shader_stats.rnc",
@@ -95,9 +99,13 @@ genrule {
     tools: [
         "process_shader_stats_py_binary",
     ],
+    export_include_dirs: [
+        "src",
+        "src/util",
+    ],
     cmd: "$(location process_shader_stats_py_binary) $(location " +
         "shader_stats.rnc) $(location shader_stats.xml) > $(location " +
-        "shader_stats.h)",
+        "src/util/shader_stats.h)",
 }
 
 cc_defaults {
@@ -146,18 +154,12 @@ cc_library_static {
     ],
     header_libs: [
         "inc_include",
-        "inc_src_util_format",
+        "inc_src_util",
+        "inc_src_util_perf",
+        "inc_src_util_sha1",
         "inc_util",
         "inc_util_c11",
-        "sha1_h_headers",
-        "u_trace_h_headers",
-        "u_trace_priv_h_headers",
-    ] + select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("android", "true"): [
-            "u_perfetto_h_headers",
-        ],
-        (default, default): [],
-    }) + select(os(), {
+    ] + select(os(), {
         "android": [
             "hwvulkan_headers",
         ],
@@ -173,8 +175,8 @@ cc_library_static {
         "u_format_table.c",
     ],
     srcs: [
-        ":files_mesa_format_impl",
-        ":u_trace_c_impl",
+        ":files_mesa_format",
+        ":files_mesa_util",
         "anon_file.c",
         "bitscan.c",
         "blob.c",
@@ -255,11 +257,6 @@ cc_library_static {
         ],
         ("arm64", "linux_musl"): [
             "cache_ops_aarch64.c",
-        ],
-        (default, default): [],
-    }) + select((os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
-        ("android", "true"): [
-            ":u_perfetto_cc_impl",
         ],
         (default, default): [],
     }) + select(os(), {

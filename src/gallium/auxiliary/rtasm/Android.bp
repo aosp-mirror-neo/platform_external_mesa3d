@@ -15,30 +15,15 @@ package {
 }
 
 filegroup {
-    name: "rtasm_execmem_c_impl",
+    name: "files_libgallium_9",
     srcs: [
         "rtasm_execmem.c",
-    ],
-}
-
-filegroup {
-    name: "rtasm_x86sse_c_impl",
-    srcs: [
         "rtasm_x86sse.c",
     ],
 }
 
 cc_library_headers {
-    name: "rtasm_execmem_h_headers",
-    vendor: true,
-    host_supported: true,
-    export_include_dirs: [
-        ".",
-    ],
-}
-
-cc_library_headers {
-    name: "rtasm_x86sse_h_headers",
+    name: "inc_src_gallium_auxiliary_rtasm",
     vendor: true,
     host_supported: true,
     export_include_dirs: [

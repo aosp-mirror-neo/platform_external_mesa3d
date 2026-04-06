@@ -14,20 +14,6 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
-filegroup {
-    name: "vulkan-android_sym",
-    srcs: [
-        "vulkan-android.sym",
-    ],
-}
-
-filegroup {
-    name: "vulkan_sym",
-    srcs: [
-        "vulkan.sym",
-    ],
-}
-
 cc_defaults {
     name: "vulkan_wsi_list",
     vendor: true,
@@ -48,5 +34,11 @@ cc_defaults {
             "-DVK_USE_PLATFORM_DISPLAY_KHR",
         ],
         (default, default, default): [],
+    }),
+    cppflags: select(os(), {
+        "android": [
+            "-DVK_USE_PLATFORM_ANDROID_KHR",
+        ],
+        default: [],
     }),
 }
