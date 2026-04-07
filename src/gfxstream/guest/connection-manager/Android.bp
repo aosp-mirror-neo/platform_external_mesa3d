@@ -83,7 +83,7 @@ cc_library_static {
     srcs: [
         "GfxStreamConnection.cpp",
         "GfxStreamConnectionManager.cpp",
-        "QemuPipeStreamStub.cpp",
+        "QemuPipeStream.cpp",
         "VirtioGpuPipeStream.cpp",
     ],
     static_libs: [
