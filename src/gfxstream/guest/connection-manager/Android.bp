@@ -83,9 +83,24 @@ cc_library_static {
     srcs: [
         "GfxStreamConnection.cpp",
         "GfxStreamConnectionManager.cpp",
-        "QemuPipeStream.cpp",
         "VirtioGpuPipeStream.cpp",
-    ],
+    ] + select(os(), {
+        "android": [
+            "QemuPipeStream.cpp",
+        ],
+        default: [],
+    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("x86_64", "linux_glibc", default): [
+            "QemuPipeStreamStub.cpp",
+        ],
+        ("x86_64", "linux_musl", default): [
+            "QemuPipeStreamStub.cpp",
+        ],
+        ("arm64", "linux_musl", default): [
+            "QemuPipeStreamStub.cpp",
+        ],
+        (default, default, default): [],
+    }),
     static_libs: [
         "blake3",
         "gfxstream_vulkan_mapper",

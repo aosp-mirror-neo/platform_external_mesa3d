@@ -74,6 +74,17 @@ cc_library_shared {
             "hwvulkan_headers",
         ],
         default: [],
+    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("x86_64", "linux_glibc", default): [
+            "inc_gfxstream_vk_stubs",
+        ],
+        ("x86_64", "linux_musl", default): [
+            "inc_gfxstream_vk_stubs",
+        ],
+        ("arm64", "linux_musl", default): [
+            "inc_gfxstream_vk_stubs",
+        ],
+        (default, default, default): [],
     }),
     generated_headers: [
         "gfxstream_guest_vk_autogen_headers",
@@ -149,6 +160,17 @@ cc_library_shared {
             "mesa_util_clflushopt",
         ],
         default: [],
+    }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
+        ("x86_64", "linux_glibc", default): [
+            "gfxstream_vk_stubs",
+        ],
+        ("x86_64", "linux_musl", default): [
+            "gfxstream_vk_stubs",
+        ],
+        ("arm64", "linux_musl", default): [
+            "gfxstream_vk_stubs",
+        ],
+        (default, default, default): [],
     }),
     shared_libs: [
         "libOpenglCodecCommon",
