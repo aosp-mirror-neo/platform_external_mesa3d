@@ -138,7 +138,7 @@ cc_defaults {
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
         "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-        "-DPACKAGE_VERSION=\"26.1.0-devel\"",
+        "-DPACKAGE_VERSION=\"26.2.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -340,7 +340,7 @@ cc_defaults {
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
         "-DPACKAGE_BUGREPORT=\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\"",
-        "-DPACKAGE_VERSION=\"26.1.0-devel\"",
+        "-DPACKAGE_VERSION=\"26.2.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -531,9 +531,9 @@ rust_defaults {
  * have a dependency on this code.  They **shouldn't**, but they do.
  * This dependency may be removed when:
  *
- *    - gfxstream does testing Github, rather than Android
+ *    - gfxstream Github migration is complete
  *    - gfxstream GLES is deleted
- *    - out-of-tree goldfish drivers are remove in favor of virtio
+ *    - out-of-tree goldfish drivers are removed in favor of virtio
  *
  */
 

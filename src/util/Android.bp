@@ -156,7 +156,6 @@ cc_library_static {
         "inc_include",
         "inc_src_util",
         "inc_src_util_perf",
-        "inc_src_util_sha1",
         "inc_util",
         "inc_util_c11",
     ] + select(os(), {
@@ -199,7 +198,6 @@ cc_library_static {
         "lut.c",
         "memstream.c",
         "mesa-blake3.c",
-        "mesa-sha1.c",
         "mesa_cache_db.c",
         "mesa_cache_db_multipart.c",
         "os_file.c",
