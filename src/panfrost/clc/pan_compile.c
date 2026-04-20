@@ -353,10 +353,10 @@ main(int argc, const char **argv)
             libfunc, MESA_SHADER_COMPUTE, v, get_compiler_options(target_arch),
             &opt, load_kernel_input);
 
-         unsigned gpu_prod_id = (target_arch & 0xf) << 12;
+         uint64_t target_gpu_id = (target_arch & 0xf) << 28;
 
          struct pan_compile_inputs inputs = {
-            .gpu_id = gpu_prod_id << 16,
+            .gpu_id = target_gpu_id,
             .gpu_variant = 0,
          };
 
@@ -420,9 +420,6 @@ main(int argc, const char **argv)
                   glsl_get_cl_type_size_align);
 
          pan_preprocess_nir(s, inputs.gpu_id);
-         pan_nir_lower_texture_early(s, inputs.gpu_id);
-         pan_postprocess_nir(s, inputs.gpu_id);
-         pan_nir_lower_texture_late(s, inputs.gpu_id);
 
          NIR_PASS(_, s, nir_opt_deref);
          NIR_PASS(_, s, nir_lower_vars_to_ssa);
@@ -430,6 +427,8 @@ main(int argc, const char **argv)
                   nir_var_shader_temp | nir_var_function_temp |
                      nir_var_mem_shared | nir_var_mem_global,
                   nir_address_format_62bit_generic);
+
+         pan_postprocess_nir(s, inputs.gpu_id);
 
          NIR_PASS(_, s, nir_shader_intrinsics_pass, lower_sysvals,
                   nir_metadata_control_flow, NULL);
@@ -439,6 +438,11 @@ main(int argc, const char **argv)
          struct util_dynarray shader_binary;
          struct pan_shader_info shader_info = {0};
          shader_binary = UTIL_DYNARRAY_INIT;
+
+         if (target_arch >= 9)
+            shader_info.cs.allow_merging_workgroups =
+               valhall_can_merge_workgroups(s);
+
          pan_shader_compile(clone, &inputs, &shader_binary, &shader_info);
 
          assert(shader_info.push.count * 4 <=

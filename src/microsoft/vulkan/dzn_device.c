@@ -36,7 +36,7 @@
 #include "util/u_debug.h"
 #include "util/disk_cache.h"
 #include "util/macros.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/u_dl.h"
 
 #include "util/driconf.h"
@@ -351,40 +351,40 @@ dzn_physical_device_init_uuids(struct dzn_physical_device *pdev)
 {
    const char *mesa_version = "Mesa " PACKAGE_VERSION MESA_GIT_SHA1;
 
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(sha1));
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(blake3));
 
    /* The pipeline cache UUID is used for determining when a pipeline cache is
     * invalid. Our cache is device-agnostic, but it does depend on the features
     * provided by the D3D12 driver, so let's hash the build ID plus some
     * caps that might impact our NIR lowering passes.
     */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx,  mesa_version, strlen(mesa_version));
-   disk_cache_get_function_identifier(dzn_physical_device_init_uuids, &sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &pdev->options,
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx,  mesa_version, strlen(mesa_version));
+   disk_cache_get_function_identifier(dzn_physical_device_init_uuids, &blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &pdev->options,
       offsetof(struct dzn_physical_device, options21) + sizeof(pdev->options21) -
                      offsetof(struct dzn_physical_device, options));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(pdev->pipeline_cache_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(pdev->pipeline_cache_uuid, blake3, VK_UUID_SIZE);
 
    /* The driver UUID is used for determining sharability of images and memory
     * between two Vulkan instances in separate processes.  People who want to
     * share memory need to also check the device UUID (below) so all this
     * needs to be is the build-id.
     */
-   _mesa_sha1_compute(mesa_version, strlen(mesa_version), sha1);
-   memcpy(pdev->driver_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_compute(mesa_version, strlen(mesa_version), blake3);
+   memcpy(pdev->driver_uuid, blake3, VK_UUID_SIZE);
 
    /* The device UUID uniquely identifies the given device within the machine. */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &pdev->desc.vendor_id, sizeof(pdev->desc.vendor_id));
-   _mesa_sha1_update(&sha1_ctx, &pdev->desc.device_id, sizeof(pdev->desc.device_id));
-   _mesa_sha1_update(&sha1_ctx, &pdev->desc.subsys_id, sizeof(pdev->desc.subsys_id));
-   _mesa_sha1_update(&sha1_ctx, &pdev->desc.revision, sizeof(pdev->desc.revision));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(pdev->device_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &pdev->desc.vendor_id, sizeof(pdev->desc.vendor_id));
+   _mesa_blake3_update(&blake3_ctx, &pdev->desc.device_id, sizeof(pdev->desc.device_id));
+   _mesa_blake3_update(&blake3_ctx, &pdev->desc.subsys_id, sizeof(pdev->desc.subsys_id));
+   _mesa_blake3_update(&blake3_ctx, &pdev->desc.revision, sizeof(pdev->desc.revision));
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(pdev->device_uuid, blake3, VK_UUID_SIZE);
 }
 
 const struct vk_pipeline_cache_object_ops *const dzn_pipeline_cache_import_ops[] = {

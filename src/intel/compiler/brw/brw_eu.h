@@ -205,6 +205,7 @@ ALU1(RNDE)
 ALU1(RNDU)
 ALU1(RNDZ)
 ALU2(MAC)
+ALU2(MACL)
 ALU2(MACH)
 ALU1(LZD)
 ALU2(DP4)
@@ -444,13 +445,6 @@ brw_dp_read_desc(const struct intel_device_info *devinfo,
 }
 
 static inline unsigned
-brw_dp_read_desc_msg_type(const struct intel_device_info *devinfo,
-                          uint32_t desc)
-{
-   return brw_dp_desc_msg_type(devinfo, desc);
-}
-
-static inline unsigned
 brw_dp_read_desc_msg_control(const struct intel_device_info *devinfo,
                              uint32_t desc)
 {
@@ -471,13 +465,6 @@ brw_dp_write_desc(const struct intel_device_info *devinfo,
    assert(!send_commit_msg);
    return brw_dp_desc(devinfo, binding_table_index, msg_type, msg_control) |
           SET_BITS(send_commit_msg, 17, 17);
-}
-
-static inline unsigned
-brw_dp_write_desc_msg_type(const struct intel_device_info *devinfo,
-                           uint32_t desc)
-{
-   return brw_dp_desc_msg_type(devinfo, desc);
 }
 
 static inline unsigned
@@ -1424,33 +1411,19 @@ translate_systolic_depth(unsigned d)
    }
 }
 
-/**
- * Send message to shared unit \p sfid with a possibly indirect descriptor \p
- * desc.  If \p desc is not an immediate it will be transparently loaded to an
- * address register using an OR instruction.
- */
 void
-brw_send_indirect_message(struct brw_codegen *p,
-                          unsigned sfid,
-                          struct brw_reg dst,
-                          struct brw_reg payload,
-                          struct brw_reg desc,
-                          bool eot,
-                          bool gather);
-
-void
-brw_send_indirect_split_message(struct brw_codegen *p,
-                                unsigned sfid,
-                                struct brw_reg dst,
-                                struct brw_reg payload0,
-                                struct brw_reg payload1,
-                                struct brw_reg desc,
-                                struct brw_reg ex_desc,
-                                uint32_t ex_desc_imm_inst,
-                                unsigned ex_mlen,
-                                bool ex_bso,
-                                bool eot,
-                                bool gather);
+brw_SEND(struct brw_codegen *p,
+         unsigned sfid,
+         struct brw_reg dst,
+         struct brw_reg payload0,
+         struct brw_reg payload1,
+         struct brw_reg desc,
+         struct brw_reg ex_desc,
+         uint32_t ex_desc_imm_inst,
+         unsigned ex_mlen,
+         bool ex_bso,
+         bool eot,
+         bool gather);
 
 void gfx6_math(struct brw_codegen *p,
 	       struct brw_reg dest,

@@ -89,8 +89,6 @@ nir_def *
 ac_nir_load_smem(nir_builder *b, unsigned num_components, nir_def *addr, nir_def *offset,
                  unsigned align_mul, enum gl_access_qualifier access);
 
-bool ac_nir_lower_sin_cos(nir_shader *shader);
-
 typedef struct {
    enum amd_gfx_level gfx_level;
    bool has_ls_vgpr_init_bug;
@@ -470,6 +468,9 @@ ac_nir_op_supports_packed_math_16bit(const nir_alu_instr* alu);
 
 uint8_t
 ac_nir_opt_vectorize_cb(const nir_instr *instr, const void *data);
+
+unsigned
+ac_nir_get_io_driver_location(const nir_shader *nir, unsigned location, bool is_input);
 
 #ifdef __cplusplus
 }

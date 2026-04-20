@@ -107,7 +107,7 @@
 
 #include "lp_screen.h"
 #include "compiler/nir/nir_serialize.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 
 
 /** Fragment shader number (for debugging) */
@@ -1241,7 +1241,6 @@ generate_fs_loop(struct gallivm_state *gallivm,
       LLVMBuildStore(builder, out, ptr);
    }
 
-   bool has_cbuf0_write = false;
    /* Color write - per fragment sample */
    nir_foreach_shader_out_variable(var, nir) {
       if (var->data.location < FRAG_RESULT_DATA0)
@@ -1252,23 +1251,6 @@ generate_fs_loop(struct gallivm_state *gallivm,
          unsigned cbuf = get_cbuf_location(var, s);
          unsigned attrib = var->data.driver_location + s;
          if ((cbuf < key->nr_cbufs) || (cbuf == 1 && dual_source_blend)) {
-            if (cbuf == 0) {
-               /* XXX: there is an edge case with FB fetch where gl_FragColor and
-                * gl_LastFragData[0] are used together. This creates both
-                * FRAG_RESULT_COLOR and FRAG_RESULT_DATA* output variables. This
-                * loop then writes to cbuf 0 twice, owerwriting the correct value
-                * from gl_FragColor with some garbage. This case is excercised in
-                * one of deqp tests.  A similar bug can happen if
-                * gl_SecondaryFragColorEXT and gl_LastFragData[1] are mixed in
-                * the same fashion...  This workaround will break if
-                * gl_LastFragData[0] goes in outputs list before
-                * gl_FragColor. This doesn't seem to happen though.
-                */
-               if (has_cbuf0_write)
-                  continue;
-               has_cbuf0_write = true;
-            }
-
             for (unsigned chan = 0; chan < TGSI_NUM_CHANNELS; ++chan) {
                if (outputs[attrib][chan]) {
                   /* XXX: just initialize outputs to point at colors[] and
@@ -2499,7 +2481,6 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
 
    const bool is_1d = variant->key.resource_1d;
    const unsigned num_fullblock_fs = is_1d ? 2 * num_fs : num_fs;
-   LLVMValueRef fpstate = NULL;
 
    LLVMTypeRef fs_vec_type = lp_build_vec_type(gallivm, fs_type);
 
@@ -2507,23 +2488,6 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
    struct lp_type row_type, dst_type;
    lp_blend_type_from_format_desc(out_format_desc, &row_type);
    lp_mem_type_from_format_desc(out_format_desc, &dst_type);
-
-   /*
-    * Technically this code should go into lp_build_smallfloat_to_float
-    * and lp_build_float_to_smallfloat but due to the
-    * http://llvm.org/bugs/show_bug.cgi?id=6393
-    * llvm reorders the mxcsr intrinsics in a way that breaks the code.
-    * So the ordering is important here and there shouldn't be any
-    * llvm ir instrunctions in this function before
-    * this, otherwise half-float format conversions won't work
-    * (again due to llvm bug #6393).
-    */
-   if (have_smallfloat_format(dst_type, out_format)) {
-      /* We need to make sure that denorms are ok for half float
-         conversions */
-      fpstate = lp_build_fpstate_get(gallivm);
-      lp_build_fpstate_set_denorms_zero(gallivm, false);
-   }
 
    struct lp_type mask_type = lp_int32_vec4_type();
    mask_type.length = fs_type.length;
@@ -3146,10 +3110,6 @@ generate_unswizzled_blend(struct gallivm_state *gallivm,
 
    if (do_branch) {
       lp_build_mask_end(&mask_ctx);
-   }
-
-   if (fpstate) {
-      lp_build_fpstate_set(gallivm, fpstate);
    }
 }
 
@@ -3811,7 +3771,7 @@ lp_debug_fs_variant(struct lp_fragment_shader_variant *variant)
 
 static void
 lp_fs_get_ir_cache_key(struct lp_fragment_shader_variant *variant,
-                       unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH])
+                       unsigned char ir_blake3_cache_key[BLAKE3_KEY_LEN])
 {
    struct blob blob = { 0 };
    unsigned ir_size;
@@ -3822,11 +3782,11 @@ lp_fs_get_ir_cache_key(struct lp_fragment_shader_variant *variant,
    ir_binary = blob.data;
    ir_size = blob.size;
 
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
-   _mesa_sha1_update(&ctx, &variant->key, variant->shader->variant_key_size);
-   _mesa_sha1_update(&ctx, ir_binary, ir_size);
-   _mesa_sha1_final(&ctx, ir_sha1_cache_key);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
+   _mesa_blake3_update(&ctx, &variant->key, variant->shader->variant_key_size);
+   _mesa_blake3_update(&ctx, ir_binary, ir_size);
+   _mesa_blake3_final(&ctx, ir_blake3_cache_key);
 
    blob_finish(&blob);
 }
@@ -3856,12 +3816,12 @@ generate_variant(struct llvmpipe_context *lp,
 
    struct llvmpipe_screen *screen = llvmpipe_screen(lp->pipe.screen);
    struct lp_cached_code cached = { 0 };
-   unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH];
+   unsigned char ir_blake3_cache_key[BLAKE3_KEY_LEN];
    bool needs_caching = false;
    if (shader->base.ir.nir) {
-      lp_fs_get_ir_cache_key(variant, ir_sha1_cache_key);
+      lp_fs_get_ir_cache_key(variant, ir_blake3_cache_key);
 
-      lp_disk_cache_find_shader(screen, &cached, ir_sha1_cache_key);
+      lp_disk_cache_find_shader(screen, &cached, ir_blake3_cache_key);
       if (!cached.data_size)
          needs_caching = true;
    }
@@ -4076,7 +4036,7 @@ generate_variant(struct llvmpipe_context *lp,
    }
 
    if (needs_caching) {
-      lp_disk_cache_insert_shader(screen, &cached, ir_sha1_cache_key);
+      lp_disk_cache_insert_shader(screen, &cached, ir_blake3_cache_key);
    }
 
    gallivm_free_ir(variant->gallivm);

@@ -13,7 +13,7 @@
 #include <stdio.h>
 
 #include "git_sha1.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_misc.h"
 #include "venus-protocol/vn_protocol_driver_device.h"
 #include "vk_android.h"
@@ -472,31 +472,31 @@ static void
 vn_physical_device_init_uuids(struct vn_physical_device *physical_dev)
 {
    struct vk_properties *props = &physical_dev->base.vk.properties;
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
 
-   static_assert(VK_UUID_SIZE <= SHA1_DIGEST_LENGTH, "");
+   static_assert(VK_UUID_SIZE <= BLAKE3_KEY_LEN, "");
 
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &props->pipelineCacheUUID,
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &props->pipelineCacheUUID,
                      sizeof(props->pipelineCacheUUID));
-   _mesa_sha1_final(&sha1_ctx, sha1);
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   memcpy(props->pipelineCacheUUID, sha1, VK_UUID_SIZE);
+   memcpy(props->pipelineCacheUUID, blake3, VK_UUID_SIZE);
 
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &props->vendorID, sizeof(props->vendorID));
-   _mesa_sha1_update(&sha1_ctx, &props->deviceID, sizeof(props->deviceID));
-   _mesa_sha1_final(&sha1_ctx, sha1);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &props->vendorID, sizeof(props->vendorID));
+   _mesa_blake3_update(&blake3_ctx, &props->deviceID, sizeof(props->deviceID));
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   memcpy(props->deviceUUID, sha1, VK_UUID_SIZE);
+   memcpy(props->deviceUUID, blake3, VK_UUID_SIZE);
 
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, props->driverName, strlen(props->driverName));
-   _mesa_sha1_update(&sha1_ctx, props->driverInfo, strlen(props->driverInfo));
-   _mesa_sha1_final(&sha1_ctx, sha1);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, props->driverName, strlen(props->driverName));
+   _mesa_blake3_update(&blake3_ctx, props->driverInfo, strlen(props->driverInfo));
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   memcpy(props->driverUUID, sha1, VK_UUID_SIZE);
+   memcpy(props->driverUUID, blake3, VK_UUID_SIZE);
 
    const struct vn_renderer *renderer = physical_dev->instance->renderer;
    if (renderer->info.id.has_luid) {
@@ -1567,12 +1567,6 @@ vn_physical_device_init_renderer_extensions(
 
    vk_free(alloc, exts);
 
-   /* VK_KHR_external_memory_fd is required for venus memory mapping */
-   if (!physical_dev->renderer_extensions.KHR_external_memory_fd) {
-      vk_free(alloc, physical_dev->extension_spec_versions);
-      return VK_ERROR_INCOMPATIBLE_DRIVER;
-   }
-
    return VK_SUCCESS;
 }
 
@@ -1692,6 +1686,10 @@ vn_physical_device_init(struct vn_physical_device *physical_dev)
    const VkAllocationCallbacks *alloc = &instance->base.vk.alloc;
    VkResult result;
 
+   result = vn_physical_device_init_renderer_extensions(physical_dev);
+   if (result != VK_SUCCESS)
+      return result;
+
    vn_physical_device_init_external_memory(physical_dev);
    vn_physical_device_init_external_fence_handles(physical_dev);
    vn_physical_device_init_external_semaphore_handles(physical_dev);
@@ -1723,6 +1721,7 @@ vn_physical_device_init(struct vn_physical_device *physical_dev)
    return VK_SUCCESS;
 
 fail:
+   vk_free(alloc, physical_dev->extension_spec_versions);
    vk_free(alloc, physical_dev->queue_family_properties);
    return result;
 }
@@ -1931,12 +1930,6 @@ filter_physical_devices(struct vn_physical_device *physical_devs,
       /* init renderer version and discard unsupported devices */
       VkResult result =
          vn_physical_device_init_renderer_version(physical_dev);
-      if (result != VK_SUCCESS) {
-         vn_physical_device_base_fini(&physical_dev->base);
-         continue;
-      }
-
-      result = vn_physical_device_init_renderer_extensions(physical_dev);
       if (result != VK_SUCCESS) {
          vn_physical_device_base_fini(&physical_dev->base);
          continue;
@@ -2370,12 +2363,12 @@ vn_image_get_image_format_key(
    const VkImageFormatProperties2 *format_props,
    uint8_t *key)
 {
-   struct mesa_sha1 sha1_ctx;
+   blake3_hasher blake3_ctx;
 
    if (!physical_dev->image_format_cache.ht)
       return false;
 
-   _mesa_sha1_init(&sha1_ctx);
+   _mesa_blake3_init(&blake3_ctx);
 
    /* VUID-VkPhysicalDeviceImageFormatInfo2-pNext-pNext
     * Each pNext member of any structure (including this one) in the pNext
@@ -2394,10 +2387,10 @@ vn_image_get_image_format_key(
          case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_CONTROL_EXT: {
             VkImageCompressionControlEXT *compression_control =
                (VkImageCompressionControlEXT *)src;
-            _mesa_sha1_update(&sha1_ctx, &compression_control->flags,
+            _mesa_blake3_update(&blake3_ctx, &compression_control->flags,
                               sizeof(VkImageCompressionFlagsEXT));
-            _mesa_sha1_update(
-               &sha1_ctx, compression_control->pFixedRateFlags,
+            _mesa_blake3_update(
+               &blake3_ctx, compression_control->pFixedRateFlags,
                sizeof(uint32_t) *
                   compression_control->compressionControlPlaneCount);
             break;
@@ -2405,8 +2398,8 @@ vn_image_get_image_format_key(
          case VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO: {
             VkImageFormatListCreateInfo *format_list =
                (VkImageFormatListCreateInfo *)src;
-            _mesa_sha1_update(
-               &sha1_ctx, format_list->pViewFormats,
+            _mesa_blake3_update(
+               &blake3_ctx, format_list->pViewFormats,
                sizeof(VkFormat) * format_list->viewFormatCount);
 
             break;
@@ -2414,25 +2407,25 @@ vn_image_get_image_format_key(
          case VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO: {
             VkImageStencilUsageCreateInfo *stencil_usage =
                (VkImageStencilUsageCreateInfo *)src;
-            _mesa_sha1_update(&sha1_ctx, &stencil_usage->stencilUsage,
+            _mesa_blake3_update(&blake3_ctx, &stencil_usage->stencilUsage,
                               sizeof(VkImageUsageFlags));
             break;
          }
          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO: {
             VkPhysicalDeviceExternalImageFormatInfo *ext_image =
                (VkPhysicalDeviceExternalImageFormatInfo *)src;
-            _mesa_sha1_update(&sha1_ctx, &ext_image->handleType,
+            _mesa_blake3_update(&blake3_ctx, &ext_image->handleType,
                               sizeof(VkExternalMemoryHandleTypeFlagBits));
             break;
          }
          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT: {
             VkPhysicalDeviceImageDrmFormatModifierInfoEXT *modifier_info =
                (VkPhysicalDeviceImageDrmFormatModifierInfoEXT *)src;
-            _mesa_sha1_update(&sha1_ctx, &modifier_info->drmFormatModifier,
+            _mesa_blake3_update(&blake3_ctx, &modifier_info->drmFormatModifier,
                               sizeof(uint64_t));
             if (modifier_info->sharingMode == VK_SHARING_MODE_CONCURRENT) {
-               _mesa_sha1_update(
-                  &sha1_ctx, modifier_info->pQueueFamilyIndices,
+               _mesa_blake3_update(
+                  &blake3_ctx, modifier_info->pQueueFamilyIndices,
                   sizeof(uint32_t) * modifier_info->queueFamilyIndexCount);
             }
             break;
@@ -2440,7 +2433,7 @@ vn_image_get_image_format_key(
          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_VIEW_IMAGE_FORMAT_INFO_EXT: {
             VkPhysicalDeviceImageViewImageFormatInfoEXT *view_image =
                (VkPhysicalDeviceImageViewImageFormatInfoEXT *)src;
-            _mesa_sha1_update(&sha1_ctx, &view_image->imageViewType,
+            _mesa_blake3_update(&blake3_ctx, &view_image->imageViewType,
                               sizeof(VkImageViewType));
             break;
          }
@@ -2477,7 +2470,7 @@ vn_image_get_image_format_key(
          case VK_STRUCTURE_TYPE_IMAGE_COMPRESSION_PROPERTIES_EXT:
          case VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_IMAGE_FORMAT_PROPERTIES:
          case VK_STRUCTURE_TYPE_FILTER_CUBIC_IMAGE_VIEW_IMAGE_FORMAT_PROPERTIES_EXT:
-            _mesa_sha1_update(&sha1_ctx, &src->sType,
+            _mesa_blake3_update(&blake3_ctx, &src->sType,
                               sizeof(VkStructureType));
             break;
          default:
@@ -2491,9 +2484,9 @@ vn_image_get_image_format_key(
       sizeof(VkFormat) + sizeof(VkImageType) + sizeof(VkImageTiling) +
       sizeof(VkImageUsageFlags) + sizeof(VkImageCreateFlags);
 
-   _mesa_sha1_update(&sha1_ctx, &format_info->format,
+   _mesa_blake3_update(&blake3_ctx, &format_info->format,
                      format_info_2_hash_block_size);
-   _mesa_sha1_final(&sha1_ctx, key);
+   _mesa_blake3_final(&blake3_ctx, key);
 
    return true;
 }
@@ -2664,7 +2657,7 @@ vn_image_store_format_in_cache(
    cache_entry->properties.format = *pImageFormatProperties;
    cache_entry->properties.cached_result = cached_result;
 
-   memcpy(cache_entry->key, key, SHA1_DIGEST_LENGTH);
+   memcpy(cache_entry->key, key, BLAKE3_KEY_LEN);
 
    _mesa_hash_table_insert(cache->ht, cache_entry->key, cache_entry);
    list_add(&cache_entry->head, &cache->lru);
@@ -2858,7 +2851,7 @@ vn_GetPhysicalDeviceImageFormatProperties2(
    }
 
    /* Check if image format props is in the cache. */
-   uint8_t key[SHA1_DIGEST_LENGTH] = { 0 };
+   uint8_t key[BLAKE3_KEY_LEN] = { 0 };
    const bool cacheable = vn_image_get_image_format_key(
       physical_dev, pImageFormatInfo, pImageFormatProperties, key);
 

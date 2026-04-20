@@ -293,7 +293,6 @@ llvmpipe_init_screen_caps(struct pipe_screen *screen)
    caps->max_texture_gather_components = 4;
    caps->vs_window_space_position = true;
    caps->fs_fine_derivative = true;
-   caps->tgsi_tex_txf_lz = true;
    caps->sampler_view_target = true;
    caps->fake_sw_msaa = false;
    caps->texture_query_lod = true;
@@ -498,7 +497,6 @@ static const struct nir_shader_compiler_options gallivm_nir_options = {
    .lower_uadd_sat = true,
    .lower_usub_sat = true,
    .lower_iadd_sat = true,
-   .lower_ldexp = true,
    .lower_pack_snorm_2x16 = true,
    .lower_pack_snorm_4x8 = true,
    .lower_pack_unorm_2x16 = true,
@@ -870,7 +868,7 @@ llvmpipe_fence_finish(struct pipe_screen *screen,
 
 
 static void
-update_cache_sha1_cpu(struct mesa_sha1 *ctx)
+update_cache_blake3_cpu(blake3_hasher *ctx)
 {
    const struct util_cpu_caps_t *cpu_caps = util_get_cpu_caps();
    /*
@@ -879,27 +877,27 @@ update_cache_sha1_cpu(struct mesa_sha1 *ctx)
     */
    STATIC_ASSERT(offsetof(struct util_cpu_caps_t, num_L3_caches)
                  == 5 * sizeof(uint32_t));
-   _mesa_sha1_update(ctx, cpu_caps, 5 * sizeof(uint32_t));
+   _mesa_blake3_update(ctx, cpu_caps, 5 * sizeof(uint32_t));
 }
 
 
 static void
 lp_disk_cache_create(struct llvmpipe_screen *screen)
 {
-   struct mesa_sha1 ctx;
+   blake3_hasher ctx;
    unsigned gallivm_perf = gallivm_get_perf_flags();
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
-   char cache_id[SHA1_DIGEST_STRING_LENGTH];
-   _mesa_sha1_init(&ctx);
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   char cache_id[BLAKE3_HEX_LEN];
+   _mesa_blake3_init(&ctx);
 
    if (!disk_cache_get_function_identifier(lp_disk_cache_create, &ctx) ||
        !disk_cache_get_function_identifier(LLVMLinkInMCJIT, &ctx))
       return;
 
-   _mesa_sha1_update(&ctx, &gallivm_perf, sizeof(gallivm_perf));
-   update_cache_sha1_cpu(&ctx);
-   _mesa_sha1_final(&ctx, sha1);
-   mesa_bytes_to_hex(cache_id, sha1, SHA1_DIGEST_LENGTH);
+   _mesa_blake3_update(&ctx, &gallivm_perf, sizeof(gallivm_perf));
+   update_cache_blake3_cpu(&ctx);
+   _mesa_blake3_final(&ctx, blake3);
+   mesa_bytes_to_hex(cache_id, blake3, BLAKE3_KEY_LEN);
 
    screen->disk_shader_cache = disk_cache_create("llvmpipe", cache_id, 0);
 }
@@ -929,18 +927,18 @@ llvmpipe_screen_get_fd(struct pipe_screen *_screen)
 void
 lp_disk_cache_find_shader(struct llvmpipe_screen *screen,
                           struct lp_cached_code *cache,
-                          unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH])
+                          unsigned char ir_blake3_cache_key[BLAKE3_KEY_LEN])
 {
-   unsigned char sha1[CACHE_KEY_SIZE];
+   unsigned char blake3[CACHE_KEY_SIZE];
 
    if (!screen->disk_shader_cache)
       return;
-   disk_cache_compute_key(screen->disk_shader_cache, ir_sha1_cache_key,
-                          20, sha1);
+   disk_cache_compute_key(screen->disk_shader_cache, ir_blake3_cache_key,
+                          20, blake3);
 
    size_t binary_size;
    uint8_t *buffer = disk_cache_get(screen->disk_shader_cache,
-                                    sha1, &binary_size);
+                                    blake3, &binary_size);
    if (!buffer) {
       cache->data_size = 0;
       return;
@@ -953,15 +951,15 @@ lp_disk_cache_find_shader(struct llvmpipe_screen *screen,
 void
 lp_disk_cache_insert_shader(struct llvmpipe_screen *screen,
                             struct lp_cached_code *cache,
-                            unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH])
+                            unsigned char ir_blake3_cache_key[BLAKE3_KEY_LEN])
 {
-   unsigned char sha1[CACHE_KEY_SIZE];
+   unsigned char blake3[CACHE_KEY_SIZE];
 
    if (!screen->disk_shader_cache || !cache->data_size || cache->dont_cache)
       return;
-   disk_cache_compute_key(screen->disk_shader_cache, ir_sha1_cache_key,
-                          20, sha1);
-   disk_cache_put(screen->disk_shader_cache, sha1, cache->data,
+   disk_cache_compute_key(screen->disk_shader_cache, ir_blake3_cache_key,
+                          20, blake3);
+   disk_cache_put(screen->disk_shader_cache, blake3, cache->data,
                   cache->data_size, NULL);
 }
 

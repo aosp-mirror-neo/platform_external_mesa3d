@@ -12,6 +12,8 @@
 
 #include <stdio.h>
 #include <errno.h>
+#include "compiler/jay/jay.h"
+#include "dev/intel_device_info.h"
 #include "pipe/p_defines.h"
 #include "pipe/p_state.h"
 #include "pipe/p_context.h"
@@ -757,7 +759,7 @@ iris_lower_storage_image_derefs_instr(nir_builder *b,
       nir_def *index =
          nir_iadd_imm(b, get_aoa_deref_offset(b, deref, 1),
                       var->data.driver_location);
-      nir_rewrite_image_intrinsic(intrin, index, false);
+      nir_rewrite_image_intrinsic(intrin, index, nir_image_intrinsic_type_default);
       return true;
    }
 
@@ -1815,19 +1817,19 @@ iris_debug_archiver_open(void *tmp_ctx, struct iris_screen *screen,
    if (!INTEL_DEBUG(DEBUG_MDA) || !screen->brw)
       return NULL;
 
-   char name[SHA1_DIGEST_STRING_LENGTH + 5] = {};
+   char name[BLAKE3_HEX_LEN + 5] = {};
    {
-      struct mesa_sha1 ctx;
-      unsigned char hash[SHA1_DIGEST_LENGTH];
+      blake3_hasher ctx;
+      unsigned char hash[BLAKE3_KEY_LEN];
 
-      _mesa_sha1_init(&ctx);
-      _mesa_sha1_update(&ctx, nir->info.source_blake3, BLAKE3_OUT_LEN);
-      _mesa_sha1_update(&ctx, key, key_size);
-      _mesa_sha1_final(&ctx, hash);
+      _mesa_blake3_init(&ctx);
+      _mesa_blake3_update(&ctx, nir->info.source_blake3, BLAKE3_OUT_LEN);
+      _mesa_blake3_update(&ctx, key, key_size);
+      _mesa_blake3_final(&ctx, hash);
 
-      _mesa_sha1_format(name, hash);
+      _mesa_blake3_format(name, hash);
    }
-   memcpy(&name[SHA1_DIGEST_STRING_LENGTH - 1], ".iris", 5);
+   memcpy(&name[BLAKE3_HEX_LEN - 1], ".iris", 5);
 
    debug_archiver *debug_archiver =
       debug_archiver_open(tmp_ctx, name, PACKAGE_VERSION MESA_GIT_SHA1);
@@ -1926,7 +1928,17 @@ iris_compile_vs(struct iris_screen *screen,
          .prog_data = brw_prog_data,
       };
 
-      program = brw_compile_vs(screen->brw, &params);
+      if (intel_use_jay(devinfo, nir->info.stage)) {
+         struct jay_shader_bin *bin =
+            jay_compile(devinfo, mem_ctx, nir,
+                        (union brw_any_prog_data *) brw_prog_data,
+                        (union brw_any_prog_key *) &brw_key);
+
+         program = bin->kernel;
+      } else {
+         program = brw_compile_vs(screen->brw, &params);
+      }
+
       error = params.base.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
@@ -2774,7 +2786,6 @@ iris_compile_fs(struct iris_screen *screen,
       brw_apply_ubo_ranges(screen, nir, ubo_ranges, &brw_prog_data->base);
 
       struct brw_fs_prog_key brw_key = iris_to_brw_fs_key(screen, key);
-
       struct brw_compile_fs_params params = {
          .base = {
             .mem_ctx = mem_ctx,
@@ -2791,7 +2802,17 @@ iris_compile_fs(struct iris_screen *screen,
          .vue_map = vue_map,
       };
 
-      program = brw_compile_fs(screen->brw, &params);
+      if (intel_use_jay(devinfo, nir->info.stage)) {
+         struct jay_shader_bin *bin =
+            jay_compile(devinfo, mem_ctx, nir,
+                        (union brw_any_prog_data *) brw_prog_data,
+                        (union brw_any_prog_key *) &brw_key);
+
+         program = bin->kernel;
+      } else {
+         program = brw_compile_fs(screen->brw, &params);
+      }
+
       error = params.base.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
@@ -3141,7 +3162,17 @@ iris_compile_cs(struct iris_screen *screen,
          .prog_data = brw_prog_data,
       };
 
-      program = brw_compile_cs(screen->brw, &params);
+      if (intel_use_jay(devinfo, nir->info.stage)) {
+         struct jay_shader_bin *bin =
+            jay_compile(devinfo, mem_ctx, nir,
+                        (union brw_any_prog_data *) brw_prog_data,
+                        (union brw_any_prog_key *) &brw_key);
+
+         program = bin->kernel;
+      } else {
+         program = brw_compile_cs(screen->brw, &params);
+      }
+
       error = params.base.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
@@ -3380,7 +3411,7 @@ iris_create_uncompiled_shader(struct iris_screen *screen,
       struct blob blob;
       blob_init(&blob);
       nir_serialize(&blob, nir, true);
-      _mesa_sha1_compute(blob.data, blob.size, ish->nir_sha1);
+      _mesa_blake3_compute(blob.data, blob.size, ish->nir_blake3);
       blob_finish(&blob);
    }
 

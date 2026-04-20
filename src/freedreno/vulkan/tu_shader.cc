@@ -5,9 +5,11 @@
 
 #include "tu_shader.h"
 
-#include "spirv/nir_spirv.h"
-#include "util/mesa-sha1.h"
+#include <initializer_list>
+
 #include "nir/nir_xfb_info.h"
+#include "spirv/nir_spirv.h"
+#include "util/mesa-blake3.h"
 #include "vk_nir.h"
 #include "vk_nir_convert_ycbcr.h"
 #include "vk_pipeline.h"
@@ -15,15 +17,13 @@
 
 #include "ir3/ir3_compiler.h"
 #include "ir3/ir3_nir.h"
-
-#include "tu_device.h"
 #include "tu_descriptor_set.h"
+#include "tu_device.h"
 #include "tu_lrz.h"
 #include "tu_pipeline.h"
 #include "tu_rmv.h"
+#include "tu_sampler.h"
 #include "tu_subsampled_image.h"
-
-#include <initializer_list>
 
 static void
 init_ir3_nir_options(struct ir3_shader_nir_options *options,
@@ -237,6 +237,16 @@ tu_spirv_to_nir(struct tu_device *dev,
    NIR_PASS(_, nir, nir_opt_find_array_copies);
    NIR_PASS(_, nir, nir_opt_copy_prop_vars);
    NIR_PASS(_, nir, nir_opt_dce);
+
+   if (stage == MESA_SHADER_FRAGMENT) {
+      /* We currently assume gl_PrimitiveID lives in a varying in fragment
+       * shaders but spirv_to_nir gives us a sysval.
+       */
+      const nir_lower_sysvals_to_varyings_options sysval_options = {
+         .primitive_id = true,
+      };
+      NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysval_options);
+   }
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
@@ -595,7 +605,8 @@ lower_image_deref(struct tu_device *dev, nir_builder *b,
 {
    nir_deref_instr *deref = nir_src_as_deref(instr->src[0]);
    nir_def *bindless = build_bindless(dev, b, deref, 0, shader, layout, 0, false);
-   nir_rewrite_image_intrinsic(instr, bindless, true);
+   nir_rewrite_image_intrinsic(instr, bindless,
+                               nir_image_intrinsic_type_bindless);
 }
 
 static bool
@@ -678,14 +689,18 @@ lower_intrinsic(nir_builder *b, nir_intrinsic_instr *instr,
       nir_def_replace(&instr->def, result);
       return true;
    }
-   case nir_intrinsic_load_frag_invocation_count: {
+   case nir_intrinsic_load_frag_invocation_count:
+   case nir_intrinsic_load_alpha_to_coverage_enable_ir3: {
       if (!dev->compiler->info->props.load_shader_consts_via_preamble)
          return false;
 
+      unsigned offset =
+         instr->intrinsic == nir_intrinsic_load_frag_invocation_count ?
+         IR3_DP_FS(frag_invocation_count) :
+         IR3_DP_FS(alpha_to_coverage_enable);
       nir_def *result =
          ir3_load_driver_ubo(b, 1, &shader->const_state.fdm_ubo,
-                             IR3_DP_FS(frag_invocation_count) -
-                             IR3_DP_FS_DYNAMIC);
+                             offset - IR3_DP_FS_DYNAMIC);
 
       nir_def_replace(&instr->def, result);
       return true;
@@ -1529,6 +1544,20 @@ tu_nir_lower_view_to_zero(nir_shader *shader)
                                         lower_view_to_zero, NULL);
 }
 
+static bool
+lower_alpha_to_coverage(nir_shader *shader)
+{
+   nir_builder b = nir_builder_create(nir_shader_get_entrypoint(shader));
+   b.cursor = nir_before_cf_list(&nir_shader_get_entrypoint(shader)->body);
+   nir_def *a2c_enabled =
+      nir_ine_imm(&b, nir_load_alpha_to_coverage_enable_ir3(&b), 0);
+
+   NIR_PASS(_, shader, nir_lower_alpha_to_coverage, false, a2c_enabled);
+   NIR_PASS(_, shader, tu_nir_lower_demote_samples);
+
+   return true;
+}
+
 static void
 shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
 {
@@ -1547,7 +1576,8 @@ tu_xs_get_immediates_packet_size_dwords(const struct ir3_shader_variant *xs)
    const struct ir3_const_state *const_state = ir3_const_state(xs);
    uint32_t base = const_state->allocs.max_const_offset_vec4;
    const struct ir3_imm_const_state *imm_state = &xs->imm_state;
-   int32_t size = DIV_ROUND_UP(imm_state->count, 4);
+   int32_t size = xs->compiler->info->props.load_shader_consts_via_preamble ?
+      0 : DIV_ROUND_UP(imm_state->count, 4);
 
    /* truncate size to avoid writing constants that shader
     * does not use:
@@ -2414,13 +2444,15 @@ tu6_emit_ds(struct tu_cs *cs,
          regid(63, 0);
    const uint32_t ds_primitiveid_regid =
          ir3_find_sysval_regid(ds, SYSTEM_VALUE_PRIMITIVE_ID);
+   const uint32_t viewid_regid =
+         ir3_find_sysval_regid(ds, SYSTEM_VALUE_VIEW_INDEX);
 
    tu_cs_emit_pkt4(cs, REG_A6XX_VFD_CNTL_3, 2);
    tu_cs_emit(cs, A6XX_VFD_CNTL_3_REGID_DSRELPATCHID(ds_rel_patch_regid) |
                   A6XX_VFD_CNTL_3_REGID_TESSX(tess_coord_x_regid) |
                   A6XX_VFD_CNTL_3_REGID_TESSY(tess_coord_y_regid) |
                   A6XX_VFD_CNTL_3_REGID_DSPRIMID(ds_primitiveid_regid));
-   tu_cs_emit(cs, 0x000000fc); /* VFD_CNTL_4 */
+   tu_cs_emit(cs, A6XX_VFD_CNTL_4_REGID_DSVIEWID(viewid_regid)); /* VFD_CNTL_4 */
 }
 TU_GENX(tu6_emit_ds);
 
@@ -2445,10 +2477,12 @@ tu6_emit_gs(struct tu_cs *cs,
 {
    const uint32_t gsheader_regid =
          ir3_find_sysval_regid(gs, SYSTEM_VALUE_GS_HEADER_IR3);
+   const uint32_t viewid_regid =
+         ir3_find_sysval_regid(gs, SYSTEM_VALUE_VIEW_INDEX);
 
    tu_cs_emit_pkt4(cs, REG_A6XX_VFD_CNTL_5, 1);
    tu_cs_emit(cs, A6XX_VFD_CNTL_5_REGID_GSHEADER(gsheader_regid) |
-                  0xfc00);
+                  A6XX_VFD_CNTL_5_REGID_GSVIEWID(viewid_regid));
 
    if (gs) {
       uint32_t vertices_out, invocations;
@@ -2901,22 +2935,13 @@ tu_shader_deserialize(struct vk_pipeline_cache *cache,
    return &shader->base;
 }
 
-VkResult
-tu_shader_create(struct tu_device *dev,
-                 struct tu_shader **shader_out,
-                 nir_shader *nir,
-                 const struct tu_shader_key *key,
-                 const struct ir3_shader_key *ir3_key,
-                 const void *key_data,
-                 size_t key_size,
-                 struct tu_pipeline_layout *layout,
-                 bool executable_info)
+void
+tu_lower_nir(struct tu_device *dev,
+             nir_shader *nir,
+             const struct tu_shader_key *key,
+             const struct ir3_shader_key *ir3_key,
+             struct tu_shader_info *info)
 {
-   struct tu_shader *shader = tu_shader_init(dev, key_data, key_size);
-
-   if (!shader)
-      return VK_ERROR_OUT_OF_HOST_MEMORY;
-
    const nir_opt_access_options access_options = {
       .is_vulkan = true,
    };
@@ -2964,12 +2989,7 @@ tu_shader_create(struct tu_device *dev,
        nir->info.stage != MESA_SHADER_COMPUTE &&
        !key->multiview_mask &&
        key->fdm_per_layer) {
-      NIR_PASS(_, nir, tu_nir_lower_layered_fdm, &shader->per_layer_viewport);
-   }
-
-   if (nir->info.stage == MESA_SHADER_FRAGMENT &&
-       key->fdm_per_layer) {
-      shader->fs.max_fdm_layers = key->max_fdm_layers;
+      NIR_PASS(_, nir, tu_nir_lower_layered_fdm, &info->per_layer_viewport);
    }
 
    /* Note that nir_opt_barrier_modes here breaks tests such as
@@ -2985,9 +3005,13 @@ tu_shader_create(struct tu_device *dev,
     */
    ir3_nir_lower_io_vars_to_temporaries(nir);
 
-   if (nir->info.stage == MESA_SHADER_VERTEX && key->multiview_mask) {
-      tu_nir_lower_multiview(nir, key->multiview_mask, dev);
-   }
+   bool is_last_stage =
+    (nir->info.stage == MESA_SHADER_VERTEX && !ir3_key->has_gs && !ir3_key->tessellation);
+
+   if (nir->info.stage == MESA_SHADER_VERTEX && key->multiview_mask)
+      tu_nir_lower_multiview(nir, key->multiview_mask, dev, is_last_stage);
+   if (nir->info.stage == MESA_SHADER_GEOMETRY)
+      nir->info.view_mask = key->multiview_mask;
 
    if (!key->multiview_mask)
       tu_nir_lower_view_to_zero(nir);
@@ -3048,15 +3072,6 @@ tu_shader_create(struct tu_device *dev,
          nir->info.stage == MESA_SHADER_GEOMETRY)
       nir_shader_gather_xfb_info(nir);
 
-   for (unsigned i = 0; i < layout->num_sets; i++) {
-      if (layout->set[i].layout) {
-         shader->dynamic_descriptor_sizes[i] =
-            layout->set[i].layout->dynamic_offset_size;
-      } else {
-         shader->dynamic_descriptor_sizes[i] = -1;
-      }
-   }
-
    {
       /* Lower 64b push constants before lowering IO. */
       nir_lower_mem_access_bit_sizes_options options = {
@@ -3068,6 +3083,43 @@ tu_shader_create(struct tu_device *dev,
    }
 
    ir3_nir_lower_io(nir);
+
+   if (key->emulate_alpha_to_coverage)
+      lower_alpha_to_coverage(nir);
+}
+
+VkResult
+tu_shader_create(struct tu_device *dev,
+                 struct tu_shader **shader_out,
+                 nir_shader *nir,
+                 const struct tu_shader_key *key,
+                 const struct tu_shader_info *info,
+                 const struct ir3_shader_key *ir3_key,
+                 const void *key_data,
+                 size_t key_size,
+                 struct tu_pipeline_layout *layout,
+                 bool executable_info)
+{
+   struct tu_shader *shader = tu_shader_init(dev, key_data, key_size);
+
+   if (!shader)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   shader->per_layer_viewport = info->per_layer_viewport;
+
+   if (nir->info.stage == MESA_SHADER_FRAGMENT &&
+       key->fdm_per_layer) {
+      shader->fs.max_fdm_layers = key->max_fdm_layers;
+   }
+
+   for (unsigned i = 0; i < layout->num_sets; i++) {
+      if (layout->set[i].layout) {
+         shader->dynamic_descriptor_sizes[i] =
+            layout->set[i].layout->dynamic_offset_size;
+      } else {
+         shader->dynamic_descriptor_sizes[i] = -1;
+      }
+   }
 
    struct ir3_const_allocations const_allocs = {};
    NIR_PASS(_, nir, tu_lower_io, dev, shader, layout,
@@ -3188,108 +3240,42 @@ tu_shader_create(struct tu_device *dev,
 }
 
 static void
-lower_io_to_scalar_early(nir_shader *nir, nir_variable_mode mask)
+link_opts(nir_shader *shader, void *data)
 {
-   bool progress = false;
-   NIR_PASS(progress, nir, nir_lower_io_vars_to_scalar, mask);
+   struct ir3_compiler *compiler = static_cast<struct ir3_compiler *>(data);
 
-   if (progress) {
-      /* Optimize the new vector code and then remove dead vars. */
-      NIR_PASS(_, nir, nir_opt_copy_prop);
-
-      if (mask & nir_var_shader_out) {
-         /* Optimize swizzled movs of load_const for nir_link_opt_varyings's
-          * constant propagation.
-          */
-         NIR_PASS(_, nir, nir_opt_constant_folding);
-
-         /* For nir_link_opt_varyings's duplicate input opt. */
-         NIR_PASS(_, nir, nir_opt_cse);
-      }
-
-      /* Run copy-propagation to help remove dead output variables (some
-       * shaders have useless copies to/from an output), so compaction later
-       * will be more effective.
-       *
-       * This will have been done earlier but it might not have worked because
-       * the outputs were vector.
-       */
-      NIR_PASS(_, nir, nir_opt_copy_prop_vars);
-
-      /* This must be called before nir_link_opt_varyings() and after
-       * nir_opt_copy_prop_vars(), otherwise repeated (scalarized) stores in the
-       * last block will propagate the wrong values into the consumer.
-       */
-      NIR_PASS(_, nir, nir_opt_dead_write_vars);
-
-      NIR_PASS(_, nir, nir_opt_dce);
-
-      const nir_remove_dead_variables_options var_opts = {
-         .can_remove_var =
-            (mask & nir_var_shader_out) ? nir_vk_is_not_xfb_output : NULL,
-      };
-      NIR_PASS(_, nir, nir_remove_dead_variables, mask, &var_opts);
-   }
+   struct ir3_optimize_options optimize_options = {};
+   ir3_optimize_loop(compiler, &optimize_options, shader);
 }
 
 static void
-tu_link_shaders(nir_shader **shaders, unsigned shaders_count)
+tu_link_shaders(struct tu_device *dev,
+                nir_shader **shaders,
+                unsigned shaders_count)
 {
-   nir_shader *consumer = NULL;
-   for (mesa_shader_stage stage = (mesa_shader_stage) (shaders_count - 1);
-        stage >= MESA_SHADER_VERTEX; stage = (mesa_shader_stage) (stage - 1)) {
-      if (!shaders[stage])
-         continue;
+   nir_shader *link_shaders[MESA_SHADER_STAGES] = {};
+   assert(shaders_count <= ARRAY_SIZE(link_shaders));
 
-      nir_shader *producer = shaders[stage];
-      if (!consumer) {
-         consumer = producer;
-         continue;
+   unsigned link_shaders_count = 0;
+
+   for (unsigned i = 0; i < shaders_count; i++) {
+      if (shaders[i]) {
+         link_shaders[link_shaders_count++] = shaders[i];
       }
-
-      lower_io_to_scalar_early(producer, nir_var_shader_out);
-      lower_io_to_scalar_early(consumer, nir_var_shader_in);
-
-      if (nir_link_opt_varyings(producer, consumer)) {
-         NIR_PASS(_, consumer, nir_opt_constant_folding);
-         NIR_PASS(_, consumer, nir_opt_algebraic);
-         NIR_PASS(_, consumer, nir_opt_dce);
-      }
-
-      const nir_remove_dead_variables_options out_var_opts = {
-         .can_remove_var = nir_vk_is_not_xfb_output,
-      };
-      NIR_PASS(_, producer, nir_remove_dead_variables, nir_var_shader_out,
-               &out_var_opts);
-
-      NIR_PASS(_, consumer, nir_remove_dead_variables, nir_var_shader_in,
-               NULL);
-
-      bool progress = nir_remove_unused_varyings(producer, consumer);
-
-      nir_compact_varyings(producer, consumer, true);
-      if (progress) {
-         if (nir_lower_global_vars_to_local(producer)) {
-            /* Remove dead writes, which can remove input loads */
-            NIR_PASS(_, producer, nir_remove_dead_variables,
-                     nir_var_shader_temp, NULL);
-            NIR_PASS(_, producer, nir_opt_dce);
-         }
-         nir_lower_global_vars_to_local(consumer);
-      }
-
-      NIR_PASS(_, producer, nir_opt_vectorize_io_vars, nir_var_shader_out);
-      NIR_PASS(_, consumer, nir_opt_vectorize_io_vars, nir_var_shader_in);
-      consumer = producer;
    }
 
-   /* Gather info after linking so that we can fill out the ir3 shader key.
+   nir_opt_varyings_bulk(link_shaders, link_shaders_count, true, UINT32_MAX,
+                         UINT32_MAX, link_opts, dev->compiler);
+
+   /* We have to make sure nir_recompute_io_bases is called at least once so
+    * that num_inputs/num_outputs is correctly set for all shaders.
+    * nir_opt_varyings_bulk will do this for us when linking multiple shaders
+    * but not when there is only a single shader. Call it manually in that
+    * case.
     */
-   for (mesa_shader_stage stage = MESA_SHADER_VERTEX;
-        stage <= MESA_SHADER_FRAGMENT; stage = (mesa_shader_stage) (stage + 1)) {
-      if (shaders[stage])
-         nir_shader_gather_info(shaders[stage],
-                                nir_shader_get_entrypoint(shaders[stage]));
+   if (link_shaders_count == 1) {
+      NIR_PASS(_, link_shaders[0], nir_recompute_io_bases,
+               nir_var_shader_in | nir_var_shader_out);
    }
 }
 
@@ -3318,7 +3304,7 @@ tu_compile_shaders(struct tu_device *device,
                    nir_shader **nir,
                    const struct tu_shader_key *keys,
                    struct tu_pipeline_layout *layout,
-                   const unsigned char *pipeline_sha1,
+                   const unsigned char *pipeline_blake3,
                    struct tu_shader **shaders,
                    char **nir_initial_disasm,
                    void *nir_initial_disasm_mem_ctx,
@@ -3326,6 +3312,7 @@ tu_compile_shaders(struct tu_device *device,
                    VkPipelineCreationFeedback *stage_feedbacks)
 {
    struct ir3_shader_key ir3_key = {};
+   struct tu_shader_info info[MESA_SHADER_STAGES] = {};
    VkResult result = VK_SUCCESS;
    void *mem_ctx = ralloc_context(NULL);
 
@@ -3363,7 +3350,19 @@ tu_compile_shaders(struct tu_device *device,
       }
    }
 
-   tu_link_shaders(nir, MESA_SHADER_STAGES);
+   for (mesa_shader_stage stage = MESA_SHADER_VERTEX; stage < MESA_SHADER_STAGES;
+        stage = (mesa_shader_stage) (stage + 1)) {
+      if (!nir[stage])
+         continue;
+
+      int64_t stage_start = os_time_get_nano();
+
+      tu_lower_nir(device, nir[stage], &keys[stage], &ir3_key, &info[stage]);
+
+      stage_feedbacks[stage].duration += os_time_get_nano() - stage_start;
+   }
+
+   tu_link_shaders(device, nir, MESA_SHADER_STAGES);
 
    if (nir_out) {
       for (mesa_shader_stage stage = MESA_SHADER_VERTEX;
@@ -3432,13 +3431,14 @@ tu_compile_shaders(struct tu_device *device,
 
       int64_t stage_start = os_time_get_nano();
 
-      unsigned char shader_sha1[SHA1_DIGEST_LENGTH + 1];
-      memcpy(shader_sha1, pipeline_sha1, SHA1_DIGEST_LENGTH);
-      shader_sha1[SHA1_DIGEST_LENGTH] = (unsigned char) stage;
+      unsigned char shader_blake3[BLAKE3_KEY_LEN + 1];
+      memcpy(shader_blake3, pipeline_blake3, BLAKE3_KEY_LEN);
+      shader_blake3[BLAKE3_KEY_LEN] = (unsigned char) stage;
 
       result = tu_shader_create(device,
                                 &shaders[stage], nir[stage], &keys[stage],
-                                &ir3_key, shader_sha1, sizeof(shader_sha1),
+                                &info[stage],
+                                &ir3_key, shader_blake3, sizeof(shader_blake3),
                                 layout, !!nir_initial_disasm);
       if (result != VK_SUCCESS) {
          goto fail;

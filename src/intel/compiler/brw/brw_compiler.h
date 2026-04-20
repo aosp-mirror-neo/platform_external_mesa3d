@@ -12,7 +12,7 @@
 #include "isl/isl.h"
 #include "mda/debug_archiver.h"
 #include "util/macros.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/enum_operators.h"
 #include "util/ralloc.h"
 #include "util/shader_stats.h"
@@ -206,6 +206,11 @@ enum brw_robustness_flags {
    BRW_ROBUSTNESS_SSBO = BITFIELD_BIT(1),
 };
 
+enum brw_divergent_atomics_flags {
+   BRW_OPT_DIVERGENT_ATOMICS_BUFFER = BITFIELD_BIT(0),
+   BRW_OPT_DIVERGENT_ATOMICS_IMAGE  = BITFIELD_BIT(1),
+};
+
 struct brw_base_prog_key {
    /** Multiview mask
     *
@@ -226,7 +231,9 @@ struct brw_base_prog_key {
     */
    bool limit_trig_input_range:1;
 
-   uint32_t padding:26;
+   enum brw_divergent_atomics_flags divergent_atomics_flags:2;
+
+   uint32_t padding:24;
 };
 
 /**
@@ -1290,18 +1297,18 @@ brw_compiler_create(void *mem_ctx, const struct intel_device_info *devinfo);
 uint64_t
 brw_get_compiler_config_value(const struct brw_compiler *compiler);
 
-/* Provides a string sha1 hash of all device information fields that could
+/* Provides a string blake3 hash of all device information fields that could
  * affect shader compilation.
  */
 void
-brw_device_sha1(char *hex, const struct intel_device_info *devinfo);
+brw_device_blake3(char *hex, const struct intel_device_info *devinfo);
 
 /* For callers computing their own UUID or hash.  Hashes all device
  * information fields that could affect shader compilation into the provided
- * sha1_ctx.
+ * blake3_ctx.
  */
 void
-brw_device_sha1_update(struct mesa_sha1 *sha1_ctx,
+brw_device_blake3_update(blake3_hasher *blake3_ctx,
                        const struct intel_device_info *devinfo);
 
 unsigned

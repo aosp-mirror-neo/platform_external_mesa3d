@@ -291,37 +291,38 @@ TEST_F(ValhallPacking, LeaBufImm)
         0x005e84040000007b);
 }
 
-TEST_F(ValhallPacking, StoreSegment)
+TEST_F(ValhallPacking, StoreMemoryAccess)
 {
-   CASE(bi_store_i96(b, bi_register(0), bi_discard(bi_register(4)),
-                     bi_discard(bi_register(5)), BI_SEG_VARY, 0),
-        0x0061400632000044);
+   bi_instr *I = bi_store_i96(b, bi_register(0), bi_discard(bi_register(4)),
+                              bi_discard(bi_register(5)), BI_SEG_NONE, 0);
+   I->mem_access = VA_MEMORY_ACCESS_ESTREAM;
+   CASE(I, 0x0061400632000044);
 }
 
 TEST_F(ValhallPacking, Convert16To32)
 {
    CASE(bi_u16_to_u32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), false, false))),
+                         bi_discard(bi_half(bi_register(55), false))),
         0x0090c20000140077);
 
    CASE(bi_u16_to_u32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), true, false))),
+                         bi_discard(bi_half(bi_register(55), true))),
         0x0090c20010140077);
 
    CASE(bi_u16_to_f32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), false, false))),
+                         bi_discard(bi_half(bi_register(55), false))),
         0x0090c20000150077);
 
    CASE(bi_u16_to_f32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), true, false))),
+                         bi_discard(bi_half(bi_register(55), true))),
         0x0090c20010150077);
 
    CASE(bi_s16_to_s32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), false, false))),
+                         bi_discard(bi_half(bi_register(55), false))),
         0x0090c20000040077);
 
    CASE(bi_s16_to_s32_to(b, bi_register(2),
-                         bi_discard(bi_swz_16(bi_register(55), true, false))),
+                         bi_discard(bi_half(bi_register(55), true))),
         0x0090c20010040077);
 }
 

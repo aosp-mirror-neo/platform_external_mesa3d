@@ -356,7 +356,7 @@ lower_vec816_alu(const nir_instr *instr, const void *cb_data)
 }
 
 void
-midgard_preprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
+midgard_preprocess_nir(nir_shader *nir, UNUSED uint64_t gpu_id)
 {
    /* Ensure that halt are translated to returns and get ride of them */
    NIR_PASS(_, nir, nir_lower_halt_to_return);
@@ -381,20 +381,13 @@ midgard_preprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
 }
 
 void
-midgard_postprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
+midgard_postprocess_nir(nir_shader *nir, UNUSED uint64_t gpu_id)
 {
    midgard_lower_texture_nir(nir, gpu_id);
 
    if (nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, nir, nir_lower_viewport_transform);
       NIR_PASS(_, nir, nir_lower_point_size, 1.0, 0.0);
-
-      /* nir_lower[_explicit]_io is lazy and emits mul+add chains even
-       * for offsets it could figure out are constant.  Do some
-       * constant folding before pan_nir_lower_store_component below.
-       */
-      NIR_PASS(_, nir, nir_opt_constant_folding);
-      NIR_PASS(_, nir, pan_nir_lower_store_component);
    }
 
    /* Could be eventually useful for Vulkan, but we don't expect it to have
@@ -431,7 +424,8 @@ midgard_postprocess_nir(nir_shader *nir, UNUSED unsigned gpu_id)
    NIR_PASS(_, nir, nir_lower_var_copies);
 }
 
-void midgard_lower_texture_nir(nir_shader *nir, unsigned gpu_id)
+void
+midgard_lower_texture_nir(nir_shader *nir, uint64_t gpu_id)
 {
    NIR_PASS(_, nir, nir_lower_image_atomics_to_global, NULL, NULL);
 
@@ -2987,6 +2981,12 @@ midgard_compile_shader_nir(nir_shader *nir,
                                   inputs->trust_varying_flat_highp_types, false);
       info->varyings.noperspective =
          pan_nir_collect_noperspective_varyings_fs(nir);
+   }
+
+   if (nir->info.stage == MESA_SHADER_VERTEX) {
+      NIR_PASS(_, nir, pan_nir_lower_vs_outputs, inputs->gpu_id,
+               inputs->varying_layout, false /* has_idvs */,
+               NULL /* needs_extended_fifo */);
    }
 
    /* Optimisation passes */

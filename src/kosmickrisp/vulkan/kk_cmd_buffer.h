@@ -17,6 +17,8 @@
 
 #include "kosmickrisp/bridge/mtl_types.h"
 
+#include "kosmickrisp/libkk/kk_query.h"
+
 #include "util/u_dynarray.h"
 
 #include "vk_command_buffer.h"
@@ -97,28 +99,20 @@ struct kk_rendering_state {
  * shaders_dirty.
  */
 enum kk_dirty {
-   KK_DIRTY_INDEX = BITFIELD_BIT(0),
-   KK_DIRTY_VB = BITFIELD_BIT(1),
-   KK_DIRTY_OCCLUSION = BITFIELD_BIT(2),
-   KK_DIRTY_PROVOKING = BITFIELD_BIT(3),
-   KK_DIRTY_VARYINGS = BITFIELD_BIT(4),
-   KK_DIRTY_PIPELINE = BITFIELD_BIT(5),
+   KK_DIRTY_VB = BITFIELD_BIT(0),
+   KK_DIRTY_OCCLUSION = BITFIELD_BIT(1),
 };
 
 struct kk_graphics_state {
    struct kk_rendering_state render;
    struct kk_descriptor_state descriptors;
 
-   mtl_render_pipeline_state *pipeline_state;
    mtl_depth_stencil_state *depth_stencil_state;
    mtl_render_pass_descriptor *render_pass_descriptor;
    bool is_depth_stencil_dynamic;
    bool is_cull_front_and_back;
-   bool restart_disabled;
    bool need_to_start_render_pass;
 
-   enum mtl_primitive_type primitive_type;
-   enum mesa_prim prim;
    enum kk_dirty dirty;
    uint32_t sample_count;
 
@@ -144,10 +138,6 @@ struct kk_graphics_state {
    struct {
       struct kk_addr_range addr_range[KK_MAX_VBUFS];
       mtl_buffer *handles[KK_MAX_VBUFS];
-      uint32_t attribs_read;
-      /* Required to understand maximum size of index buffer if primitive is
-       * triangle fans */
-      uint32_t max_vertices;
    } vb;
 
    /* Needed by vk_command_buffer::dynamic_graphics_state */
@@ -157,9 +147,6 @@ struct kk_graphics_state {
 
 struct kk_compute_state {
    struct kk_descriptor_state descriptors;
-   mtl_compute_pipeline_state *pipeline_state;
-   struct mtl_size local_size;
-   enum kk_dirty dirty;
 };
 
 struct kk_encoder;
@@ -173,10 +160,16 @@ struct kk_cmd_buffer {
    struct {
       struct kk_graphics_state gfx;
       struct kk_compute_state cs;
+      struct kk_shader *shaders[MESA_SHADER_STAGES];
+      /* Only tracks graphics shaders since compute is always bound for now. */
+      uint32_t dirty_shaders;
    } state;
 
    /* Owned large BOs */
    struct util_dynarray large_bos;
+
+   /* Does the command buffer use the geometry heap? */
+   bool uses_heap;
 };
 
 VK_DEFINE_HANDLE_CASTS(kk_cmd_buffer, vk.base, VkCommandBuffer,
@@ -217,8 +210,14 @@ kk_cmd_buffer_dirty_all_gfx(struct kk_cmd_buffer *cmd)
 {
    /* Ensure we flush all graphics state */
    vk_dynamic_graphics_state_dirty_all(&cmd->vk.dynamic_graphics_state);
+   cmd->state.dirty_shaders = ~0u;
    cmd->state.gfx.dirty = ~0u;
    cmd->state.gfx.descriptors.root_dirty = true;
+
+   /* We just flushed out the heap use. If we want to use it again, we'll need
+    * to queue a free for it again.
+    */
+   cmd->uses_heap = false;
 }
 
 void kk_cmd_release_dynamic_ds_state(struct kk_cmd_buffer *cmd);
@@ -254,14 +253,12 @@ uint64_t kk_upload_descriptor_root(struct kk_cmd_buffer *cmd,
 void kk_cmd_buffer_flush_push_descriptors(struct kk_cmd_buffer *cmd,
                                           struct kk_descriptor_state *desc);
 
-void kk_cmd_write(struct kk_cmd_buffer *cmd, mtl_buffer *buffer, uint64_t addr,
-                  uint64_t value);
+void kk_dispatch_precomp(struct kk_cmd_buffer *cmd, struct mtl_size grid,
+                         bool pre_gfx, enum libkk_program idx, void *data,
+                         size_t data_size);
 
-void kk_cmd_dispatch_pipeline(struct kk_cmd_buffer *cmd,
-                              mtl_compute_encoder *encoder,
-                              mtl_compute_pipeline_state *pipeline,
-                              const void *push_data, size_t push_size,
-                              uint32_t groupCountX, uint32_t groupCountY,
-                              uint32_t groupCountZ);
+#define MESA_DISPATCH_PRECOMP kk_dispatch_precomp
+
+void kk_cmd_write(struct kk_cmd_buffer *cmd, struct libkk_imm_write write);
 
 #endif

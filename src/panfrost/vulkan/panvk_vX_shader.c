@@ -24,7 +24,7 @@
 
 #include "spirv/nir_spirv.h"
 #include "util/memstream.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/shader_stats.h"
 #include "util/u_dynarray.h"
 #include "nir_builder.h"
@@ -38,6 +38,7 @@
 #include "vk_ycbcr_conversion.h"
 
 #include "compiler/bifrost/bifrost_nir.h"
+#include "compiler/bifrost/bifrost_compile.h"
 #include "compiler/pan_compiler.h"
 #include "compiler/pan_nir.h"
 #include "pan_shader.h"
@@ -106,7 +107,7 @@ panvk_lower_sysvals(nir_builder *b, nir_instr *instr, void *data)
       break;
    case nir_intrinsic_load_view_index:
       assert(b->shader->info.stage != MESA_SHADER_COMPUTE);
-      if (ctx->state->rp->view_mask == 0)
+      if (ctx->state->mv->view_mask == 0)
          val = nir_imm_zero(b, 1, 32);
       else
          val = load_sysval(b, graphics, bit_size, layer_id);
@@ -219,26 +220,6 @@ panvk_lower_load_vs_input(nir_builder *b, nir_intrinsic_instr *intrin,
    return true;
 }
 
-static bool
-panvk_lower_load_fs_input(nir_builder *b, nir_intrinsic_instr *intrin,
-                          UNUSED void *data)
-{
-   if (intrin->intrinsic != nir_intrinsic_load_input)
-      return false;
-
-   /* Lower PrimitiveID varying loads to the equivalent intrinsic. This only
-    * works since v6 and will require additional changes if PrimitiveID is
-    * explicitly written to (for example by a geometry shader). */
-   if (nir_intrinsic_io_semantics(intrin).location ==
-       VARYING_SLOT_PRIMITIVE_ID) {
-      b->cursor = nir_before_instr(&intrin->instr);
-      nir_def_replace(&intrin->def, nir_load_primitive_id(b));
-      return true;
-   }
-
-   return false;
-}
-
 #if PAN_ARCH < 9
 static bool
 lower_gl_pos_layer_writes(nir_builder *b, nir_instr *instr, void *data)
@@ -316,6 +297,75 @@ lower_layer_writes(nir_shader *nir)
 }
 #endif
 
+#if PAN_ARCH >= 10
+static bool
+mark_all_access_non_uniform(nir_builder *b, nir_instr *instr, void *data)
+{
+   switch (instr->type) {
+   case nir_instr_type_tex: {
+      nir_tex_instr *tex = nir_instr_as_tex(instr);
+
+      for (unsigned i = 0; i < tex->num_srcs; i++) {
+         switch (tex->src[i].src_type) {
+         case nir_tex_src_texture_offset:
+         case nir_tex_src_texture_handle:
+            tex->texture_non_uniform = true;
+            break;
+
+         case nir_tex_src_sampler_offset:
+         case nir_tex_src_sampler_handle:
+            tex->sampler_non_uniform = true;
+            break;
+
+         case nir_tex_src_offset:
+            tex->offset_non_uniform = true;
+            break;
+
+         default:
+            break;
+         }
+      }
+
+      return true;
+   }
+   case nir_instr_type_intrinsic: {
+      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
+
+      switch (intrin->intrinsic) {
+      case nir_intrinsic_load_ubo:
+      case nir_intrinsic_load_ssbo:
+      case nir_intrinsic_store_ssbo:
+      case nir_intrinsic_ssbo_atomic:
+      case nir_intrinsic_ssbo_atomic_swap:
+      case nir_intrinsic_image_load:
+      case nir_intrinsic_image_sparse_load:
+      case nir_intrinsic_image_store:
+      case nir_intrinsic_image_atomic:
+      case nir_intrinsic_image_atomic_swap:
+      case nir_intrinsic_image_size:
+      case nir_intrinsic_image_samples:
+      case nir_intrinsic_image_deref_load:
+      case nir_intrinsic_image_deref_sparse_load:
+      case nir_intrinsic_image_deref_store:
+      case nir_intrinsic_image_deref_atomic:
+      case nir_intrinsic_image_deref_atomic_swap:
+      case nir_intrinsic_image_deref_levels:
+      case nir_intrinsic_image_deref_size:
+      case nir_intrinsic_image_deref_samples:
+      case nir_intrinsic_image_deref_samples_identical:
+         nir_intrinsic_set_access(
+            intrin, nir_intrinsic_access(intrin) | ACCESS_NON_UNIFORM);
+         return true;
+      default:
+         return false;
+      }
+   }
+   default:
+      return false;
+   }
+}
+#endif
+
 static void
 shared_type_info(const struct glsl_type *type, unsigned *size, unsigned *align)
 {
@@ -364,7 +414,7 @@ panvk_get_nir_options(UNUSED struct vk_physical_device *vk_pdev,
 {
    struct panvk_physical_device *phys_dev = to_panvk_physical_device(vk_pdev);
    return pan_get_nir_shader_compiler_options(
-      pan_arch(phys_dev->kmod.dev->props.gpu_id));
+      pan_arch(phys_dev->kmod.dev->props.gpu_id), false);
 }
 
 static struct spirv_to_nir_options
@@ -377,6 +427,8 @@ panvk_get_spirv_options(UNUSED struct vk_physical_device *vk_pdev,
       .ssbo_addr_format = panvk_buffer_ssbo_addr_format(rs->storage_buffers),
       .phys_ssbo_addr_format = nir_address_format_64bit_global,
       .shared_addr_format = nir_address_format_32bit_offset,
+      .min_ubo_alignment = 16,
+      .min_ssbo_alignment = 16,
       .debug_info = pan_want_debug_info(PAN_ARCH),
    };
 }
@@ -434,7 +486,6 @@ panvk_preprocess_nir(struct vk_physical_device *vk_pdev,
     *
     * This would give us a better place to do panvk-specific lowering.
     */
-   pan_nir_lower_texture_early(nir, pdev->kmod.dev->props.gpu_id);
    NIR_PASS(_, nir, nir_lower_system_values);
 
    nir_lower_compute_system_values_options options = {
@@ -479,8 +530,8 @@ panvk_hash_state(struct vk_physical_device *device,
       _mesa_blake3_update(&blake3_ctx, &sample_shading_enable,
                           sizeof(sample_shading_enable));
 
-      _mesa_blake3_update(&blake3_ctx, &state->rp->view_mask,
-                          sizeof(state->rp->view_mask));
+      _mesa_blake3_update(&blake3_ctx, &state->mv->view_mask,
+                          sizeof(state->mv->view_mask));
 
       if (state->ial)
          _mesa_blake3_update(&blake3_ctx, state->ial, sizeof(*state->ial));
@@ -766,7 +817,8 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
                 struct vk_descriptor_set_layout *const *set_layouts,
                 const struct vk_pipeline_robustness_state *rs,
                 const struct vk_graphics_pipeline_state *state,
-                struct panvk_shader_desc_info *desc_info)
+                struct panvk_shader_desc_info *desc_info,
+                bool allow_merging_workgroups)
 {
    mesa_shader_stage stage = nir->info.stage;
 
@@ -782,11 +834,18 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
    NIR_PASS(_, nir, nir_vk_lower_ycbcr_tex, lookup_ycbcr_conversion,
             &ycbcr_state);
 
+   /* We need to do this before nir_lower_descriptors so any image_deref_size
+    * intrinsics generated can be lowered there.
+    */
+   if (PAN_ARCH < 9)
+      NIR_PASS(_, nir, pan_nir_lower_image_ms);
+
    panvk_per_arch(nir_lower_descriptors)(nir, dev, rs, set_layout_count,
                                          set_layouts, state, desc_info);
 
    NIR_PASS(_, nir, nir_split_var_copies);
    NIR_PASS(_, nir, nir_lower_var_copies);
+   NIR_PASS(_, nir, nir_lower_memcpy);
 
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_ubo,
             panvk_buffer_ubo_addr_format(rs->uniform_buffers));
@@ -796,6 +855,17 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
             nir_address_format_32bit_offset);
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
             nir_address_format_64bit_global);
+
+#if PAN_ARCH >= 10
+   if (allow_merging_workgroups) {
+      /* Accesses that were uniform in the source shader may now be
+       * nonuniform. To handle this, we just flag everything as nonuniform and
+       * then let nir_opt_non_uniform_access figure out which ones can really
+       * be nonuniform based on divergence analysis */
+      NIR_PASS(_, nir, nir_shader_instructions_pass,
+               mark_all_access_non_uniform, nir_metadata_all, NULL);
+   }
+#endif
 
    /* nir_lower_non_uniform_access needs to run after lowering UBO and SSBO
     * IO. This means we run it after nir_lower_descriptors, which reads the
@@ -816,7 +886,8 @@ panvk_lower_nir(struct panvk_device *dev, nir_shader *nir,
 
    /* In practice, most shaders do not have non-uniform-qualified accesses
     * thus a cheaper and likely to fail check is run first. */
-   if (nir_has_non_uniform_access(nir, lower_non_uniform_access_types)) {
+   if (allow_merging_workgroups ||
+       nir_has_non_uniform_access(nir, lower_non_uniform_access_types)) {
       NIR_PASS(_, nir, nir_opt_non_uniform_access);
       struct nir_lower_non_uniform_access_options opts = {
          .types = lower_non_uniform_access_types,
@@ -896,13 +967,8 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
    /* We're going to modify this so make our own copy to be nicer to callers */
    struct pan_compile_inputs input = *compile_input;
 
-   pan_postprocess_nir(nir, input.gpu_id);
-
    if (nir->info.stage == MESA_SHADER_VERTEX)
       NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_vs_input,
-               nir_metadata_control_flow, NULL);
-   else if (nir->info.stage == MESA_SHADER_FRAGMENT)
-      NIR_PASS(_, nir, nir_shader_intrinsics_pass, panvk_lower_load_fs_input,
                nir_metadata_control_flow, NULL);
 
    /* since valhall, panvk_per_arch(nir_lower_descriptors) separates the
@@ -912,7 +978,8 @@ panvk_compile_nir(struct panvk_device *dev, nir_shader *nir,
       NIR_PASS(_, nir, pan_nir_lower_image_index, MAX_VS_ATTRIBS);
       NIR_PASS(_, nir, pan_nir_lower_texel_buffer_fetch_index, MAX_VS_ATTRIBS);
    }
-   pan_nir_lower_texture_late(nir, input.gpu_id);
+
+   pan_postprocess_nir(nir, input.gpu_id);
 
    if (noperspective_varyings && nir->info.stage == MESA_SHADER_VERTEX) {
       NIR_PASS(_, nir, nir_inline_sysval,
@@ -1287,17 +1354,17 @@ panvk_compile_shader(struct panvk_device *dev,
    if (shader == NULL)
       return panvk_error(dev, VK_ERROR_OUT_OF_HOST_MEMORY);
 
-   nir_variable_mode robust2_modes = 0;
-   if (info->robustness->uniform_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
-      robust2_modes |= nir_var_mem_ubo;
-   if (info->robustness->storage_buffers == VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2_EXT)
-      robust2_modes |= nir_var_mem_ssbo;
+   nir_variable_mode robust_modes = 0;
+   if (info->robustness->uniform_buffers != VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT)
+      robust_modes |= nir_var_mem_ubo;
+   if (info->robustness->storage_buffers != VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_DISABLED_EXT)
+      robust_modes |= nir_var_mem_ssbo;
 
    struct pan_compile_inputs inputs = {
       .gpu_id = phys_dev->kmod.dev->props.gpu_id,
       .gpu_variant = phys_dev->kmod.dev->props.gpu_variant,
-      .view_mask = (state && state->rp) ? state->rp->view_mask : 0,
-      .robust2_modes = robust2_modes,
+      .view_mask = (state && state->rp) ? state->mv->view_mask : 0,
+      .robust_modes = robust_modes,
       .robust_descriptors = dev->vk.enabled_features.nullDescriptor,
    };
 
@@ -1337,7 +1404,7 @@ panvk_compile_shader(struct panvk_device *dev,
 
          panvk_lower_nir(dev, nir, info->set_layout_count,
                          info->set_layouts, info->robustness,
-                         state, &variant->desc_info);
+                         state, &variant->desc_info, false);
 
          /* We need the driver_location to match the vertex attribute
           * location, so we can use the attribute layout described by
@@ -1405,21 +1472,8 @@ panvk_compile_shader(struct panvk_device *dev,
       /* VS (if known) decides the memory layout */
       inputs.varying_layout = vs_varying_layout;
 
-#if PAN_ARCH >= 9
-      /* LD_VAR_BUF[_IMM] has a fixed-size offset, limiting its use when we
-       * can fit all of the generic varyings in the offset field.
-       * TODO: We could still use LD_VAR_BUF for just the fields that don't
-       * overflow.
-       */
-      inputs.valhall.use_ld_var_buf =
-         vs_varying_layout &&
-         vs_varying_layout->generic_size_B <= pan_ld_var_buf_off_size(PAN_ARCH);
-      variant->desc_info.fs_varying_attr_desc_count =
-         inputs.valhall.use_ld_var_buf ? 0 : nir->num_inputs;
-#endif
-
       panvk_lower_nir(dev, nir, info->set_layout_count, info->set_layouts,
-                      info->robustness, state, &variant->desc_info);
+                      info->robustness, state, &variant->desc_info, false);
 
       nir_assign_io_var_locations(nir, nir_var_shader_out);
       panvk_lower_nir_io(nir);
@@ -1438,6 +1492,17 @@ panvk_compile_shader(struct panvk_device *dev,
          panvk_shader_destroy(&dev->vk, &shader->vk, pAllocator);
          return result;
       }
+
+      #if PAN_ARCH >= 9
+      /* LD_VAR_BUF[_IMM] has a fixed-size offset, when shaders overflow
+       * that they fall back to LD_VAR[_IMM] and require descriptors.
+       * TODO: We could only emit descriptors that overflow the offset,
+       *       saving a bit of space.
+       */
+      variant->desc_info.fs_varying_attr_desc_count =
+         variant->info.bifrost.uses_ld_var ? nir->num_inputs : 0;
+      #endif
+
       break;
    }
 
@@ -1447,8 +1512,25 @@ panvk_compile_shader(struct panvk_device *dev,
 
       nir_shader *nir = info->nir;
 
+#if PAN_ARCH >= 9
+      nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+      variant->info.cs.allow_merging_workgroups =
+         valhall_can_merge_workgroups(nir);
+
+      /* With merged workgroups, we need to use different divergence analysis
+       * options to take into account that threads from different workgroups
+       * may be in the same subgroup */
+      if (variant->info.cs.allow_merging_workgroups) {
+         nir->options = pan_get_nir_shader_compiler_options(PAN_ARCH, true);
+         /* Invalidate the old divergence analysis */
+         nir_foreach_function_impl(impl, nir)
+            nir_progress(true, impl, ~nir_metadata_divergence);
+      }
+#endif
+
       panvk_lower_nir(dev, nir, info->set_layout_count, info->set_layouts,
-                      info->robustness, state, &variant->desc_info);
+                      info->robustness, state, &variant->desc_info,
+                      variant->info.cs.allow_merging_workgroups);
 
       variant->own_bin = true;
 

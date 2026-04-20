@@ -2310,13 +2310,17 @@ emit_alu(struct ntv_context *ctx, nir_alu_instr *alu)
       if (!nir_alu_instr_is_nan_preserve(alu))
          fp_mode |= SpvFPFastMathModeNotNaNMask;
 
-      if (!nir_alu_instr_is_exact(alu)) {
-         fp_mode |=
-            SpvFPFastMathModeAllowRecipMask |
-            SpvFPFastMathModeAllowContractMask |
-            SpvFPFastMathModeAllowReassocMask |
-            SpvFPFastMathModeAllowTransformMask;
-      }
+      if (!nir_alu_instr_no_contract(alu))
+         fp_mode |= SpvFPFastMathModeAllowContractMask;
+
+      if (!nir_alu_instr_no_reassoc(alu))
+         fp_mode |= SpvFPFastMathModeAllowReassocMask;
+
+      if (!nir_alu_instr_no_transform(alu))
+         fp_mode |= SpvFPFastMathModeAllowTransformMask;
+
+      /* Vulkan always allows rcp anyway. */
+      fp_mode |= SpvFPFastMathModeAllowRecipMask;
 
       if (fp_mode != default_fp_mode)
          spirv_builder_emit_fp_fast_math_mode(&ctx->builder, result, fp_mode);
@@ -3048,14 +3052,20 @@ get_image_coords(struct ntv_context *ctx, const struct glsl_type *type, nir_src 
 {
    uint32_t num_coords = glsl_get_sampler_coordinate_components(type);
    uint32_t src_components = nir_src_num_components(*src);
+   bool is_fbfetch = glsl_get_sampler_dim(type) == GLSL_SAMPLER_DIM_SUBPASS ||
+                     glsl_get_sampler_dim(type) == GLSL_SAMPLER_DIM_SUBPASS_MS;
+
 
    nir_alu_type atype;
    SpvId spv = get_src(ctx, src, &atype);
    if (num_coords == src_components)
       return spv;
 
-   /* need to extract the coord dimensions that the image can use */
    SpvId vec_type = get_alu_type(ctx, atype, num_coords, 32);
+   /* subpassInput loads must use constant (0,0) coords, but nir requires more coord components */
+   if (is_fbfetch)
+      return spirv_builder_const_null(&ctx->builder, vec_type);
+   /* need to extract the coord dimensions that the image can use */
    if (num_coords == 1)
       return spirv_builder_emit_vector_extract(&ctx->builder, vec_type, spv, 0);
    uint32_t constituents[4];

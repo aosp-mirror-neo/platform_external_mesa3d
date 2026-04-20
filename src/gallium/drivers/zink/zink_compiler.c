@@ -1287,7 +1287,7 @@ zink_screen_init_compiler(struct zink_screen *screen)
        * effectively unused (no instances in shader-db), it's not worth the
        * effort to do so.
        * */
-      .lower_ldexp = true,
+      .has_ldexp = false,
 
       .lower_mul_high = true,
       .lower_to_scalar = true,
@@ -2568,7 +2568,7 @@ clamp_layer_output(nir_shader *vs, nir_shader *fs, unsigned *next_location)
       nir_builder b;
       nir_function_impl *impl = nir_shader_get_entrypoint(vs);
       b = nir_builder_at(nir_after_impl(impl));
-      assert(impl->end_block->predecessors.entries == 1);
+      assert(nir_block_num_preds(impl->end_block) == 1);
       clamp_layer_output_emit(&b, var);
       nir_progress(true, impl, nir_metadata_control_flow);
    }

@@ -264,7 +264,7 @@ pack_tex(const nir_tex_instr *instr)
    bit += bits; \
 } while (0)
 
-   PACK(instr->op, 5);
+   PACK(instr->op, 6);
    PACK(instr->num_srcs, 5);
    PACK(instr->sampler_dim, 4);
    PACK(instr->coord_components, 3);
@@ -278,6 +278,7 @@ pack_tex(const nir_tex_instr *instr)
    PACK(instr->skip_helpers, 1);
    PACK(instr->texture_non_uniform, 1);
    PACK(instr->sampler_non_uniform, 1);
+   PACK(instr->embedded_sampler, 1);
    PACK(instr->offset_non_uniform, 1);
 
 #undef PACK

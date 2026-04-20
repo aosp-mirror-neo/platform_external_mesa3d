@@ -123,6 +123,11 @@ struct pipe_screen {
    const char *(*get_vendor)(struct pipe_screen *);
 
    /**
+    * Returns the ML device for this screen, or NULL if ML is not supported.
+    */
+   struct pipe_ml_device *(*get_ml_device)(struct pipe_screen *);
+
+   /**
     * Returns the device vendor.
     *
     * The returned value should return the actual device vendor/manufacturer,
@@ -430,6 +435,12 @@ struct pipe_screen {
    void* (*fence_get_win32_handle)(struct pipe_screen *screen,
                                    struct pipe_fence_handle *fence,
                                    uint64_t *fence_value);
+
+   /**
+    * Retrieves the Win32 event handle from the fence.
+    */
+   void* (*fence_get_win32_event)(struct pipe_screen *screen,
+                                  struct pipe_fence_handle *fence);
 
    /**
     * Create a fence from an Win32 handle.

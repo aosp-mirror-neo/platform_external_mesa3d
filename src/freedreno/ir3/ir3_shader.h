@@ -103,7 +103,8 @@ struct ir3_driver_params_fs {
    /* Dynamic params (that aren't known when compiling the shader) */
 #define IR3_DP_FS_DYNAMIC dword_offsetof(struct ir3_driver_params_fs, frag_invocation_count)
    uint32_t frag_invocation_count;
-   uint32_t __pad_05_07[3];
+   uint32_t alpha_to_coverage_enable;
+   uint32_t __pad_06_07[2];
    uint32_t frag_size;
    uint32_t __pad_09;
    uint32_t frag_offset;
@@ -703,7 +704,7 @@ struct ir3_shader_variant {
 
    struct ir3_info info;
 
-   char sha1_str[SHA1_DIGEST_STRING_LENGTH];
+   char blake3_str[BLAKE3_HEX_LEN];
 
    struct ir3_shader_options shader_options;
 
@@ -769,6 +770,11 @@ struct ir3_shader_variant {
 
    /* Size in dwords of all outputs for VS, size of entire patch for HS. */
    uint32_t output_size;
+
+   /* For stages with output_size, the number of views. Outputs are replicated
+    * per view.
+    */
+   uint32_t view_count;
 
    /* Expected size of incoming output_loc for HS, DS, and GS */
    uint32_t input_size;
@@ -1073,6 +1079,13 @@ ir3_const_state_mut(const struct ir3_shader_variant *v)
 {
    assert(!v->binning_pass);
    return v->const_state;
+}
+
+static inline unsigned
+ir3_constlen(const struct ir3_shader_variant *v)
+{
+   return ir3_const_state(v)->allocs.max_const_offset_vec4 +
+          DIV_ROUND_UP(v->imm_state.count, 4);
 }
 
 static inline unsigned

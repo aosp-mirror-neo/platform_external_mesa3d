@@ -930,8 +930,11 @@ sqtt_QueueSubmit2(VkQueue _queue, uint32_t submitCount, const VkSubmitInfo2 *pSu
       if (!radv_sqtt_stop_capturing(queue)) {
          fprintf(stderr,
                  "radv: Failed to capture RGP for this submit because the buffer is too small and auto-resizing "
-                 "is disabled. See RADV_THREAD_TRACE_BUFFER_SIZE for increasing the size.\n");
+                 "is disabled. See RADV_THREAD_TRACE_BUFFER_SIZE/RADV_CACHE_COUNTERS_BUFFER_SIZE for increasing the "
+                 "size.\n");
       }
+      device->rgp_num_submits++;
+
       simple_mtx_unlock(&device->sqtt.lock);
    }
 
@@ -1592,32 +1595,32 @@ radv_add_rt_record(struct radv_device *device, struct rgp_code_object *code_obje
 }
 
 static void
-compute_unique_rt_sha(uint64_t pipeline_hash, unsigned index, unsigned char sha1[SHA1_DIGEST_LENGTH])
+compute_unique_rt_sha(uint64_t pipeline_hash, unsigned index, unsigned char blake3[BLAKE3_KEY_LEN])
 {
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
-   _mesa_sha1_update(&ctx, &pipeline_hash, sizeof(pipeline_hash));
-   _mesa_sha1_update(&ctx, &index, sizeof(index));
-   _mesa_sha1_final(&ctx, sha1);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
+   _mesa_blake3_update(&ctx, &pipeline_hash, sizeof(pipeline_hash));
+   _mesa_blake3_update(&ctx, &index, sizeof(index));
+   _mesa_blake3_final(&ctx, blake3);
 }
 
 static VkResult
 radv_register_rt_stage(struct radv_device *device, struct radv_ray_tracing_pipeline *pipeline, uint32_t index,
                        uint32_t stack_size, struct radv_shader *shader)
 {
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
+   unsigned char blake3[BLAKE3_KEY_LEN];
    VkResult result;
 
-   compute_unique_rt_sha(pipeline->base.base.pipeline_hash, index, sha1);
+   compute_unique_rt_sha(pipeline->base.base.pipeline_hash, index, blake3);
 
-   result = ac_sqtt_add_pso_correlation(&device->sqtt, *(uint64_t *)sha1, pipeline->base.base.pipeline_hash);
+   result = ac_sqtt_add_pso_correlation(&device->sqtt, *(uint64_t *)blake3, pipeline->base.base.pipeline_hash);
    if (!result)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
-   result = ac_sqtt_add_code_object_loader_event(&device->sqtt, *(uint64_t *)sha1, shader->va);
+   result = ac_sqtt_add_code_object_loader_event(&device->sqtt, *(uint64_t *)blake3, shader->va);
    if (!result)
       return VK_ERROR_OUT_OF_HOST_MEMORY;
    result =
-      radv_add_rt_record(device, &device->sqtt.rgp_code_object, pipeline, shader, stack_size, index, *(uint64_t *)sha1);
+      radv_add_rt_record(device, &device->sqtt.rgp_code_object, pipeline, shader, stack_size, index, *(uint64_t *)blake3);
    return result;
 }
 
@@ -1866,10 +1869,10 @@ sqtt_DestroyPipeline(VkDevice _device, VkPipeline _pipeline, const VkAllocationC
    if (pipeline->type == RADV_PIPELINE_RAY_TRACING) {
       /* We have one record for each stage, plus one for the traversal shader and one for the prolog */
       uint32_t record_count = radv_pipeline_to_ray_tracing(pipeline)->stage_count + 2;
-      unsigned char sha1[SHA1_DIGEST_LENGTH];
+      unsigned char blake3[BLAKE3_KEY_LEN];
       for (uint32_t i = 0; i < record_count; ++i) {
-         compute_unique_rt_sha(pipeline->pipeline_hash, i, sha1);
-         radv_unregister_records(device, *(uint64_t *)sha1);
+         compute_unique_rt_sha(pipeline->pipeline_hash, i, blake3);
+         radv_unregister_records(device, *(uint64_t *)blake3);
       }
    } else
       radv_unregister_records(device, pipeline->pipeline_hash);

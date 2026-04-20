@@ -285,6 +285,7 @@ brw_compile_task(const struct brw_compiler *compiler,
       .nir = nir,
       .dispatch_width = 0,
       .compiler = compiler,
+      .key = &key->base,
       .archiver = params->base.archiver,
    }, *pt = &pt_;
 
@@ -321,7 +322,7 @@ brw_compile_task(const struct brw_compiler *compiler,
    prog_data->base.uses_inline_data = brw_nir_uses_inline_data(nir) ||
                                       key->base.uses_inline_push_addr;
 
-   brw_postprocess_nir_opts(pt, key->base.robust_flags);
+   brw_postprocess_nir_opts(pt);
 
    brw_simd_selection_state simd_state{
       .devinfo = compiler->devinfo,
@@ -360,8 +361,6 @@ brw_compile_task(const struct brw_compiler *compiler,
 
       BRW_NIR_SNAPSHOT("first");
       brw_nir_apply_key(pt, &key->base, dispatch_width);
-
-      BRW_NIR_PASS(brw_nir_lower_simd, dispatch_width);
 
       brw_nir_optimize(pt);
       /* brw_nir_optimize undoes late lowerings. */
@@ -623,14 +622,6 @@ brw_print_mue_map(FILE *fp, const struct brw_mue_map *map, struct nir_shader *ni
               map->per_primitive_offsets[i]);
    }
    brw_print_vue_map(fp, &map->vue_map, MESA_SHADER_MESH);
-}
-
-static void
-brw_nir_lower_mue_outputs(brw_pass_tracker *pt, const struct brw_mue_map *map)
-{
-   BRW_NIR_PASS(nir_lower_io, nir_var_shader_out,
-                type_size_vec4,
-                nir_lower_io_lower_64bit_to_32);
 }
 
 static bool
@@ -983,6 +974,7 @@ brw_compile_mesh(const struct brw_compiler *compiler,
       .nir = nir,
       .dispatch_width = 0,
       .compiler = compiler,
+      .key = &key->base,
       .archiver = params->base.archiver,
    }, *pt = &pt_;
 
@@ -1031,7 +1023,7 @@ brw_compile_mesh(const struct brw_compiler *compiler,
                        prog_data->index_format,
                        key->base.vue_layout,
                        apply_wa_18019110168 ? wa_18019110168_mapping : NULL);
-   brw_nir_lower_mue_outputs(pt, &prog_data->map);
+   brw_nir_lower_mesh_outputs(nir, &prog_data->map);
 
    /* When Primitive Header is enabled, we may not generates writes to all
     * fields, so let's initialize everything.
@@ -1047,7 +1039,7 @@ brw_compile_mesh(const struct brw_compiler *compiler,
    prog_data->base.uses_inline_data = brw_nir_uses_inline_data(nir) ||
                                       key->base.uses_inline_push_addr;
 
-   brw_postprocess_nir_opts(pt, key->base.robust_flags);
+   brw_postprocess_nir_opts(pt);
 
    const struct brw_lower_urb_cb_data cb_data = {
       .devinfo = devinfo,
@@ -1097,8 +1089,6 @@ brw_compile_mesh(const struct brw_compiler *compiler,
 
       /* Load uniforms can do a better job for constants, so fold before it. */
       BRW_NIR_PASS(nir_opt_constant_folding);
-
-      BRW_NIR_PASS(brw_nir_lower_simd, dispatch_width);
 
       brw_nir_optimize(pt);
       /* brw_nir_optimize undoes late lowerings. */

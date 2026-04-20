@@ -401,6 +401,7 @@ lvp_shader_lower(struct lvp_device *pdevice, nir_shader *nir, struct lvp_pipelin
       .frag_coord = true,
       .point_coord = true,
       .layer_id = true,
+      .primitive_id = nir->info.stage == MESA_SHADER_FRAGMENT,
    };
    NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
 
@@ -915,7 +916,7 @@ lvp_graphics_pipeline_init(struct lvp_pipeline *pipeline,
 
    result = vk_graphics_pipeline_state_fill(&device->vk,
                                             &pipeline->graphics_state,
-                                            pCreateInfo, NULL, 0, NULL, NULL,
+                                            pCreateInfo, NULL, NULL, 0, NULL, NULL,
                                             VK_SYSTEM_ALLOCATION_SCOPE_OBJECT,
                                             &pipeline->state_data);
    if (result != VK_SUCCESS)
@@ -1271,7 +1272,7 @@ create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCr
       nir->info.separate_shader = true;
    } else {
       assert(pCreateInfo->codeType == VK_SHADER_CODE_TYPE_BINARY_EXT);
-      if (pCreateInfo->codeSize < SHA1_DIGEST_LENGTH + VK_UUID_SIZE + 1)
+      if (pCreateInfo->codeSize < BLAKE3_KEY_LEN + VK_UUID_SIZE + 1)
          return VK_NULL_HANDLE;
       struct blob_reader blob;
       const uint8_t *data = pCreateInfo->pCode;
@@ -1279,17 +1280,17 @@ create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCr
       lvp_device_get_cache_uuid(uuid);
       if (memcmp(uuid, data, VK_UUID_SIZE))
          return VK_NULL_HANDLE;
-      size_t size = pCreateInfo->codeSize - SHA1_DIGEST_LENGTH - VK_UUID_SIZE;
-      unsigned char sha1[SHA1_DIGEST_LENGTH];
+      size_t size = pCreateInfo->codeSize - BLAKE3_KEY_LEN - VK_UUID_SIZE;
+      unsigned char blake3[BLAKE3_KEY_LEN];
 
-      struct mesa_sha1 sctx;
-      _mesa_sha1_init(&sctx);
-      _mesa_sha1_update(&sctx, data + SHA1_DIGEST_LENGTH + VK_UUID_SIZE, size);
-      _mesa_sha1_final(&sctx, sha1);
-      if (memcmp(sha1, data + VK_UUID_SIZE, SHA1_DIGEST_LENGTH))
+      blake3_hasher sctx;
+      _mesa_blake3_init(&sctx);
+      _mesa_blake3_update(&sctx, data + BLAKE3_KEY_LEN + VK_UUID_SIZE, size);
+      _mesa_blake3_final(&sctx, blake3);
+      if (memcmp(blake3, data + VK_UUID_SIZE, BLAKE3_KEY_LEN))
          return VK_NULL_HANDLE;
 
-      blob_reader_init(&blob, data + SHA1_DIGEST_LENGTH + VK_UUID_SIZE, size);
+      blob_reader_init(&blob, data + BLAKE3_KEY_LEN + VK_UUID_SIZE, size);
       nir = nir_deserialize(NULL, device->pscreen->nir_options[stage], &blob);
       if (!nir)
          goto fail;
@@ -1374,21 +1375,21 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_GetShaderBinaryDataEXT(
    VK_FROM_HANDLE(lvp_shader, shader, _shader);
    VkResult ret = VK_SUCCESS;
    if (pData) {
-      if (*pDataSize < shader->blob.size + SHA1_DIGEST_LENGTH + VK_UUID_SIZE) {
+      if (*pDataSize < shader->blob.size + BLAKE3_KEY_LEN + VK_UUID_SIZE) {
          ret = VK_INCOMPLETE;
          *pDataSize = 0;
       } else {
-         *pDataSize = MIN2(*pDataSize, shader->blob.size + SHA1_DIGEST_LENGTH + VK_UUID_SIZE);
+         *pDataSize = MIN2(*pDataSize, shader->blob.size + BLAKE3_KEY_LEN + VK_UUID_SIZE);
          uint8_t *data = pData;
          lvp_device_get_cache_uuid(data);
-         struct mesa_sha1 sctx;
-         _mesa_sha1_init(&sctx);
-         _mesa_sha1_update(&sctx, shader->blob.data, shader->blob.size);
-         _mesa_sha1_final(&sctx, data + VK_UUID_SIZE);
-         memcpy(data + SHA1_DIGEST_LENGTH + VK_UUID_SIZE, shader->blob.data, shader->blob.size);
+         blake3_hasher sctx;
+         _mesa_blake3_init(&sctx);
+         _mesa_blake3_update(&sctx, shader->blob.data, shader->blob.size);
+         _mesa_blake3_final(&sctx, data + VK_UUID_SIZE);
+         memcpy(data + BLAKE3_KEY_LEN + VK_UUID_SIZE, shader->blob.data, shader->blob.size);
       }
    } else {
-      *pDataSize = shader->blob.size + SHA1_DIGEST_LENGTH + VK_UUID_SIZE;
+      *pDataSize = shader->blob.size + BLAKE3_KEY_LEN + VK_UUID_SIZE;
    }
    return ret;
 }

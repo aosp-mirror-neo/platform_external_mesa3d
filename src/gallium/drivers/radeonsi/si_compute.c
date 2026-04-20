@@ -44,13 +44,13 @@ static void si_create_compute_state_async(void *job, void *gdata, int thread_ind
    program->shader.is_monolithic = true;
    program->shader.wave_size = si_determine_wave_size(sscreen, &program->shader);
 
-   unsigned char ir_sha1_cache_key[SHA1_DIGEST_LENGTH];
-   si_get_ir_cache_key(sel, false, false, shader->wave_size, ir_sha1_cache_key);
+   unsigned char ir_blake3_cache_key[BLAKE3_KEY_LEN];
+   si_get_ir_cache_key(sel, false, false, shader->wave_size, ir_blake3_cache_key);
 
    /* Try to load the shader from the shader cache. */
    simple_mtx_lock(&sscreen->shader_cache_mutex);
 
-   if (si_shader_cache_load_shader(sscreen, ir_sha1_cache_key, shader)) {
+   if (si_shader_cache_load_shader(sscreen, ir_blake3_cache_key, shader)) {
       simple_mtx_unlock(&sscreen->shader_cache_mutex);
 
       shader->complete_shader_binary_size = si_get_shader_binary_size(sscreen, shader);
@@ -96,7 +96,7 @@ static void si_create_compute_state_async(void *job, void *gdata, int thread_ind
          shader->config.rsrc3 |= S_00B8A0_INST_PREF_SIZE_GFX11(si_get_shader_prefetch_size(shader));
 
       simple_mtx_lock(&sscreen->shader_cache_mutex);
-      si_shader_cache_insert_shader(sscreen, ir_sha1_cache_key, shader, true);
+      si_shader_cache_insert_shader(sscreen, ir_blake3_cache_key, shader, true);
       simple_mtx_unlock(&sscreen->shader_cache_mutex);
    }
 
@@ -233,8 +233,10 @@ static void si_set_global_binding(struct pipe_context *ctx, unsigned first, unsi
    for (i = 0; i < n; i++) {
       uint64_t va;
       uint32_t offset;
+      struct si_resource *res = si_resource(resources[i]);
       pipe_resource_reference(&sctx->global_buffers[first + i], resources[i]);
-      va = si_resource(resources[i])->gpu_address;
+      util_range_add(&res->b.b, &res->valid_buffer_range, 0, res->b.b.width0);
+      va = res->gpu_address;
       offset = util_le32_to_cpu(*handles[i]);
       va += offset;
       va = util_cpu_to_le64(va);
@@ -925,6 +927,7 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
       if (!buffer) {
          continue;
       }
+      util_range_add(&buffer->b.b, &buffer->valid_buffer_range, 0, buffer->b.b.width0);
       radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, buffer,
                                 RADEON_USAGE_READWRITE | RADEON_PRIO_SHADER_RW_BUFFER);
    }

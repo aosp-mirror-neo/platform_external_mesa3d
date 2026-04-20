@@ -55,19 +55,12 @@ genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
    anv_batch_emit(&cmd_buffer->batch, GENX(CFE_STATE), cfe) {
       cfe.MaximumNumberofThreads = devinfo->max_cs_threads * devinfo->subslice_total;
 
-      uint32_t scratch_surf;
-      struct anv_scratch_pool *scratch_pool =
-         (cmd_buffer->vk.pool->flags & VK_COMMAND_POOL_CREATE_PROTECTED_BIT) ?
-          &cmd_buffer->device->protected_scratch_pool :
-          &cmd_buffer->device->scratch_pool;
-      struct anv_bo *scratch_bo =
-            anv_scratch_pool_alloc(cmd_buffer->device, scratch_pool,
-                                   MESA_SHADER_COMPUTE,
-                                   total_scratch);
-      anv_reloc_list_add_bo(cmd_buffer->batch.relocs, scratch_bo);
-      scratch_surf = anv_scratch_pool_get_surf(cmd_buffer->device, scratch_pool,
-                                               total_scratch);
-      cfe.ScratchSpaceBuffer = scratch_surf >> ANV_SCRATCH_SPACE_SHIFT;
+      const bool protected = cmd_buffer->vk.pool->flags & VK_COMMAND_POOL_CREATE_PROTECTED_BIT;
+      cfe.ScratchSpaceBuffer = anv_shader_get_scratch_surf(&cmd_buffer->batch,
+                                                           cmd_buffer->device,
+                                                           MESA_SHADER_COMPUTE,
+                                                           total_scratch,
+                                                           protected);
 #if GFX_VER >= 20
       switch (cmd_buffer->device->physical->instance->stack_ids) {
       case 256:  cfe.StackIDControl = StackIDs256;  break;
@@ -100,7 +93,7 @@ cmd_buffer_flush_compute_state(struct anv_cmd_buffer *cmd_buffer)
                               comp_state->shader->prog_data->total_shared > 0 ?
                               device->l3_slm_config : device->l3_config);
 
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(flush_descriptor_buffers)(cmd_buffer, &comp_state->base,
                                   VK_SHADER_STAGE_COMPUTE_BIT);
@@ -306,10 +299,6 @@ anv_cmd_buffer_push_driver_values(struct anv_cmd_buffer *cmd_buffer,
 #undef UPDATE_PUSH
 }
 
-#define GPGPU_DISPATCHDIMX 0x2500
-#define GPGPU_DISPATCHDIMY 0x2504
-#define GPGPU_DISPATCHDIMZ 0x2508
-
 static void
 compute_load_indirect_params(struct anv_cmd_buffer *cmd_buffer,
                              const struct anv_address indirect_addr,
@@ -338,9 +327,9 @@ compute_load_indirect_params(struct anv_cmd_buffer *cmd_buffer,
    struct mi_value size_y = mi_mem32(anv_address_add(indirect_addr, 4));
    struct mi_value size_z = mi_mem32(anv_address_add(indirect_addr, 8));
 
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMX), size_x);
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMY), size_y);
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMZ), size_z);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMX_num)), size_x);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMY_num)), size_y);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMZ_num)), size_z);
 }
 
 static void
@@ -354,9 +343,9 @@ compute_store_indirect_params(struct anv_cmd_buffer *cmd_buffer,
    struct mi_value size_y = mi_mem32(anv_address_add(indirect_addr, 4));
    struct mi_value size_z = mi_mem32(anv_address_add(indirect_addr, 8));
 
-   mi_store(&b, size_x, mi_reg32(GPGPU_DISPATCHDIMX));
-   mi_store(&b, size_y, mi_reg32(GPGPU_DISPATCHDIMY));
-   mi_store(&b, size_z, mi_reg32(GPGPU_DISPATCHDIMZ));
+   mi_store(&b, size_x, mi_reg32(GENX(GPGPU_DISPATCHDIMX_num)));
+   mi_store(&b, size_y, mi_reg32(GENX(GPGPU_DISPATCHDIMY_num)));
+   mi_store(&b, size_z, mi_reg32(GENX(GPGPU_DISPATCHDIMZ_num)));
 }
 
 
@@ -1158,9 +1147,11 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
 
    trace_intel_begin_rays(&cmd_buffer->trace);
 
+   cmd_buffer->state.compute.trace_rays_active = true;
+
    genX(cmd_buffer_config_l3)(cmd_buffer, device->l3_config);
 
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(flush_descriptor_buffers)(cmd_buffer, &rt->base,
                                   ANV_RT_STAGE_BITS);
@@ -1253,9 +1244,9 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
                                             local_size_log2[i]);
       }
 
-      mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMX), launch_size[0]);
-      mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMY), launch_size[1]);
-      mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMZ), launch_size[2]);
+      mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMX_num)), launch_size[0]);
+      mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMY_num)), launch_size[1]);
+      mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMZ_num)), launch_size[2]);
 
    } else {
       calc_local_trace_size(local_size_log2, params->launch_size);
@@ -1301,18 +1292,11 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
       btd.PerDSSMemoryBackedBufferSize = 6;
       btd.MemoryBackedBufferBasePointer = (struct anv_address) { .bo = device->btd_fifo_bo };
       if (rt->scratch_size > 0) {
-         struct anv_bo *scratch_bo =
-            anv_scratch_pool_alloc(device,
-                                   &device->scratch_pool,
-                                   MESA_SHADER_COMPUTE,
-                                   rt->scratch_size);
-         anv_reloc_list_add_bo(cmd_buffer->batch.relocs,
-                               scratch_bo);
-         uint32_t scratch_surf =
-            anv_scratch_pool_get_surf(cmd_buffer->device,
-                                      &device->scratch_pool,
-                                      rt->scratch_size);
-         btd.ScratchSpaceBuffer = scratch_surf >> ANV_SCRATCH_SPACE_SHIFT;
+         btd.ScratchSpaceBuffer = anv_shader_get_scratch_surf(&cmd_buffer->batch,
+                                                              cmd_buffer->device,
+                                                              MESA_SHADER_COMPUTE,
+                                                              rt->scratch_size,
+                                                              false);;
       }
 #if INTEL_NEEDS_WA_14017794102 || INTEL_NEEDS_WA_14023061436
       btd.BTDMidthreadpreemption = false;

@@ -18,16 +18,14 @@
 
 #include <sys/mman.h>
 
-#include "vk_debug_utils.h"
-
 #include "util/cache_ops.h"
 #include "util/libdrm.h"
+#include "vk_debug_utils.h"
 
 #include "tu_device.h"
 #include "tu_knl.h"
 #include "tu_queue.h"
 #include "tu_rmv.h"
-
 
 VkResult
 tu_bo_init_new_explicit_iova(struct tu_device *dev,
@@ -71,10 +69,12 @@ VkResult
 tu_bo_init_dmabuf(struct tu_device *dev,
                   struct tu_bo **bo,
                   uint64_t size,
+                  enum tu_bo_alloc_flags flags,
                   int fd)
 {
+   assert(!(flags & ~TU_BO_ALLOC_REPLAYABLE));
    size = align64(size, os_page_size);
-   VkResult result = dev->instance->knl->bo_init_dmabuf(dev, bo, size, fd);
+   VkResult result = dev->instance->knl->bo_init_dmabuf(dev, bo, size, flags, fd);
    if (result != VK_SUCCESS)
       return result;
 

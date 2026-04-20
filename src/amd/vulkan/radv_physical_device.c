@@ -20,7 +20,6 @@
 #include "vk_log.h"
 #include "vk_shader_module.h"
 
-#include "common/ac_null_device.h"
 #include "util/disk_cache.h"
 #include "util/hex.h"
 #include "util/u_debug.h"
@@ -71,8 +70,7 @@ radv_taskmesh_enabled(const struct radv_physical_device *pdev)
    if (instance->debug_flags & RADV_DEBUG_NO_MESH_SHADER)
       return false;
 
-   return pdev->use_ngg && !pdev->use_llvm && pdev->info.gfx_level >= GFX10_3 && radv_compute_queue_enabled(pdev) &&
-          pdev->info.has_gang_submit;
+   return pdev->use_ngg && !pdev->use_llvm && pdev->info.gfx_level >= GFX10_3 && radv_compute_queue_enabled(pdev);
 }
 
 bool
@@ -89,8 +87,7 @@ radv_sparse_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
-   return pdev->info.has_sparse ||
-          (instance->perftest_flags & RADV_PERFTEST_SPARSE);
+   return pdev->info.has_sparse || (instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE);
 }
 
 bool
@@ -100,10 +97,10 @@ radv_transfer_queue_enabled(const struct radv_physical_device *pdev)
 
    /* Check if the GPU has SDMA support and transfer queues are allowed. */
    if (pdev->info.sdma_ip_version == SDMA_UNKNOWN || !pdev->info.ip[AMD_IP_SDMA].num_queues ||
-       !(instance->perftest_flags & RADV_PERFTEST_TRANSFER_QUEUE))
+       !(instance->experimental_flags & RADV_EXPERIMENTAL_TRANSFER_QUEUE))
       return false;
 
-   if (!pdev->info.has_gang_submit || !radv_compute_queue_enabled(pdev))
+   if (!radv_compute_queue_enabled(pdev))
       return false;
 
    return pdev->info.gfx_level >= GFX9;
@@ -187,7 +184,7 @@ radv_bfloat16_enabled(const struct radv_physical_device *pdev)
       return false;
 
    /* GFX11-11.5 has precision issues. */
-   return (instance->perftest_flags & RADV_PERFTEST_BFLOAT16) || pdev->info.gfx_level >= GFX12;
+   return (instance->experimental_flags & RADV_EXPERIMENTAL_BFLOAT16) || pdev->info.gfx_level >= GFX12;
 }
 
 static bool
@@ -206,7 +203,7 @@ bool
 radv_host_image_copy_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   return pdev->info.gfx_level >= GFX10 && (instance->perftest_flags & RADV_PERFTEST_HIC);
+   return pdev->info.gfx_level >= GFX10 && (instance->experimental_flags & RADV_EXPERIMENTAL_HIC);
 }
 
 bool
@@ -225,7 +222,7 @@ bool
 radv_emulate_rt(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   if (instance->perftest_flags & RADV_PERFTEST_EMULATE_RT)
+   if (instance->experimental_flags & RADV_EXPERIMENTAL_EMULATE_RT)
       return true;
 
    /* Do not force emulated RT on GPUs that have native support. */
@@ -291,6 +288,7 @@ radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
    key->disable_shrink_image_store = instance->drirc.debug.disable_shrink_image_store;
    key->disable_sinking_load_input_fs = instance->drirc.debug.disable_sinking_load_input_fs;
    key->disable_trunc_coord = instance->drirc.debug.disable_trunc_coord;
+   key->enable_mrt_output_nan_fixup = instance->drirc.debug.enable_mrt_output_nan_fixup;
    key->emulate_rt = radv_emulate_rt(pdev);
    key->bvh8 = radv_use_bvh8(pdev);
    key->ge_wave32 = pdev->ge_wave_size == 32;
@@ -316,18 +314,18 @@ radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
 static int
 radv_device_get_cache_uuid(struct radv_physical_device *pdev, void *uuid)
 {
-   struct mesa_sha1 ctx;
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
+   blake3_hasher ctx;
+   unsigned char blake3[BLAKE3_KEY_LEN];
 
    memset(uuid, 0, VK_UUID_SIZE);
-   _mesa_sha1_init(&ctx);
+   _mesa_blake3_init(&ctx);
 
 #ifdef RADV_BUILD_ID_OVERRIDE
    {
       unsigned size = strlen(RADV_BUILD_ID_OVERRIDE) / 2;
       char *data = alloca(size);
       parse_hex(data, RADV_BUILD_ID_OVERRIDE, size);
-      _mesa_sha1_update(&ctx, data, size);
+      _mesa_blake3_update(&ctx, data, size);
    }
 #else
    if (!disk_cache_get_function_identifier(radv_device_get_cache_uuid, &ctx))
@@ -339,9 +337,9 @@ radv_device_get_cache_uuid(struct radv_physical_device *pdev, void *uuid)
       return -1;
 #endif
 
-   _mesa_sha1_final(&ctx, sha1);
+   _mesa_blake3_final(&ctx, blake3);
 
-   memcpy(uuid, sha1, VK_UUID_SIZE);
+   memcpy(uuid, blake3, VK_UUID_SIZE);
    return 0;
 }
 
@@ -637,6 +635,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_depth_clamp_zero_one = true,
       .KHR_depth_stencil_resolve = true,
       .KHR_descriptor_update_template = true,
+      .KHR_device_address_commands = true,
       .KHR_device_group = true,
       .KHR_draw_indirect_count = true,
       .KHR_driver_properties = true,
@@ -764,6 +763,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_depth_clip_enable = true,
       .EXT_depth_range_unrestricted = true,
       .EXT_descriptor_buffer = true,
+      .EXT_descriptor_heap = instance->experimental_flags & RADV_EXPERIMENTAL_DESCRIPTOR_HEAP,
       .EXT_descriptor_indexing = true,
       .EXT_device_address_binding_report = true,
       .EXT_device_fault = pdev->info.has_gpuvm_fault_query,
@@ -819,6 +819,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       /* KHR_calibrated_timestamps is a requirement to expose EXT_present_timing. */
       .EXT_present_timing = radv_calibrated_timestamps_enabled(pdev),
 #endif
+      .EXT_primitive_restart_index = true,
       .EXT_primitive_topology_list_restart = true,
       .EXT_primitives_generated_query = true,
       .EXT_private_data = true,
@@ -832,7 +833,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_shader_atomic_float = true,
       .EXT_shader_atomic_float2 = true,
       .EXT_shader_demote_to_helper_invocation = true,
-      .EXT_shader_float8 = pdev->info.gfx_level >= GFX12 && !pdev->use_llvm,
+      .EXT_shader_float8 = pdev->info.gfx_level >= GFX11_7 && !pdev->use_llvm,
       .EXT_shader_image_atomic_int64 = true,
       .EXT_shader_module_identifier = true,
       .EXT_shader_object = !pdev->use_llvm && !(instance->debug_flags & RADV_DEBUG_NO_ESO),
@@ -897,8 +898,8 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
    bool taskmesh_en = radv_taskmesh_enabled(pdev);
    bool has_perf_query = radv_perf_query_supported(pdev);
-   bool has_shader_image_float_minmax = pdev->info.gfx_level != GFX8 && pdev->info.gfx_level != GFX9 &&
-                                        pdev->info.gfx_level != GFX11 && pdev->info.gfx_level != GFX11_5;
+   bool has_shader_image_float_minmax = pdev->info.gfx_level <= GFX7 || pdev->info.gfx_level == GFX10 ||
+                                        pdev->info.gfx_level == GFX10_3 || pdev->info.gfx_level >= GFX12;
    bool has_fragment_shader_interlock = radv_has_pops(pdev);
    const bool enable_sparse = radv_sparse_enabled(pdev);
 
@@ -1372,8 +1373,8 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .imageCompressionControl = pdev->info.gfx_level < GFX12,
 
       /* VK_EXT_device_fault */
-      .deviceFault = true,
-      .deviceFaultVendorBinary = instance->debug_flags & RADV_DEBUG_HANG,
+      .deviceFaultEXT = true,
+      .deviceFaultVendorBinaryEXT = instance->debug_flags & RADV_DEBUG_HANG,
 
       /* VK_KHR_depth_clamp_zero_one */
       .depthClampZeroOne = true,
@@ -1526,11 +1527,21 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .shaderMixedFloatDotProductFloat16AccFloat32 = true,
       .shaderMixedFloatDotProductFloat16AccFloat16 = pdev->info.gfx_level >= GFX11,
       .shaderMixedFloatDotProductBFloat16Acc = radv_bfloat16_enabled(pdev),
-      .shaderMixedFloatDotProductFloat8AccFloat32 = pdev->info.gfx_level >= GFX12,
+      .shaderMixedFloatDotProductFloat8AccFloat32 = pdev->info.gfx_level >= GFX11_7,
 
       /* VK_KHR_copy_memory_indirect */
       .indirectMemoryCopy = pdev->info.gfx_level >= GFX8,
       .indirectMemoryToImageCopy = pdev->info.gfx_level >= GFX8,
+
+      /* VK_KHR_device_address_commands */
+      .deviceAddressCommands = true,
+
+      /* VK_EXT_primitive_restart_index */
+      .primitiveRestartIndex = true,
+
+      /* VK_EXT_descriptor_heap */
+      .descriptorHeap = true,
+      .descriptorHeapCaptureReplay = true,
    };
 }
 
@@ -2130,7 +2141,7 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .imageViewCaptureReplayDescriptorDataSize = 1,
       .samplerCaptureReplayDescriptorDataSize = 4,
       .accelerationStructureCaptureReplayDescriptorDataSize = 1,
-      .samplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
+      .EDBsamplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
       .combinedImageSamplerDescriptorSize = radv_get_combined_image_sampler_desc_size(pdev),
       .sampledImageDescriptorSize = radv_get_sampled_image_desc_size(pdev),
       .storageImageDescriptorSize = RADV_STORAGE_IMAGE_DESC_SIZE,
@@ -2224,6 +2235,27 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
 
       /* VK_KHR_copy_memory_indirect */
       .supportedQueues = copy_memory_indirect_queues,
+
+      /* VK_EXT_descriptor_heap */
+      .samplerHeapAlignment = 4,
+      .resourceHeapAlignment = 4,
+      .maxSamplerHeapSize = ~0,
+      .maxResourceHeapSize = ~0,
+      .minSamplerHeapReservedRange = 0,
+      .minSamplerHeapReservedRangeWithEmbedded = 0,
+      .minResourceHeapReservedRange = 0,
+      .samplerDescriptorSize = RADV_SAMPLER_DESC_SIZE,
+      .imageDescriptorSize = radv_get_sampled_image_desc_size(pdev),
+      .bufferDescriptorSize = RADV_BUFFER_DESC_SIZE,
+      .samplerDescriptorAlignment = 4,
+      .imageDescriptorAlignment = 4,
+      .bufferDescriptorAlignment = 4,
+      .maxPushDataSize = MAX_PUSH_CONSTANTS_SIZE,
+      .imageCaptureReplayOpaqueDataSize = 8,
+      .maxDescriptorHeapEmbeddedSamplers = 2048,
+      .samplerYcbcrConversionCount = 3,
+      .sparseDescriptorHeaps = false,
+      .protectedDescriptorHeaps = false,
    };
 
    struct vk_properties *p = &pdev->vk.properties;
@@ -2453,6 +2485,12 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
       fprintf(stderr, "ERROR: LLVM compiler backend selected for radv, but LLVM support was not "
                       "enabled at build time.\n");
       abort();
+   }
+#elif NDEBUG
+   if (pdev->use_llvm) {
+      fprintf(stderr, "ERROR: The LLVM compiler backend is only for debugging and not supported "
+                      "in release builds of RADV!\n");
+      pdev->use_llvm = false;
    }
 #endif
 
@@ -3299,7 +3337,7 @@ fill_array_sizes_structs(const struct radv_physical_device *pdev, struct __vk_ou
     */
    struct matrix_prop prop;
 
-   if (pdev->info.gfx_level >= GFX12) {
+   if (pdev->info.gfx_level >= GFX11_7) {
       for (unsigned e5m2_a = 0; e5m2_a < 2; e5m2_a++) {
          for (unsigned e5m2_b = 0; e5m2_b < 2; e5m2_b++) {
             prop.saturate = false;
@@ -3362,4 +3400,29 @@ radv_GetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV(
    VK_OUTARRAY_MAKE_TYPED(VkCooperativeMatrixFlexibleDimensionsPropertiesNV, out, pProperties, pPropertyCount);
    fill_array_sizes_structs(pdev, &out.base, fill_flexible_matrix_prop_nv);
    return vk_outarray_status(&out);
+}
+
+VKAPI_ATTR VkDeviceSize VKAPI_CALL
+radv_GetPhysicalDeviceDescriptorSizeEXT(VkPhysicalDevice physicalDevice, VkDescriptorType descriptorType)
+{
+   VK_FROM_HANDLE(radv_physical_device, pdev, physicalDevice);
+
+   switch (descriptorType) {
+   case VK_DESCRIPTOR_TYPE_SAMPLER:
+      return pdev->vk.properties.samplerDescriptorSize;
+   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+      return pdev->vk.properties.imageDescriptorSize;
+   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      return RADV_STORAGE_IMAGE_DESC_SIZE;
+   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+      return pdev->vk.properties.bufferDescriptorSize;
+   default:
+      UNREACHABLE("Invalid descriptor type in GetPhysicalDeviceDescriptorSizeEXT");
+      return 0;
+   }
 }

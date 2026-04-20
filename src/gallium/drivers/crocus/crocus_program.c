@@ -298,7 +298,7 @@ crocus_lower_storage_image_derefs_instr(nir_builder *b,
       nir_def *index =
          nir_iadd_imm(b, get_aoa_deref_offset(b, deref, 1),
                       var->data.driver_location);
-      nir_rewrite_image_intrinsic(intrin, index, false);
+      nir_rewrite_image_intrinsic(intrin, index, nir_image_intrinsic_type_default);
       return true;
    }
 
@@ -2711,7 +2711,7 @@ crocus_create_uncompiled_shader(struct pipe_context *ctx,
       struct blob blob;
       blob_init(&blob);
       nir_serialize(&blob, nir, true);
-      _mesa_sha1_compute(blob.data, blob.size, ish->nir_sha1);
+      _mesa_blake3_compute(blob.data, blob.size, ish->nir_blake3);
       blob_finish(&blob);
    }
 

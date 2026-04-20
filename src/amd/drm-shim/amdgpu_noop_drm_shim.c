@@ -6,7 +6,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
-#include "amdgpu_devices.h"
+#include "common/amdgpu_devices.h"
 #include "common/amd_family.h"
 #include "drm-shim/amdgpu_noop_drm_shim.h"
 #include "drm-shim/drm_shim.h"
@@ -237,7 +237,7 @@ drm_shim_driver_init(void)
    shim_device.driver_ioctl_count = ARRAY_SIZE(amdgpu_ioctls);
 
    shim_device.version_major = 3;
-   shim_device.version_minor = 52;
+   shim_device.version_minor = 54;
    shim_device.version_patchlevel = 0;
 
    /* make drmGetDevices2 and drmProcessPciDevice happy */

@@ -289,19 +289,6 @@ pub trait SSABuilder: Builder {
         dst
     }
 
-    fn fmul(&mut self, x: Src, y: Src) -> SSAValue {
-        let dst = self.alloc_ssa(RegFile::GPR);
-        self.push_op(OpFMul {
-            dst: dst.into(),
-            srcs: [x, y],
-            saturate: false,
-            rnd_mode: FRndMode::NearestEven,
-            ftz: false,
-            dnz: false,
-        });
-        dst
-    }
-
     fn fset(&mut self, cmp_op: FloatCmpOp, x: Src, y: Src) -> SSAValue {
         let dst = self.alloc_ssa(RegFile::GPR);
         self.push_op(OpFSet {
@@ -743,46 +730,37 @@ pub trait SSABuilder: Builder {
         dst
     }
 
-    fn mufu(&mut self, op: MuFuOp, src: Src) -> SSAValue {
+    fn mufu(&mut self, op: MuFuOp, src: Src, op_type: FloatType) -> SSAValue {
         let dst = self.alloc_ssa(RegFile::GPR);
         self.push_op(OpMuFu {
             dst: dst.into(),
             op: op,
             src: src,
+            op_type: op_type,
         });
         dst
     }
 
     fn fsin(&mut self, src: Src) -> SSAValue {
-        let tmp = if self.sm() >= 70 {
-            let frac_1_2pi = 1.0 / (2.0 * std::f32::consts::PI);
-            self.fmul(src, frac_1_2pi.into())
-        } else {
-            let tmp = self.alloc_ssa(RegFile::GPR);
-            self.push_op(OpRro {
-                dst: tmp.into(),
-                op: RroOp::SinCos,
-                src,
-            });
-            tmp
-        };
-        self.mufu(MuFuOp::Sin, tmp.into())
+        assert!(self.sm() < 70);
+        let tmp = self.alloc_ssa(RegFile::GPR);
+        self.push_op(OpRro {
+            dst: tmp.into(),
+            op: RroOp::SinCos,
+            src,
+        });
+        self.mufu(MuFuOp::Sin, tmp.into(), FloatType::F32)
     }
 
     fn fcos(&mut self, src: Src) -> SSAValue {
-        let tmp = if self.sm() >= 70 {
-            let frac_1_2pi = 1.0 / (2.0 * std::f32::consts::PI);
-            self.fmul(src, frac_1_2pi.into())
-        } else {
-            let tmp = self.alloc_ssa(RegFile::GPR);
-            self.push_op(OpRro {
-                dst: tmp.into(),
-                op: RroOp::SinCos,
-                src,
-            });
-            tmp
-        };
-        self.mufu(MuFuOp::Cos, tmp.into())
+        assert!(self.sm() < 70);
+        let tmp = self.alloc_ssa(RegFile::GPR);
+        self.push_op(OpRro {
+            dst: tmp.into(),
+            op: RroOp::SinCos,
+            src,
+        });
+        self.mufu(MuFuOp::Cos, tmp.into(), FloatType::F32)
     }
 
     fn fexp2(&mut self, src: Src) -> SSAValue {
@@ -797,7 +775,7 @@ pub trait SSABuilder: Builder {
             });
             tmp.into()
         };
-        self.mufu(MuFuOp::Exp2, tmp)
+        self.mufu(MuFuOp::Exp2, tmp, FloatType::F32)
     }
 
     fn prmt(&mut self, x: Src, y: Src, sel: [u8; 4]) -> SSAValue {

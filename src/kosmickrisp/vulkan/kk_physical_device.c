@@ -17,7 +17,7 @@
 #include "kosmickrisp/bridge/mtl_bridge.h"
 
 #include "util/disk_cache.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "git_sha1.h"
 
 #include "vulkan/wsi/wsi_common.h"
@@ -66,7 +66,7 @@ kk_get_device_extensions(const struct kk_instance *instance,
       .KHR_buffer_device_address = true, /* Required in Vulkan 1.3 */
       .KHR_create_renderpass2 = true,
       .KHR_depth_stencil_resolve = true,
-      .KHR_draw_indirect_count = false,
+      .KHR_draw_indirect_count = true,
       .KHR_driver_properties = true,
       .KHR_image_format_list = true,
       .KHR_imageless_framebuffer = true,
@@ -218,6 +218,7 @@ kk_get_device_features(
       .descriptorBindingUpdateUnusedWhilePending = true,
       .descriptorBindingVariableDescriptorCount = true,
       .descriptorIndexing = true,
+      .drawIndirectCount = true,
       .hostQueryReset = true,
       .imagelessFramebuffer = true,
       .multiDrawIndirect = true,
@@ -398,7 +399,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .maxFragmentInputComponents = 128,
       .maxFragmentOutputAttachments = KK_MAX_RTS,
       .maxFragmentDualSrcAttachments = 1,
-      .maxFragmentCombinedOutputResources = 16,
+      .maxFragmentCombinedOutputResources = KK_MAX_DESCRIPTORS,
       .maxComputeSharedMemorySize = KK_MAX_SHARED_SIZE,
       .maxComputeWorkGroupCount = {0x7fffffff, 65535, 65535},
       .maxComputeWorkGroupInvocations = pdev->info.max_workgroup_invocations,
@@ -409,7 +410,7 @@ kk_get_device_properties(const struct kk_physical_device *pdev,
       .subTexelPrecisionBits = 8,
       .mipmapPrecisionBits = 8,
       .maxDrawIndexedIndexValue = UINT32_MAX,
-      .maxDrawIndirectCount = UINT32_MAX,
+      .maxDrawIndirectCount = UINT16_MAX,
       .maxSamplerLodBias = 15,
       .maxSamplerAnisotropy = 16,
       .maxViewports = KK_MAX_VIEWPORTS,
@@ -736,18 +737,18 @@ kk_physical_device_init_pipeline_cache(struct kk_physical_device *pdev)
 {
    struct kk_instance *instance = kk_physical_device_instance(pdev);
 
-   struct mesa_sha1 sha_ctx;
-   _mesa_sha1_init(&sha_ctx);
+   blake3_hasher blake3_ctx;
+   _mesa_blake3_init(&blake3_ctx);
 
-   _mesa_sha1_update(&sha_ctx, instance->driver_build_sha,
-                     sizeof(instance->driver_build_sha));
+   _mesa_blake3_update(&blake3_ctx, instance->driver_build_sha,
+                       sizeof(instance->driver_build_sha));
 
-   unsigned char sha[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&sha_ctx, sha);
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   STATIC_ASSERT(SHA1_DIGEST_LENGTH >= VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.pipelineCacheUUID, sha, VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.shaderBinaryUUID, sha, VK_UUID_SIZE);
+   STATIC_ASSERT(BLAKE3_KEY_LEN >= VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.pipelineCacheUUID, blake3, VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.shaderBinaryUUID, blake3, VK_UUID_SIZE);
 }
 
 static void

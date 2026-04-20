@@ -341,6 +341,7 @@ debian-android:
       -D mesa-clc=system
       -D precomp-compiler=system
       -D perfetto=true
+      -D freedreno-kmds=msm,virtio
     GALLIUM_ST: >
       -D gallium-va=disabled
       -D gallium-rusticl=false
@@ -429,8 +430,6 @@ debian-arm32:
       -D precomp-compiler=enabled
       -D install-precomp-compiler=true
       -D tools=panfrost
-    GALLIUM_ST:
-      -D legacy-wayland=bind-wayland-display
     S3_ARTIFACT_NAME: mesa-arm32-default-${BUILDTYPE}
     # The strip command segfaults, failing to strip the binary and leaving
     # tempfiles in our artifacts.
@@ -550,10 +549,11 @@ debian-no-libdrm:
     BUILDTYPE: release
     EXTRA_OPTION: >
       -D freedreno-kmds=kgsl
-      -D glx=disabled
+      -D glx=dri
       -D gbm=disabled
-      -D egl=disabled
+      -D egl=enabled
       -D perfetto=true
+      -D platforms=x11,wayland
 
 debian-clang:
   extends:

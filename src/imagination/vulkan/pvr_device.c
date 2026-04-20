@@ -61,7 +61,7 @@
 #include "pvr_wsi.h"
 #include "util/log.h"
 #include "util/macros.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_misc.h"
 #include "util/u_math.h"
 #include "vk_device_memory.h"
@@ -72,11 +72,6 @@
 #include "vk_physical_device_properties.h"
 #include "vk_sampler.h"
 #include "vk_util.h"
-
-/* Amount of padding required for VkBuffers to ensure we don't read beyond
- * a page boundary.
- */
-#define PVR_BUFFER_MEMORY_PADDING_SIZE 4
 
 /** Gets the amount of memory to allocate per-core for a tile buffer. */
 static uint32_t

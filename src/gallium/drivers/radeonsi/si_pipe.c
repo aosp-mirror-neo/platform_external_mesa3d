@@ -710,7 +710,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
          mesa_loge("can't create blitter");
          goto fail;
       }
-      sctx->blitter->skip_viewport_restore = true;
+      sctx->blitter->use_single_triangle = true;
 
       /* Some states are expected to be always non-NULL. */
       sctx->noop_blend = util_blitter_get_noop_blend_state(sctx->blitter);
@@ -749,6 +749,9 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
          break;
       case GFX11_5:
          si_init_draw_functions_GFX11_5(sctx);
+         break;
+      case GFX11_7:
+         si_init_draw_functions_GFX11_7(sctx);
          break;
       case GFX12:
          si_init_draw_functions_GFX12(sctx);
@@ -858,7 +861,7 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
          goto fail;
       }
 
-      si_cp_write_data(sctx, sctx->wait_mem_scratch, 0, 4, V_370_MEM, V_370_ME,
+      si_cp_write_data(sctx, sctx->wait_mem_scratch, 0, 4, V_371_MEMORY, V_371_MICRO_ENGINE,
                        &sctx->wait_mem_number);
    }
 
@@ -1181,18 +1184,18 @@ static void si_disk_cache_create(struct si_screen *sscreen)
    if (sscreen->shader_debug_flags & DBG_ALL_SHADERS)
       return;
 
-   struct mesa_sha1 ctx;
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
-   char cache_id[SHA1_DIGEST_STRING_LENGTH];
+   blake3_hasher ctx;
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   char cache_id[BLAKE3_HEX_LEN];
 
-   _mesa_sha1_init(&ctx);
+   _mesa_blake3_init(&ctx);
 
 #ifdef RADEONSI_BUILD_ID_OVERRIDE
    {
       unsigned size = strlen(RADEONSI_BUILD_ID_OVERRIDE) / 2;
       char *data = alloca(size);
       parse_hex(data, RADEONSI_BUILD_ID_OVERRIDE, size);
-      _mesa_sha1_update(&ctx, data, size);
+      _mesa_blake3_update(&ctx, data, size);
    }
 #else
    if (!disk_cache_get_function_identifier(si_disk_cache_create, &ctx))
@@ -1207,10 +1210,10 @@ static void si_disk_cache_create(struct si_screen *sscreen)
    /* NIR options depend on si_screen::use_aco, which affects all shaders, including GLSL
     * compilation.
     */
-   _mesa_sha1_update(&ctx, &sscreen->use_aco, sizeof(sscreen->use_aco));
+   _mesa_blake3_update(&ctx, &sscreen->use_aco, sizeof(sscreen->use_aco));
 
-   _mesa_sha1_final(&ctx, sha1);
-   mesa_bytes_to_hex(cache_id, sha1, SHA1_DIGEST_LENGTH);
+   _mesa_blake3_final(&ctx, blake3);
+   mesa_bytes_to_hex(cache_id, blake3, BLAKE3_KEY_LEN);
 
    sscreen->disk_shader_cache = disk_cache_create(ac_get_family_name(sscreen->info.family),
                                                   cache_id, sscreen->info.address32_hi);

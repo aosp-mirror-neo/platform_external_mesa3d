@@ -276,14 +276,14 @@ main(int argc, char *argv[])
          if (print_json) {
             JSON_Value *json = intel_device_info_dump_json(&devinfo);
 
-            /* When available, add the compiler device sha, to allow
+            /* When available, add the compiler device blake3, to allow
              * deduplication of similar device info files.
              */
             if (devinfo.ver >= 9) {
                JSON_Object *obj = json_object(json);
-               char device_info_sha[SHA1_DIGEST_STRING_LENGTH];
-               brw_device_sha1(device_info_sha, &devinfo);
-               json_object_set_string(obj, "shader_cache_sha1", device_info_sha);
+               char device_info_sha[BLAKE3_HEX_LEN];
+               brw_device_blake3(device_info_sha, &devinfo);
+               json_object_set_string(obj, "shader_cache_blake3", device_info_sha);
             }
 
             char *pretty_string = json_serialize_to_string_pretty(json);

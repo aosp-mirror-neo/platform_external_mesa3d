@@ -613,7 +613,7 @@ vk_common_CmdBeginTransformFeedbackEXT(
 
    STACK_ARRAY(VkBindTransformFeedbackBuffer2InfoEXT, buffers, counterBufferCount);
 
-   for (uint32_t b = 0; b < counterBufferCount; b++) {
+   for (uint32_t b = 0; pCounterBuffers && b < counterBufferCount; b++) {
       VK_FROM_HANDLE(vk_buffer, buffer, pCounterBuffers[b]);
 
       buffers[b] = (VkBindTransformFeedbackBuffer2InfoEXT) {
@@ -629,7 +629,7 @@ vk_common_CmdBeginTransformFeedbackEXT(
       &cmd_buffer->base.device->dispatch_table;
    disp->CmdBeginTransformFeedback2EXT(
       commandBuffer, firstCounterBuffer, counterBufferCount,
-      counterBufferCount > 0 ? buffers : NULL);
+      counterBufferCount > 0 && pCounterBuffers ? buffers : NULL);
 
    STACK_ARRAY_FINISH(buffers);
 }
@@ -646,7 +646,7 @@ vk_common_CmdEndTransformFeedbackEXT(
 
    STACK_ARRAY(VkBindTransformFeedbackBuffer2InfoEXT, buffers, counterBufferCount);
 
-   for (uint32_t b = 0; b < counterBufferCount; b++) {
+   for (uint32_t b = 0; pCounterBuffers && b < counterBufferCount; b++) {
       VK_FROM_HANDLE(vk_buffer, buffer, pCounterBuffers[b]);
 
       buffers[b] = (VkBindTransformFeedbackBuffer2InfoEXT) {
@@ -662,7 +662,7 @@ vk_common_CmdEndTransformFeedbackEXT(
       &cmd_buffer->base.device->dispatch_table;
    disp->CmdEndTransformFeedback2EXT(
       commandBuffer, firstCounterBuffer, counterBufferCount,
-      counterBufferCount > 0 ? buffers : NULL);
+      counterBufferCount > 0 && pCounterBuffers ? buffers : NULL);
 
    STACK_ARRAY_FINISH(buffers);
 }
@@ -851,6 +851,7 @@ vk_common_CmdCopyBufferToImage2(
          .addressRowLength = pCopyBufferToImageInfo->pRegions[r].bufferRowLength,
          .addressImageHeight = pCopyBufferToImageInfo->pRegions[r].bufferImageHeight,
          .imageSubresource = pCopyBufferToImageInfo->pRegions[r].imageSubresource,
+         .imageLayout = pCopyBufferToImageInfo->dstImageLayout,
          .imageOffset = pCopyBufferToImageInfo->pRegions[r].imageOffset,
          .imageExtent = pCopyBufferToImageInfo->pRegions[r].imageExtent,
       };
@@ -891,6 +892,7 @@ vk_common_CmdCopyImageToBuffer2(
          .addressRowLength = pCopyImageToBufferInfo->pRegions[r].bufferRowLength,
          .addressImageHeight = pCopyImageToBufferInfo->pRegions[r].bufferImageHeight,
          .imageSubresource = pCopyImageToBufferInfo->pRegions[r].imageSubresource,
+         .imageLayout = pCopyImageToBufferInfo->srcImageLayout,
          .imageOffset = pCopyImageToBufferInfo->pRegions[r].imageOffset,
          .imageExtent = pCopyImageToBufferInfo->pRegions[r].imageExtent,
       };
@@ -898,7 +900,7 @@ vk_common_CmdCopyImageToBuffer2(
 
    const struct vk_device_dispatch_table *disp =
       &cmd_buffer->base.device->dispatch_table;
-   disp->CmdCopyMemoryToImageKHR(
+   disp->CmdCopyImageToMemoryKHR(
       commandBuffer,
       &(VkCopyDeviceMemoryImageInfoKHR) {
          .sType = VK_STRUCTURE_TYPE_COPY_DEVICE_MEMORY_IMAGE_INFO_KHR,

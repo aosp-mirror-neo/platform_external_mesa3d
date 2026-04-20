@@ -271,6 +271,7 @@ enum sqtt_gfxip_level
    SQTT_GFXIP_LEVEL_GFXIP_11_0 = 0xc,
    SQTT_GFXIP_LEVEL_GFXIP_11_5 = 0xd,
    SQTT_GFXIP_LEVEL_GFXIP_12 = 0x10,
+   SQTT_GFXIP_LEVEL_GFXIP_11_7 = 0x11,
 };
 
 enum sqtt_memory_type
@@ -364,6 +365,8 @@ static enum sqtt_gfxip_level ac_gfx_level_to_sqtt_gfxip_level(enum amd_gfx_level
       return SQTT_GFXIP_LEVEL_GFXIP_11_0;
    case GFX11_5:
       return SQTT_GFXIP_LEVEL_GFXIP_11_5;
+   case GFX11_7:
+      return SQTT_GFXIP_LEVEL_GFXIP_11_7;
    case GFX12:
       return SQTT_GFXIP_LEVEL_GFXIP_12;
    default:
@@ -713,6 +716,7 @@ static enum sqtt_version ac_gfx_level_to_sqtt_version(enum amd_gfx_level gfx_lev
       return SQTT_VERSION_2_4;
    case GFX11:
    case GFX11_5:
+   case GFX11_7:
       return SQTT_VERSION_3_2;
    case GFX12:
       return SQTT_VERSION_3_3;
@@ -860,6 +864,7 @@ enum elf_gfxip_level
    EF_AMDGPU_MACH_AMDGCN_GFX1030 = 0x036,
    EF_AMDGPU_MACH_AMDGCN_GFX1100 = 0x041,
    EF_AMDGPU_MACH_AMDGCN_GFX1150 = 0x043,
+   EF_AMDGPU_MACH_AMDGCN_GFX1170 = 0x05d,
    EF_AMDGPU_MACH_AMDGCN_GFX1200 = 0x04e,
 };
 
@@ -878,6 +883,8 @@ static enum elf_gfxip_level ac_gfx_level_to_elf_gfxip_level(enum amd_gfx_level g
       return EF_AMDGPU_MACH_AMDGCN_GFX1100;
    case GFX11_5:
       return EF_AMDGPU_MACH_AMDGCN_GFX1150;
+   case GFX11_7:
+      return EF_AMDGPU_MACH_AMDGCN_GFX1170;
    case GFX12:
       return EF_AMDGPU_MACH_AMDGCN_GFX1200;
    default:
@@ -1413,13 +1420,15 @@ ac_use_derived_spm_trace(const struct radeon_info *info,
 
 int
 ac_dump_rgp_capture(const struct radeon_info *info, struct ac_sqtt_trace *sqtt_trace,
-                    const struct ac_spm_trace *spm_trace)
+                    const struct ac_spm_trace *spm_trace,
+                    const struct ac_rgp_capture_info *capture_info)
 {
 #if !defined(USE_LIBELF)
    fprintf(stderr, "RGP capture can't be saved: libelf was not enabled during build\n");
    return -1;
 #else
    char filename[2048];
+   char info_str[64];
    struct tm now;
    time_t t;
    FILE *f;
@@ -1427,9 +1436,16 @@ ac_dump_rgp_capture(const struct radeon_info *info, struct ac_sqtt_trace *sqtt_t
    t = time(NULL);
    now = *localtime(&t);
 
-   snprintf(filename, sizeof(filename), "/tmp/%s_%04d.%02d.%02d_%02d.%02d.%02d.rgp",
+   if (capture_info) {
+      snprintf(info_str, sizeof(info_str), "_%s%d",
+               capture_info->mode == AC_RGP_CAPTURE_MODE_FRAME ? "frame" : "submit",
+               capture_info->mode == AC_RGP_CAPTURE_MODE_FRAME ? capture_info->frame_idx
+                                                               : capture_info->submit_idx);
+   }
+
+   snprintf(filename, sizeof(filename), "/tmp/%s_%04d.%02d.%02d_%02d.%02d.%02d%s.rgp",
             util_get_process_name(), 1900 + now.tm_year, now.tm_mon + 1, now.tm_mday, now.tm_hour,
-            now.tm_min, now.tm_sec);
+            now.tm_min, now.tm_sec, capture_info ? info_str : "");
 
    f = fopen(filename, "w+");
    if (!f)

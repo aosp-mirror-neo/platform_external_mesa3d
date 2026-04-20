@@ -6420,7 +6420,6 @@ VkResult ResourceTracker::on_vkQueueSubmitTemplate(void* context, VkResult input
                         signalSemsToRemove.push_back(semaphore);
                     }
 #endif
-
                 }
             }
 

@@ -356,6 +356,7 @@ bool brw_opt_address_reg_load(brw_shader &s);
 bool brw_opt_algebraic(brw_shader &s);
 bool brw_opt_bank_conflicts(brw_shader &s);
 bool brw_opt_cmod_propagation(brw_shader &s);
+bool brw_opt_cmp_flag_destination(brw_shader &s, bool uses_kill);
 bool brw_opt_combine_constants(brw_shader &s);
 bool brw_opt_combine_convergent_txf(brw_shader &s);
 bool brw_opt_compact_virtual_grfs(brw_shader &s);
@@ -380,6 +381,7 @@ bool brw_workaround_emit_dummy_mov_instruction(brw_shader &s);
 bool brw_workaround_memory_fence_before_eot(brw_shader &s);
 bool brw_workaround_nomask_control_flow(brw_shader &s);
 bool brw_workaround_source_arf_before_eot(brw_shader &s);
+bool brw_workaround_emit_dummy_mov_mulmac(brw_shader &s);
 
 /* Helpers. */
 unsigned brw_get_lowered_simd_width(const brw_shader *shader,

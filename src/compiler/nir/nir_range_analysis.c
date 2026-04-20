@@ -805,8 +805,8 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
       case nir_op_ffract:
       case nir_op_fsin:
       case nir_op_fcos:
-      case nir_op_fsin_amd:
-      case nir_op_fcos_amd:
+      case nir_op_fsin_normalized_2_pi:
+      case nir_op_fcos_normalized_2_pi:
       case nir_op_f2f16:
       case nir_op_f2f16_rtz:
       case nir_op_f2f16_rtne:
@@ -1203,8 +1203,8 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
 
    case nir_op_fsin:
    case nir_op_fcos:
-   case nir_op_fsin_amd:
-   case nir_op_fcos_amd: {
+   case nir_op_fsin_normalized_2_pi:
+   case nir_op_fcos_normalized_2_pi: {
       /* [-1, +1], and sin/cos(Inf) is NaN */
       r = FP_CLASS_NEG_ONE | FP_CLASS_LT_ZERO_GT_NEG_ONE | FP_CLASS_ANY_ZERO |
           FP_CLASS_GT_ZERO_LT_POS_ONE | FP_CLASS_POS_ONE | FP_CLASS_NON_INTEGRAL;
@@ -1683,6 +1683,16 @@ get_intrinsic_uub(struct analysis_state *state, struct scalar_query q, uint32_t 
 
       break;
    }
+   case nir_intrinsic_shuffle_up_intel:
+   case nir_intrinsic_shuffle_down_intel:
+      if (!q.head.pushed_queries) {
+         push_scalar_query(state, nir_get_scalar(intrin->src[0].ssa, q.scalar.comp));
+         push_scalar_query(state, nir_get_scalar(intrin->src[1].ssa, q.scalar.comp));
+         return;
+      } else {
+         *result = MAX2(src[0], src[1]);
+      }
+      break;
    case nir_intrinsic_read_first_invocation:
    case nir_intrinsic_read_invocation:
    case nir_intrinsic_shuffle:
@@ -2133,7 +2143,6 @@ nir_unsigned_upper_bound(nir_shader *shader, struct hash_table *range_ht,
 
    push_scalar_query(&state, scalar);
 
-   _mesa_hash_table_set_deleted_key(range_ht, (void *)(uintptr_t)UINT32_MAX);
    return perform_analysis(&state);
 }
 
@@ -2342,6 +2351,16 @@ ssa_def_bits_used(const nir_def *def, int recur)
          unsigned src_idx = src - use_intrin->src;
 
          switch (use_intrin->intrinsic) {
+         case nir_intrinsic_shuffle_up_intel:
+         case nir_intrinsic_shuffle_down_intel:
+            if (src_idx == 0 || src_idx == 1) {
+               bits_used |= ssa_def_bits_used(&use_intrin->def, recur);
+            } else {
+               /* Subgroups larger than 128 are not a thing */
+               bits_used |= 127;
+            }
+            break;
+
          case nir_intrinsic_read_invocation:
          case nir_intrinsic_shuffle:
          case nir_intrinsic_shuffle_up:
@@ -2527,6 +2546,5 @@ nir_def_num_lsb_zero(struct hash_table *numlsb_ht, nir_scalar def)
 
    push_scalar_query(&state, def);
 
-   _mesa_hash_table_set_deleted_key(numlsb_ht, (void *)(uintptr_t)UINT32_MAX);
    return perform_analysis(&state);
 }

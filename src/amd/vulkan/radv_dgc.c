@@ -282,6 +282,9 @@ radv_get_sequence_size_compute(const struct radv_indirect_command_layout *layout
       if (ies->uses_indirect_descriptors_sgpr) {
          /* PKT3_SET_SH_REG for indirect descriptors pointer */
          *cmd_size += 3 * 4;
+      } else if (ies->descriptor_heap) {
+         /* PKT3_SET_SH_REG for resource/sampler heap pointers */
+         *cmd_size += 6 * 4;
       }
 
       uses_grid_base_sgpr = ies->uses_grid_base_sgpr;
@@ -764,6 +767,8 @@ struct radv_dgc_params {
    uint64_t ies_addr;
    uint32_t ies_stride;
    uint32_t indirect_descriptors_va;
+   uint32_t heap_resource_va;
+   uint32_t heap_sampler_va;
 
    /* For conditional rendering on ACE. */
    uint8_t predicating;
@@ -1017,7 +1022,7 @@ dgc_emit_indirect_buffer(struct dgc_cmdbuf *cs, nir_def *va, nir_def *ib_offset,
       nir_imm_int(b, PKT3(PKT3_INDIRECT_BUFFER, 2, 0)),
       nir_iadd(b, load_param32(b, upload_addr), ib_offset),
       nir_imm_int(b, pdev->info.address32_hi),
-      nir_ior_imm(b, ib_cdw, S_3F2_CHAIN(1) | S_3F2_VALID(1) | S_3F2_PRE_ENA(false)),
+      nir_ior_imm(b, ib_cdw, S_3F3_CHAIN(1) | S_3F3_VALID(1) | S_3F3_PRE_ENA(false)),
    };
 
    nir_store_global(b, nir_vec(b, packet, 4), va, .access = ACCESS_NON_READABLE);
@@ -1277,7 +1282,7 @@ dgc_gfx12_emit_hiz_wa(struct dgc_cmdbuf *cs)
    if (pdev->gfx12_hiz_wa == RADV_GFX12_HIZ_WA_PARTIAL) {
       dgc_cs_begin(cs);
       dgc_cs_emit_imm(PKT3(PKT3_RELEASE_MEM, 6, 0));
-      dgc_cs_emit_imm(S_490_EVENT_TYPE(V_028A90_BOTTOM_OF_PIPE_TS) | S_490_EVENT_INDEX(5));
+      dgc_cs_emit_imm(S_491_EVENT_TYPE(V_028A90_BOTTOM_OF_PIPE_TS) | S_491_EVENT_INDEX(5));
       dgc_cs_emit_imm(0); /* DST_SEL, INT_SEL = no write confirm, DATA_SEL = no data */
       dgc_cs_emit_imm(0); /* ADDRESS_LO */
       dgc_cs_emit_imm(0); /* ADDRESS_HI */
@@ -1410,8 +1415,8 @@ dgc_emit_pkt3_draw_indirect(struct dgc_cmdbuf *cs, nir_def *has_drawid, bool ind
       dgc_cs_emit_imm(0);
       dgc_cs_emit(vertex_offset_reg);
       dgc_cs_emit(nir_bcsel(b, has_baseinstance, start_instance_reg, nir_imm_int(b, 0)));
-      dgc_cs_emit(nir_ior_imm(b, nir_ior(b, draw_id_reg, nir_imm_int(b, S_2C_4_DRAW_INDEX_ENABLE(1))),
-                              S_2C_4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
+      dgc_cs_emit(nir_ior_imm(b, nir_ior(b, draw_id_reg, nir_imm_int(b, S_2C4_DRAW_INDEX_ENABLE(1))),
+                              S_2C4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
       dgc_cs_emit_imm(1); /* draw count */
       dgc_cs_emit_imm(0); /* count va low */
       dgc_cs_emit_imm(0); /* count va high */
@@ -1542,7 +1547,7 @@ dgc_emit_draw_with_count(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *s
    nir_def *start_instance_reg =
       nir_bcsel(b, has_baseinstance, nir_iadd(b, vertex_offset_reg, start_instance_offset), nir_imm_int(b, 0));
    nir_def *draw_id_reg = nir_bcsel(
-      b, has_drawid, nir_ior_imm(b, nir_iadd(b, vertex_offset_reg, nir_imm_int(b, 1)), S_2C_4_DRAW_INDEX_ENABLE(1)),
+      b, has_drawid, nir_ior_imm(b, nir_iadd(b, vertex_offset_reg, nir_imm_int(b, 1)), S_2C4_DRAW_INDEX_ENABLE(1)),
       nir_imm_int(b, 0));
 
    nir_def *di_src_sel = nir_imm_int(b, indexed ? V_0287F0_DI_SRC_SEL_DMA : V_0287F0_DI_SRC_SEL_AUTO_INDEX);
@@ -1555,7 +1560,7 @@ dgc_emit_draw_with_count(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *s
    dgc_cs_emit_imm(0);
    dgc_cs_emit(vertex_offset_reg);
    dgc_cs_emit(start_instance_reg);
-   dgc_cs_emit(nir_ior_imm(b, draw_id_reg, S_2C_4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
+   dgc_cs_emit(nir_ior_imm(b, draw_id_reg, S_2C4_THREAD_TRACE_MARKER_ENABLE(sqtt_en)));
    dgc_cs_emit(draw_count);
    dgc_cs_emit_imm(0);
    dgc_cs_emit_imm(0);
@@ -1754,8 +1759,10 @@ dgc_alloc_push_constant(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *se
    nir_variable *idx = nir_variable_create(b->shader, nir_var_shader_temp, glsl_uint_type(), "idx");
    nir_store_var(b, idx, nir_imm_int(b, 0), 0x1);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      nir_loop_add_continue_construct(loop);
+
       nir_def *cur_idx = nir_load_var(b, idx);
 
       nir_break_if(b, nir_ieq(b, cur_idx, load_param8(b, push_constant_size)));
@@ -1777,7 +1784,7 @@ dgc_alloc_push_constant(struct dgc_cmdbuf *cs, nir_def *stream_addr, nir_def *se
 
       nir_store_var(b, idx, nir_iadd_imm(b, cur_idx, 1), 0x1);
    }
-   nir_pop_loop(b, NULL);
+   nir_pop_loop(b, loop);
 
    /* Store push constants set by DGC tokens. */
    u_foreach_bit64 (i, layout->push_constant_mask) {
@@ -2025,8 +2032,10 @@ dgc_emit_vertex_buffer(struct dgc_cmdbuf *cs, nir_def *stream_addr)
    nir_variable *vbo_idx = nir_variable_create(b->shader, nir_var_shader_temp, glsl_uint_type(), "vbo_idx");
    nir_store_var(b, vbo_idx, nir_imm_int(b, 0), 0x1);
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      nir_loop_add_continue_construct(loop);
+
       nir_def *cur_idx = nir_load_var(b, vbo_idx);
 
       nir_break_if(b, nir_uge_imm(b, cur_idx, 32 /* bits in vb_desc_usage_mask */));
@@ -2097,7 +2106,7 @@ dgc_emit_vertex_buffer(struct dgc_cmdbuf *cs, nir_def *stream_addr)
 
       nir_store_var(b, vbo_idx, nir_iadd_imm(b, cur_idx, 1), 0x1);
    }
-   nir_pop_loop(b, NULL);
+   nir_pop_loop(b, loop);
 }
 
 /**
@@ -2527,7 +2536,7 @@ dgc_emit_draw_mesh_tasks_with_count_ace(struct dgc_cmdbuf *ace_cs, nir_def *stre
  * Indirect execution set
  */
 static void
-dgc_emit_indirect_descriptors(struct dgc_cmdbuf *cs)
+dgc_emit_descriptors(struct dgc_cmdbuf *cs)
 {
    nir_builder *b = cs->b;
 
@@ -2539,6 +2548,30 @@ dgc_emit_indirect_descriptors(struct dgc_cmdbuf *cs)
       dgc_cs_emit(indirect_descriptors_sgpr);
       dgc_cs_emit(load_param32(b, indirect_descriptors_va));
       dgc_cs_end();
+   }
+   nir_push_else(b, NULL);
+   {
+      nir_def *heap_resource_sgpr = load_shader_metadata32(cs, heap_resource_sgpr);
+      nir_push_if(b, nir_ine_imm(b, heap_resource_sgpr, 0));
+      {
+         dgc_cs_begin(cs);
+         dgc_cs_emit_imm(PKT3(PKT3_SET_SH_REG, 1, 0));
+         dgc_cs_emit(heap_resource_sgpr);
+         dgc_cs_emit(load_param32(b, heap_resource_va));
+         dgc_cs_end();
+      }
+      nir_pop_if(b, NULL);
+
+      nir_def *heap_sampler_sgpr = load_shader_metadata32(cs, heap_sampler_sgpr);
+      nir_push_if(b, nir_ine_imm(b, heap_sampler_sgpr, 0));
+      {
+         dgc_cs_begin(cs);
+         dgc_cs_emit_imm(PKT3(PKT3_SET_SH_REG, 1, 0));
+         dgc_cs_emit(heap_sampler_sgpr);
+         dgc_cs_emit(load_param32(b, heap_sampler_va));
+         dgc_cs_end();
+      }
+      nir_pop_if(b, NULL);
    }
    nir_pop_if(b, NULL);
 }
@@ -2572,7 +2605,7 @@ dgc_emit_ies(struct dgc_cmdbuf *cs)
    }
    nir_pop_loop(b, NULL);
 
-   dgc_emit_indirect_descriptors(cs);
+   dgc_emit_descriptors(cs);
 }
 
 /**
@@ -2884,7 +2917,7 @@ build_dgc_prepare_shader(struct radv_device *dev, struct radv_indirect_command_l
 {
    const struct radv_physical_device *pdev = radv_device_physical(dev);
 
-   nir_builder b = radv_meta_nir_init_shader(dev, MESA_SHADER_COMPUTE, "meta_dgc_prepare");
+   nir_builder b = radv_meta_nir_init_shader(MESA_SHADER_COMPUTE, "meta_dgc_prepare");
    b.shader->info.workgroup_size[0] = 64;
 
    struct dgc_cmdbuf cmd_buf = {
@@ -2958,6 +2991,8 @@ build_dgc_prepare_shader(struct radv_device *dev, struct radv_indirect_command_l
       build_dgc_buffer_preamble_ace(&cmd_buf, sequence_count);
    }
    nir_pop_if(&b, NULL);
+
+   nir_lower_continue_constructs(b.shader);
 
    return b.shader;
 }
@@ -3093,10 +3128,16 @@ radv_prepare_dgc_compute(struct radv_cmd_buffer *cmd_buffer, const VkGeneratedCo
       struct radv_descriptor_state *descriptors_state =
          radv_get_descriptors_state(state_cmd_buffer, VK_PIPELINE_BIND_POINT_COMPUTE);
 
-      radv_upload_indirect_descriptor_sets(cmd_buffer, descriptors_state);
-
       params->ies_stride = ies->stride;
-      params->indirect_descriptors_va = descriptors_state->indirect_descriptor_sets_va;
+
+      if (ies->descriptor_heap) {
+         params->heap_resource_va = cmd_buffer->descriptor_heaps[RADV_HEAP_RESOURCE];
+         params->heap_sampler_va = cmd_buffer->descriptor_heaps[RADV_HEAP_SAMPLER];
+      } else {
+         radv_upload_indirect_descriptor_sets(cmd_buffer, descriptors_state);
+
+         params->indirect_descriptors_va = descriptors_state->indirect_descriptor_sets_va;
+      }
    } else {
       const VkGeneratedCommandsPipelineInfoEXT *pipeline_info =
          vk_find_struct_const(pGeneratedCommandsInfo->pNext, GENERATED_COMMANDS_PIPELINE_INFO_EXT);
@@ -3436,6 +3477,7 @@ radv_update_ies_shader(struct radv_device *device, struct radv_indirect_executio
    set->push_constant_size = MAX2(set->push_constant_size, shader->info.push_constant_size);
    set->compute_scratch_size_per_wave = MAX2(set->compute_scratch_size_per_wave, shader->config.scratch_bytes_per_wave);
    set->compute_scratch_waves = MAX2(set->compute_scratch_waves, radv_get_max_scratch_waves(device, shader));
+   set->descriptor_heap = shader->info.descriptor_heap;
 
    free(cs.b->buf);
    free(cs.b);

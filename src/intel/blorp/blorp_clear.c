@@ -799,7 +799,12 @@ blorp_clear(struct blorp_batch *batch,
 {
    struct blorp_params params;
    blorp_params_init(&params);
-   params.op = BLORP_OP_SLOW_COLOR_CLEAR;
+   /* Linear clears are tracked separately so fill-buffer style paths don't
+    * get mislabeled as generic slow color clears.
+    */
+   params.op = surf->surf->tiling == ISL_TILING_LINEAR ?
+               BLORP_OP_LINEAR_SURFACE_CLEAR :
+               BLORP_OP_SLOW_COLOR_CLEAR;
 
    const bool compute = batch->flags & BLORP_BATCH_USE_COMPUTE;
    if (compute) {
@@ -1029,7 +1034,7 @@ blorp_clear_stencil_as_rgba(struct blorp_batch *batch,
 
    struct blorp_params params;
    blorp_params_init(&params);
-   params.op = BLORP_OP_SLOW_DEPTH_CLEAR;
+   params.op = BLORP_OP_FAST_STENCIL_CLEAR;
 
    if (!blorp_params_get_clear_kernel(batch, &params, false, true, false))
       return false;
@@ -1111,7 +1116,9 @@ blorp_clear_depth_stencil(struct blorp_batch *batch,
 
    struct blorp_params params;
    blorp_params_init(&params);
-   params.op = BLORP_OP_SLOW_DEPTH_CLEAR;
+   params.op = !clear_depth ? BLORP_OP_SLOW_STENCIL_CLEAR :
+               !stencil_mask ? BLORP_OP_SLOW_DEPTH_CLEAR :
+               BLORP_OP_SLOW_DEPTH_STENCIL_CLEAR;
 
    params.x0 = x0;
    params.y0 = y0;
@@ -1219,7 +1226,8 @@ blorp_hiz_clear_depth_stencil(struct blorp_batch *batch,
 {
    struct blorp_params params;
    blorp_params_init(&params);
-   params.op = BLORP_OP_HIZ_CLEAR;
+   params.op = clear_stencil ? BLORP_OP_HIZ_STENCIL_CLEAR :
+               BLORP_OP_HIZ_CLEAR;
 
    /* This requires WM_HZ_OP which only exists on gfx8+ */
    assert(ISL_GFX_VER(batch->blorp->isl_dev) >= 8);
@@ -1268,37 +1276,6 @@ blorp_hiz_clear_depth_stencil(struct blorp_batch *batch,
    }
 }
 
-/* Given a depth stencil attachment, this function performs a fast depth clear
- * on a depth portion and a regular clear on the stencil portion. When
- * performing a fast depth clear on the depth portion, the HiZ buffer is simply
- * tagged as cleared so the depth clear value is not actually needed.
- */
-void
-blorp_gfx8_hiz_clear_attachments(struct blorp_batch *batch,
-                                 uint32_t num_samples,
-                                 uint32_t x0, uint32_t y0,
-                                 uint32_t x1, uint32_t y1,
-                                 bool clear_depth, bool clear_stencil,
-                                 uint8_t stencil_value)
-{
-   assert(batch->flags & BLORP_BATCH_NO_EMIT_DEPTH_STENCIL);
-
-   struct blorp_params params;
-   blorp_params_init(&params);
-   params.op = BLORP_OP_HIZ_CLEAR;
-   params.num_layers = 1;
-   params.hiz_op = ISL_AUX_OP_FAST_CLEAR;
-   params.x0 = x0;
-   params.y0 = y0;
-   params.x1 = x1;
-   params.y1 = y1;
-   params.num_samples = num_samples;
-   params.depth.enabled = clear_depth;
-   params.stencil.enabled = clear_stencil;
-   params.stencil_ref = stencil_value;
-   batch->blorp->exec(batch, &params);
-}
-
 /** Clear active color/depth/stencili attachments
  *
  * This function performs a clear operation on the currently bound
@@ -1338,9 +1315,14 @@ blorp_clear_attachments(struct blorp_batch *batch,
    params.num_layers = num_layers;
    params.num_samples = num_samples;
 
+   assert(clear_color != (clear_depth || stencil_mask));
+   params.op = clear_color ? BLORP_OP_SLOW_COLOR_CLEAR :
+               !clear_depth ? BLORP_OP_SLOW_STENCIL_CLEAR :
+               !stencil_mask ? BLORP_OP_SLOW_DEPTH_CLEAR :
+               BLORP_OP_SLOW_DEPTH_STENCIL_CLEAR;
+
    if (clear_color) {
       params.dst.enabled = true;
-      params.op = BLORP_OP_SLOW_COLOR_CLEAR;
 
       memcpy(&params.wm_inputs.clear.clear_color, color_value.f32,
              sizeof(float) * 4);
@@ -1355,7 +1337,6 @@ blorp_clear_attachments(struct blorp_batch *batch,
 
    if (clear_depth) {
       params.depth.enabled = true;
-      params.op = BLORP_OP_SLOW_DEPTH_CLEAR;
 
       params.z = depth_value;
       params.depth_format = isl_format_get_depth_format(depth_format, false);
@@ -1363,7 +1344,6 @@ blorp_clear_attachments(struct blorp_batch *batch,
 
    if (stencil_mask) {
       params.stencil.enabled = true;
-      params.op = BLORP_OP_SLOW_DEPTH_CLEAR;
 
       params.stencil_mask = stencil_mask;
       params.stencil_ref = stencil_value;

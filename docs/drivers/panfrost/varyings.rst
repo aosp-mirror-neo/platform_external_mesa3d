@@ -12,7 +12,7 @@ only interact with varyings (commonly shortened to "VAR").
 
 
 Hardware descriptors
-====================
+--------------------
 
 Before Valhall there were two types of hardware descriptors:
 
@@ -22,7 +22,7 @@ Before Valhall there were two types of hardware descriptors:
   contains: pointer, size and stride
 
 Midgard (v5)
-============
+------------
 Attributes are loaded/stored using ``LD_ATTR``/``ST_ATTR``, those query the
 attribute descriptors and buffer descriptors to find the real global memory
 offset before loading/storing.
@@ -37,7 +37,7 @@ this is only supported between int-int or float-float operations.
 
 
 Bifrost (v6)
-============
+------------
 Changes:
 
 - ``ST_ATTR`` is replaced by ``LEA_ATTR`` and ``ST_CVT`` pairs.
@@ -51,7 +51,7 @@ Changes:
   by ``LD_VAR_FLAT``.
 
 Valhall (v9)
-============
+------------
 Valhall introduced layout-specific instructions, ``LEA_BUF`` and ``LD_VAR_BUF``,
 those do not use ``AttributeDescriptor`` but read ``BufferDescriptor`` directly.
 These new instructions bake the offset and in-memory format of the attribute
@@ -67,14 +67,14 @@ also load (flat) ints with those.  We need to specify no conversion
 (``.f16.src_flat16`` or ``.f32.src_flat32``), but with those we can load both
 16-bit and 32-bit integers.
 
-In this architecture the descriptors got a major update too and now there is
-just one set of descriptors for both the VS and FS.
-
+In this architecture we assume the VS always uses IDVS, emitting attribute data
+with ``LEA_BUF`` (instead of ``LEA_ATTR``), and never emit varying
+``AttributeDescriptor`` for VS.
 
 Challenges
-==========
+----------
 Theoretically, the output types from the VS and input types from the FS should
-always agree.  In practice we cannot always trust the varyings types given to us,
+always agree.  In practice we cannot trust the varyings types given to us,
 here are some challenging examples:
 
 * Shaders are allowed to use the same types with different precision modifiers.
@@ -97,10 +97,8 @@ In practice you have to follow these rules:
 Current implementation rules:
 
 * VS decides the memory layout
-* On v9+, FS decides the descriptor formats, VS uses auto32 for 32-bit types
-* On v7-, descriptor formats can mismatch (VS int - FS float)
-* Descriptor formats always match what the instructions are using (unless V9
-  auto32)
+* Descriptor formats can mismatch between stages (eg. VS int - FS float)
+* Descriptor formats always match what the instructions are using
 
 
 To regain the type information:

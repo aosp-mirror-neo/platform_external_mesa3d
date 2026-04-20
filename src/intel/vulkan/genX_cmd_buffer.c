@@ -1817,6 +1817,15 @@ resource_barrier_signal_stage(enum intel_engine_class engine_class,
        (hw_stages & RESOURCE_BARRIER_STAGE_COLOR))
       hw_stages &= ~RESOURCE_BARRIER_STAGE_GEOM;
 
+   /* GPGPU + Pixel is not a valid resource barrier stage, so lets over
+    * synchronize a bit.
+    */
+   if ((hw_stages & RESOURCE_BARRIER_STAGE_GPGPU) &&
+       (hw_stages & RESOURCE_BARRIER_STAGE_PIXEL)) {
+      hw_stages &= ~RESOURCE_BARRIER_STAGE_PIXEL;
+      hw_stages |= RESOURCE_BARRIER_STAGE_COLOR;
+   }
+
    return hw_stages;
 }
 
@@ -1824,7 +1833,7 @@ ALWAYS_INLINE static enum GENX(RESOURCE_BARRIER_STAGE)
 resource_barrier_wait_stage(enum intel_engine_class engine_class,
                             const VkPipelineStageFlags2 vk_stages)
 {
-   enum GENX(RESOURCE_BARRIER_STAGE) hw_stage = 0;
+   enum GENX(RESOURCE_BARRIER_STAGE) hw_stage = RESOURCE_BARRIER_STAGE_NONE;
 
    /* BSpec 56054, Wait Stage:
     *   "Hardware is only able to stall at the following stages:
@@ -1978,35 +1987,8 @@ emit_resource_barrier(struct anv_batch *batch,
    }
 #endif
 
-   if (bits & ANV_PIPE_RT_BTI_CHANGE) {
-      /* We used to deal with RT BTI changes with a PIPE_CONTROL with the
-       * following flags:
-       *    - RenderTargetCacheFlushEnable
-       *    - StallAtPixelScoreboard
-       *
-       * With the new RESOURCE_BARRIER instruction, there is a problem in HW
-       * if you do something like this:
-       *   Draw BT0=surfaceA
-       *   Type=Immediate Signal=Color Wait=Top Flags=Color
-       *   Draw BT0=surfaceB
-       *
-       * The new BTI0 is somehow not updated in the state cache, so the second
-       * draw color writes are going either to the previous surface or maybe
-       * /dev/null?
-       *
-       * The Windows drivers appear to not experience this because they're
-       * setting COMMON_SLICE_CHICKEN3:StateCachePerfFixDisabled=true.
-       *
-       * We cannot enable this unfortunately because we're still relying
-       * pretty heavily on the binding table and toggling that bit is big
-       * performance regression on multiple benchmarks (up to 25%).
-       *
-       * So when ANV_PIPE_RT_BTI_CHANGE is set, emit a RT flush + state cache
-       * invalidation (which seems to correctly invalidate the RCC).
-       */
-      bits |= ANV_PIPE_STATE_CACHE_INVALIDATE_BIT |
-              ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT;
-   }
+   if (wait_stages == RESOURCE_BARRIER_STAGE_NONE)
+      wait_stages = RESOURCE_BARRIER_STAGE_TOP;
 
    anv_batch_emit(batch, GENX(RESOURCE_BARRIER), barrier) {
       barrier.ResourceBarrierBody.BarrierType = barrier_type;
@@ -2074,7 +2056,7 @@ emit_resource_barrier(struct anv_batch *batch,
 
 
 ALWAYS_INLINE static enum anv_pipe_bits
-genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
+genX(emit_apply_pipe_flushes)(struct anv_cmd_buffer *cmd_buffer,
                               struct anv_device *device,
                               uint32_t current_pipeline,
                               VkPipelineStageFlags2 src_stages,
@@ -2084,7 +2066,26 @@ genX(emit_apply_pipe_flushes)(struct anv_batch *batch,
                               struct anv_address wait_addr,
                               enum anv_pipe_bits *emitted_flush_bits)
 {
+   struct anv_batch *batch = &cmd_buffer->batch;
+
 #if GFX_VER >= 20
+   /* Wa_14026570320: Ensure RT is not processing rays while requesting state
+    * cache invalidate by emitting barrier:
+    *
+    * RESOURCE_BARRIER(Type=Immediate, Signal: Compute, Wait: TOP)
+    *
+    * Here we achieve same by setting stage flags so that we will wait
+    * compute to finish before state cache invalidation.
+    *
+    * XXX - use WA framework with Wa_14026570320.
+    */
+   if (cmd_buffer->state.compute.trace_rays_active &&
+       (bits & ANV_PIPE_STATE_CACHE_INVALIDATE_BIT)) {
+      src_stages |= VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+      dst_stages |= VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT;
+      cmd_buffer->state.compute.trace_rays_active = false;
+   }
+
    if (can_use_resource_barrier(device->info, batch->engine_class,
                                 src_stages, dst_stages, bits,
                                 signal_addr, wait_addr)) {
@@ -2465,7 +2466,7 @@ genX(cmd_buffer_apply_pipe_flushes)(struct anv_cmd_buffer *cmd_buffer)
 
    enum anv_pipe_bits emitted_bits = 0;
    cmd_buffer->state.pending_pipe_bits =
-      genX(emit_apply_pipe_flushes)(&cmd_buffer->batch,
+      genX(emit_apply_pipe_flushes)(cmd_buffer,
                                     cmd_buffer->device,
                                     cmd_buffer->state.current_pipeline,
                                     src_stages, dst_stages, bits,
@@ -3213,6 +3214,7 @@ genX(batch_emit_pipe_control)(struct anv_batch *batch,
 {
    /* Store pipe control reasons if there is enough space */
    if (reason != NULL &&
+       batch->trace != NULL &&
        batch->pc_reasons_count < ARRAY_SIZE(batch->pc_reasons))
       batch->pc_reasons[batch->pc_reasons_count++] = reason;
    emit_pipe_control(batch, devinfo, current_pipeline,
@@ -3462,50 +3464,38 @@ genX(cmd_buffer_begin_companion)(struct anv_cmd_buffer *cmd_buffer,
 }
 
 static bool
-aux_op_resolves(enum isl_aux_op aux_op)
+is_hw_managed_fast_clear(enum anv_color_aux_op_class op)
 {
-   return aux_op == ISL_AUX_OP_FULL_RESOLVE ||
-          aux_op == ISL_AUX_OP_PARTIAL_RESOLVE;
-}
-
-static bool
-aux_op_clears(enum isl_aux_op aux_op)
-{
-   return aux_op == ISL_AUX_OP_FAST_CLEAR ||
-          aux_op == ISL_AUX_OP_AMBIGUATE;
-}
-
-static bool
-aux_op_renders(enum isl_aux_op aux_op)
-{
-   return aux_op == ISL_AUX_OP_NONE;
+   return op == ANV_COLOR_AUX_OP_CLASS_FAST_CLEAR ||
+          op == ANV_COLOR_AUX_OP_CLASS_HW_AMBIGUATE;
 }
 
 static void
 add_pending_pipe_bits_for_color_aux_op(struct anv_cmd_buffer *cmd_buffer,
-                                       enum isl_aux_op next_aux_op,
+                                       enum anv_color_aux_op_class next_aux_op,
                                        enum anv_pipe_bits pipe_bits,
                                        const char *reason)
 {
-   const enum isl_aux_op last_aux_op = cmd_buffer->state.color_aux_op;
+   const enum anv_color_aux_op_class last_aux_op = cmd_buffer->state.color_aux_op;
    assert(next_aux_op != last_aux_op);
 
    anv_add_pending_pipe_bits(cmd_buffer,
-                             aux_op_clears(next_aux_op) ?
+                             is_hw_managed_fast_clear(next_aux_op) ?
                              VK_PIPELINE_STAGE_2_NONE :
                              VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                             aux_op_clears(next_aux_op) ?
+                             is_hw_managed_fast_clear(next_aux_op) ?
                              VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT : 0,
                              pipe_bits, reason);
 }
 
 void
 genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
-                                     enum isl_aux_op next_aux_op)
+                                     enum anv_color_aux_op_class next_aux_op)
 {
-   const enum isl_aux_op last_aux_op = cmd_buffer->state.color_aux_op;
+   const enum anv_color_aux_op_class last_aux_op = cmd_buffer->state.color_aux_op;
 
-   if (!aux_op_clears(last_aux_op) && aux_op_clears(next_aux_op)) {
+   if (!is_hw_managed_fast_clear(last_aux_op) &&
+       is_hw_managed_fast_clear(next_aux_op)) {
 #if GFX_VER >= 20
       /* From the Xe2 Bspec 57340 (r59562),
        * "MCS/CCS Buffers, Fast Clear for Render Target(s)":
@@ -3527,7 +3517,7 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
        */
       add_pending_pipe_bits_for_color_aux_op(
          cmd_buffer, next_aux_op, ANV_PIPE_RT_BTI_CHANGE,
-         "aux color !aux->aux");
+         "aux color !fast-clear->fast-clear");
 
 #elif GFX_VERx10 == 125
       /* From the ACM Bspec 47704 (r52663), "Render Target Fast Clear":
@@ -3554,7 +3544,7 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
             ANV_PIPE_HDC_PIPELINE_FLUSH_BIT |
             ANV_PIPE_DATA_CACHE_FLUSH_BIT |
             ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT,
-            "aux color !aux->aux");
+            "aux color !fast-clear->fast-clear");
 
 #elif GFX_VERx10 == 120
       /* From the TGL Bspec 47704 (r52663), "Render Target Fast Clear":
@@ -3578,7 +3568,7 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
             ANV_PIPE_TILE_CACHE_FLUSH_BIT |
             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
             ANV_PIPE_TEXTURE_CACHE_INVALIDATE_BIT,
-            "aux color !aux->aux");
+            "aux color !fast-clear->fast-clear");
 
 #else
       /* From the Sky Lake PRM Vol. 7, "MCS Buffer for Render Target(s)":
@@ -3607,9 +3597,10 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
             cmd_buffer, next_aux_op,
             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
             ANV_PIPE_END_OF_PIPE_SYNC_BIT,
-            "aux color !aux->aux");
+            "aux color !fast-clear->fast-clear");
 #endif
-   } else if (aux_op_clears(last_aux_op) && !aux_op_clears(next_aux_op)) {
+   } else if (is_hw_managed_fast_clear(last_aux_op) &&
+              !is_hw_managed_fast_clear(next_aux_op)) {
 #if GFX_VERx10 >= 125
       /* From the ACM PRM Vol. 9, "Color Fast Clear Synchronization":
        *
@@ -3621,7 +3612,7 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
        */
       add_pending_pipe_bits_for_color_aux_op(
          cmd_buffer, next_aux_op, ANV_PIPE_RT_BTI_CHANGE,
-         "aux color aux->!aux");
+         "aux color fast-clear->!fast-clear");
 
 #elif GFX_VERx10 == 120
       /* From the TGL PRM Vol. 9, "Color Fast Clear Synchronization":
@@ -3646,7 +3637,7 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
          ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
          ANV_PIPE_L3_FABRIC_FLUSH_BIT |
          ANV_PIPE_DEPTH_STALL_BIT,
-         "aux color aux->!aux");
+         "aux color fast-clear->!fast-clear");
 
 #else
       /* From the Sky Lake PRM Vol. 7, "Render Target Fast Clear":
@@ -3665,11 +3656,11 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
          cmd_buffer, next_aux_op,
          ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
          ANV_PIPE_END_OF_PIPE_SYNC_BIT,
-         "aux color aux->!aux");
+         "aux color fast-clear->!fast-clear");
 #endif
-
-   } else if (aux_op_renders(last_aux_op) != aux_op_renders(next_aux_op)) {
-      assert(aux_op_resolves(last_aux_op) != aux_op_resolves(next_aux_op));
+   } else if (last_aux_op != next_aux_op &&
+              !is_hw_managed_fast_clear(last_aux_op) &&
+              !is_hw_managed_fast_clear(next_aux_op)) {
       /* From the Sky Lake PRM Vol. 7, "MCS Buffer for Render Target(s)":
        *
        *    Any transition from any value in {Clear, Render, Resolve} to a
@@ -3689,11 +3680,11 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
             cmd_buffer, next_aux_op,
             ANV_PIPE_RENDER_TARGET_CACHE_FLUSH_BIT |
             ANV_PIPE_END_OF_PIPE_SYNC_BIT,
-            "aux color render->!render");
+            "aux color change (non fast-clear)");
    }
 
-   if (last_aux_op != ISL_AUX_OP_FAST_CLEAR &&
-       next_aux_op == ISL_AUX_OP_FAST_CLEAR &&
+   if (last_aux_op != ANV_COLOR_AUX_OP_CLASS_FAST_CLEAR &&
+       next_aux_op == ANV_COLOR_AUX_OP_CLASS_FAST_CLEAR &&
        cmd_buffer->device->isl_dev.ss.clear_color_state_size > 0) {
       /* From the ICL PRM Vol. 9, "State Caching":
        *
@@ -3716,9 +3707,8 @@ genX(cmd_buffer_update_color_aux_op)(struct anv_cmd_buffer *cmd_buffer,
    }
 
    /* Update the auxiliary surface operation, but with one exception. */
-   if (last_aux_op == ISL_AUX_OP_FAST_CLEAR &&
-       next_aux_op == ISL_AUX_OP_AMBIGUATE) {
-      assert(aux_op_clears(last_aux_op) && aux_op_clears(next_aux_op));
+   if (last_aux_op == ANV_COLOR_AUX_OP_CLASS_HW_AMBIGUATE &&
+       next_aux_op == ANV_COLOR_AUX_OP_CLASS_FAST_CLEAR) {
       /* Fast clears and ambiguates are in the same class of operation, but
        * fast clears have more stringent synchronization requirements. For
        * better performance, don't replace the current fast clear operation
@@ -4043,7 +4033,7 @@ end_command_buffer(struct anv_cmd_buffer *cmd_buffer)
    }
 
    /* Flush any in-progress CCS/MCS operations in preparation for chaining. */
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(cmd_buffer_flush_generated_draws)(cmd_buffer);
 
@@ -4156,7 +4146,7 @@ genX(CmdExecuteCommands)(
    /* Ensure we're in a regular drawing cache mode (assumption for all
     * secondary).
     */
-   genX(cmd_buffer_update_color_aux_op(container, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(container, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    /* The secondary command buffer doesn't know which textures etc. have been
     * flushed prior to their execution.  Apply those flushes now.
@@ -4296,6 +4286,9 @@ genX(CmdExecuteCommands)(
       /* Update container btp address from secondary cmdbuf. */
       if (!anv_address_is_null(secondary->state.btp))
          container->state.btp = secondary->state.btp;
+
+      container->state.compute.trace_rays_active |=
+         secondary->state.compute.trace_rays_active;
    }
 
    /* The secondary isn't counted in our VF cache tracking so we need to
@@ -6084,215 +6077,6 @@ void genX(CmdBeginRendering)(
 
    genX(flush_pipeline_select_3d)(cmd_buffer);
 
-   UNUSED bool render_target_change = false;
-   for (uint32_t i = 0; i < gfx->color_att_count; i++) {
-      if (pRenderingInfo->pColorAttachments[i].imageView == VK_NULL_HANDLE) {
-         render_target_change |= gfx->color_att[i].iview != NULL;
-
-         gfx->color_att[i].vk_format = VK_FORMAT_UNDEFINED;
-         gfx->color_att[i].iview = NULL;
-         gfx->color_att[i].layout = VK_IMAGE_LAYOUT_UNDEFINED;
-         gfx->color_att[i].aux_usage = ISL_AUX_USAGE_NONE;
-         gfx->color_att[i].skip_srgb_decode = false;
-         continue;
-      }
-
-      const VkRenderingAttachmentInfo *att =
-         &pRenderingInfo->pColorAttachments[i];
-      ANV_FROM_HANDLE(anv_image_view, iview, att->imageView);
-      const VkImageLayout initial_layout = attachment_initial_layout(att);
-
-      const VkRenderingAttachmentFlagsInfoKHR *att_flags_info =
-         vk_find_struct_const(att->pNext, RENDERING_ATTACHMENT_FLAGS_INFO_KHR);
-
-      assert(render_area.offset.x + render_area.extent.width <=
-             iview->vk.extent.width);
-      assert(render_area.offset.y + render_area.extent.height <=
-             iview->vk.extent.height);
-      assert(layers <= iview->vk.layer_count);
-
-      fb_size.w = MAX2(fb_size.w, iview->vk.extent.width);
-      fb_size.h = MAX2(fb_size.h, iview->vk.extent.height);
-
-      assert(gfx->samples == 0 || gfx->samples == iview->vk.image->samples);
-      gfx->samples |= iview->vk.image->samples;
-
-      enum isl_aux_usage aux_usage =
-         anv_layout_to_aux_usage(cmd_buffer->device->info,
-                                 iview->image,
-                                 iview->vk.aspects,
-                                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-                                 att->imageLayout,
-                                 cmd_buffer->queue_family->queueFlags);
-
-      render_target_change |= gfx->color_att[i].iview != iview;
-
-      gfx->color_att[i].vk_format = iview->vk.format;
-      gfx->color_att[i].iview = iview;
-      gfx->color_att[i].layout = att->imageLayout;
-      gfx->color_att[i].aux_usage = aux_usage;
-      gfx->color_att[i].skip_srgb_decode = att_flags_info &&
-         (att_flags_info->flags &
-          VK_RENDERING_ATTACHMENT_RESOLVE_SKIP_TRANSFER_FUNCTION_BIT_KHR);
-
-      union isl_color_value fast_clear_color = { .u32 = { 0, } };
-
-      if (att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR &&
-          !(gfx->rendering_flags & VK_RENDERING_RESUMING_BIT)) {
-         const VkClearRect clear_rect = {
-            .rect = render_area,
-            .baseArrayLayer = iview->vk.base_array_layer,
-            .layerCount = layers,
-         };
-         const union isl_color_value clear_color =
-            vk_to_isl_color_with_format(att->clearValue.color,
-                                        iview->planes[0].isl.format);
-
-         const bool fast_clear = gfx->view_mask <= 1 &&
-            anv_can_fast_clear_color(cmd_buffer, iview->image,
-                                     iview->vk.aspects,
-                                     iview->vk.base_mip_level,
-                                     &clear_rect, att->imageLayout,
-                                     iview->planes[0].isl.format,
-                                     iview->planes[0].isl.swizzle,
-                                     clear_color);
-
-         if (att->imageLayout != initial_layout) {
-            assert(render_area.offset.x == 0 && render_area.offset.y == 0 &&
-                   render_area.extent.width == iview->vk.extent.width &&
-                   render_area.extent.height == iview->vk.extent.height);
-            if (is_multiview) {
-               u_foreach_bit(view, gfx->view_mask) {
-                  transition_color_buffer(cmd_buffer, iview->image,
-                                          iview->vk.aspects,
-                                          iview->vk.base_mip_level, 1,
-                                          iview->vk.base_array_layer + view,
-                                          1, /* layer_count */
-                                          initial_layout, att->imageLayout,
-                                          VK_QUEUE_FAMILY_IGNORED,
-                                          VK_QUEUE_FAMILY_IGNORED,
-                                          fast_clear,
-                                          false /* acquire_unmodified */);
-               }
-            } else {
-               transition_color_buffer(cmd_buffer, iview->image,
-                                       iview->vk.aspects,
-                                       iview->vk.base_mip_level, 1,
-                                       iview->vk.base_array_layer,
-                                       gfx->layer_count,
-                                       initial_layout, att->imageLayout,
-                                       VK_QUEUE_FAMILY_IGNORED,
-                                       VK_QUEUE_FAMILY_IGNORED,
-                                       fast_clear,
-                                       false /* acquire_unmodified */);
-            }
-         }
-
-         if (fast_clear) {
-            /* We only support fast-clears on the first LOD */
-            assert(iview->vk.base_mip_level == 0);
-
-            fast_clear_color = clear_color;
-
-            if (iview->image->vk.samples == 1) {
-               anv_image_ccs_op(cmd_buffer, iview->image,
-                                iview->planes[0].isl.format,
-                                iview->planes[0].isl.swizzle,
-                                iview->vk.aspects, 0,
-                                clear_rect.baseArrayLayer,
-                                clear_rect.layerCount,
-                                ISL_AUX_OP_FAST_CLEAR,
-                                &fast_clear_color,
-                                false);
-            } else {
-               anv_image_mcs_op(cmd_buffer, iview->image,
-                                iview->planes[0].isl.format,
-                                iview->planes[0].isl.swizzle,
-                                iview->vk.aspects,
-                                clear_rect.baseArrayLayer,
-                                clear_rect.layerCount,
-                                ISL_AUX_OP_FAST_CLEAR,
-                                &fast_clear_color,
-                                false);
-            }
-#if GFX_VER < 20
-            set_image_compressed_bit(cmd_buffer, iview->image,
-                                     iview->vk.aspects, 0,
-                                     clear_rect.baseArrayLayer,
-                                     clear_rect.layerCount, true);
-            genX(set_fast_clear_state)(cmd_buffer, iview->image,
-                                       iview->planes[0].isl.format,
-                                       iview->planes[0].isl.swizzle,
-                                       clear_color);
-#endif
-         } else if (is_multiview) {
-            u_foreach_bit(view, pRenderingInfo->viewMask) {
-               anv_image_clear_color(cmd_buffer, iview->image,
-                                     iview->vk.aspects,
-                                     aux_usage,
-                                     iview->planes[0].isl.format,
-                                     iview->planes[0].isl.swizzle,
-                                     iview->vk.base_mip_level,
-                                     iview->vk.base_array_layer + view, 1,
-                                     render_area, clear_color);
-            }
-         } else {
-            anv_image_clear_color(cmd_buffer, iview->image,
-                                  iview->vk.aspects,
-                                  aux_usage,
-                                  iview->planes[0].isl.format,
-                                  iview->planes[0].isl.swizzle,
-                                  iview->vk.base_mip_level,
-                                  clear_rect.baseArrayLayer,
-                                  clear_rect.layerCount,
-                                  render_area, clear_color);
-         }
-      } else {
-         /* If not LOAD_OP_CLEAR, we shouldn't have a layout transition. */
-         assert(att->imageLayout == initial_layout);
-      }
-
-      struct isl_view isl_view = iview->planes[0].isl;
-      if (pRenderingInfo->viewMask) {
-         assert(isl_view.array_len >= util_last_bit(pRenderingInfo->viewMask));
-         isl_view.array_len = util_last_bit(pRenderingInfo->viewMask);
-      } else {
-         assert(isl_view.array_len >= pRenderingInfo->layerCount);
-         isl_view.array_len = pRenderingInfo->layerCount;
-      }
-
-      anv_image_fill_surface_state(cmd_buffer->device,
-                                   iview->image,
-                                   iview->vk.aspects,
-                                   &isl_view,
-                                   ISL_SURF_USAGE_RENDER_TARGET_BIT,
-                                   aux_usage, &fast_clear_color,
-                                   0, /* anv_image_view_state_flags */
-                                   &gfx->color_att[i].surface_state);
-
-      add_surface_state_relocs(cmd_buffer, &gfx->color_att[i].surface_state);
-
-      if (GFX_VER < 10 &&
-          (att->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ||
-           render_area.extent.width != iview->vk.extent.width ||
-           render_area.extent.height != iview->vk.extent.height ||
-           (gfx->rendering_flags & VK_RENDERING_RESUMING_BIT)) &&
-          iview->image->planes[0].aux_usage != ISL_AUX_USAGE_NONE &&
-          iview->planes[0].isl.base_level == 0) {
-         struct anv_state surf_state = gfx->color_att[i].surface_state.state;
-         genX(cmd_buffer_load_clear_color)(cmd_buffer, surf_state, iview);
-      }
-
-      if (att->resolveMode != VK_RESOLVE_MODE_NONE) {
-         gfx->color_att[i].resolve_mode = att->resolveMode;
-         gfx->color_att[i].resolve_iview =
-            anv_image_view_from_handle(att->resolveImageView);
-         gfx->color_att[i].resolve_layout = att->resolveImageLayout;
-      }
-   }
-
-   anv_cmd_graphic_state_update_has_uint_rt(gfx);
-
    const struct anv_image_view *fsr_iview = NULL;
    const VkRenderingFragmentShadingRateAttachmentInfoKHR *fsr_att =
       vk_find_struct_const(pRenderingInfo->pNext,
@@ -6497,19 +6281,240 @@ void genX(CmdBeginRendering)(
       }
    }
 
+   /* Now deal with color attachments layout transitions */
+   UNUSED bool render_target_change = false;
+   for (uint32_t i = 0; i < gfx->color_att_count; i++) {
+      struct anv_attachment *att = &gfx->color_att[i];
+
+      if (pRenderingInfo->pColorAttachments[i].imageView == VK_NULL_HANDLE) {
+         render_target_change |= att->iview != NULL;
+
+         att->vk_format = VK_FORMAT_UNDEFINED;
+         att->iview = NULL;
+         att->layout = VK_IMAGE_LAYOUT_UNDEFINED;
+         att->aux_usage = ISL_AUX_USAGE_NONE;
+         att->clear = false;
+         att->fast_clear = false;
+         att->skip_srgb_decode = false;
+         continue;
+      }
+
+      const VkRenderingAttachmentInfo *vk_att =
+         &pRenderingInfo->pColorAttachments[i];
+      ANV_FROM_HANDLE(anv_image_view, iview, vk_att->imageView);
+      const VkImageLayout initial_layout = attachment_initial_layout(vk_att);
+
+      const VkRenderingAttachmentFlagsInfoKHR *vk_att_flags_info =
+         vk_find_struct_const(vk_att->pNext, RENDERING_ATTACHMENT_FLAGS_INFO_KHR);
+
+      assert(render_area.offset.x + render_area.extent.width <=
+             iview->vk.extent.width);
+      assert(render_area.offset.y + render_area.extent.height <=
+             iview->vk.extent.height);
+      assert(layers <= iview->vk.layer_count);
+
+      fb_size.w = MAX2(fb_size.w, iview->vk.extent.width);
+      fb_size.h = MAX2(fb_size.h, iview->vk.extent.height);
+
+      assert(gfx->samples == 0 || gfx->samples == iview->vk.image->samples);
+      gfx->samples |= iview->vk.image->samples;
+
+      render_target_change |= att->iview != iview;
+
+      att->vk_format = iview->vk.format;
+      att->iview = iview;
+      att->layout = vk_att->imageLayout;
+      att->aux_usage = anv_layout_to_aux_usage(
+         cmd_buffer->device->info, iview->image,
+         iview->vk.aspects, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+         vk_att->imageLayout, cmd_buffer->queue_family->queueFlags);
+
+      att->skip_srgb_decode = vk_att_flags_info &&
+         (vk_att_flags_info->flags &
+          VK_RENDERING_ATTACHMENT_RESOLVE_SKIP_TRANSFER_FUNCTION_BIT_KHR);
+
+      if (vk_att->resolveMode != VK_RESOLVE_MODE_NONE) {
+         att->resolve_mode = vk_att->resolveMode;
+         att->resolve_iview =
+            anv_image_view_from_handle(vk_att->resolveImageView);
+         att->resolve_layout = vk_att->resolveImageLayout;
+      }
+
+      att->clear = false;
+      att->fast_clear = false;
+
+      if (vk_att->loadOp == VK_ATTACHMENT_LOAD_OP_CLEAR &&
+          !(gfx->rendering_flags & VK_RENDERING_RESUMING_BIT)) {
+         att->clear = true;
+         att->clear_color =
+            vk_to_isl_color_with_format(vk_att->clearValue.color,
+                                        iview->planes[0].isl.format);
+         att->image_clear_rect = (VkClearRect) {
+            .rect = render_area,
+            .baseArrayLayer = iview->vk.base_array_layer,
+            .layerCount = layers,
+         };
+
+         att->fast_clear = gfx->view_mask <= 1 &&
+            anv_can_fast_clear_color(cmd_buffer, iview->image,
+                                     iview->vk.aspects,
+                                     iview->vk.base_mip_level,
+                                     &att->image_clear_rect,
+                                     vk_att->imageLayout,
+                                     iview->planes[0].isl.format,
+                                     iview->planes[0].isl.swizzle,
+                                     att->clear_color);
+
+         if (vk_att->imageLayout != initial_layout) {
+            assert(render_area.offset.x == 0 && render_area.offset.y == 0 &&
+                   render_area.extent.width == iview->vk.extent.width &&
+                   render_area.extent.height == iview->vk.extent.height);
+            if (is_multiview) {
+               u_foreach_bit(view, gfx->view_mask) {
+                  transition_color_buffer(cmd_buffer, iview->image,
+                                          iview->vk.aspects,
+                                          iview->vk.base_mip_level, 1,
+                                          iview->vk.base_array_layer + view,
+                                          1, /* layer_count */
+                                          initial_layout, vk_att->imageLayout,
+                                          VK_QUEUE_FAMILY_IGNORED,
+                                          VK_QUEUE_FAMILY_IGNORED,
+                                          att->fast_clear,
+                                          false /* acquire_unmodified */);
+               }
+            } else {
+               transition_color_buffer(cmd_buffer, iview->image,
+                                       iview->vk.aspects,
+                                       iview->vk.base_mip_level, 1,
+                                       iview->vk.base_array_layer,
+                                       gfx->layer_count,
+                                       initial_layout, vk_att->imageLayout,
+                                       VK_QUEUE_FAMILY_IGNORED,
+                                       VK_QUEUE_FAMILY_IGNORED,
+                                       att->fast_clear,
+                                       false /* acquire_unmodified */);
+            }
+         }
+      } else {
+         /* If not LOAD_OP_CLEAR, we shouldn't have a layout transition. */
+         assert(vk_att->imageLayout == initial_layout);
+      }
+   }
+
+   anv_cmd_graphic_state_update_has_uint_rt(gfx);
+
    /* Finally, now that we know the right size, set up the null surface */
    assert(util_bitcount(gfx->samples) <= 1);
    isl_null_fill_state(&cmd_buffer->device->isl_dev,
                        gfx->null_surface_state.map,
                        .size = fb_size);
 
+   /* Do fast clearing */
    for (uint32_t i = 0; i < gfx->color_att_count; i++) {
-      if (pRenderingInfo->pColorAttachments[i].imageView != VK_NULL_HANDLE)
+      struct anv_attachment *att = &gfx->color_att[i];
+      if (!att->fast_clear)
          continue;
 
-      isl_null_fill_state(&cmd_buffer->device->isl_dev,
-                          gfx->color_att[i].surface_state.state.map,
-                          .size = fb_size);
+      if (att->iview->image->vk.samples == 1) {
+         anv_image_ccs_op(cmd_buffer, att->iview->image,
+                          att->iview->planes[0].isl.format,
+                          att->iview->planes[0].isl.swizzle,
+                          att->iview->vk.aspects, 0,
+                          att->image_clear_rect.baseArrayLayer,
+                          att->image_clear_rect.layerCount,
+                          ISL_AUX_OP_FAST_CLEAR,
+                          &att->clear_color,
+                          false);
+      } else {
+         anv_image_mcs_op(cmd_buffer, att->iview->image,
+                          att->iview->planes[0].isl.format,
+                          att->iview->planes[0].isl.swizzle,
+                          att->iview->vk.aspects,
+                          att->image_clear_rect.baseArrayLayer,
+                          att->image_clear_rect.layerCount,
+                          ISL_AUX_OP_FAST_CLEAR,
+                          &att->clear_color,
+                          false);
+      }
+#if GFX_VER < 20
+      set_image_compressed_bit(cmd_buffer, att->iview->image,
+                               att->iview->vk.aspects, 0,
+                               att->image_clear_rect.baseArrayLayer,
+                               att->image_clear_rect.layerCount, true);
+      genX(set_fast_clear_state)(cmd_buffer, att->iview->image,
+                                 att->iview->planes[0].isl.format,
+                                 att->iview->planes[0].isl.swizzle,
+                                 att->clear_color);
+#endif
+   }
+
+   /* Fill surfaces, load clear colors and do slow clears */
+   for (uint32_t i = 0; i < gfx->color_att_count; i++) {
+      struct anv_attachment *att = &gfx->color_att[i];
+      if (att->iview == NULL) {
+         isl_null_fill_state(&cmd_buffer->device->isl_dev,
+                             att->surface_state.state.map,
+                             .size = fb_size);
+         continue;
+      }
+
+      struct isl_view isl_view = att->iview->planes[0].isl;
+      if (pRenderingInfo->viewMask) {
+         assert(isl_view.array_len >= util_last_bit(pRenderingInfo->viewMask));
+         isl_view.array_len = util_last_bit(pRenderingInfo->viewMask);
+      } else {
+         assert(isl_view.array_len >= pRenderingInfo->layerCount);
+         isl_view.array_len = pRenderingInfo->layerCount;
+      }
+
+      anv_image_fill_surface_state(cmd_buffer->device,
+                                   att->iview->image,
+                                   att->iview->vk.aspects,
+                                   &isl_view,
+                                   ISL_SURF_USAGE_RENDER_TARGET_BIT,
+                                   att->aux_usage, &att->clear_color,
+                                   0, /* anv_image_view_state_flags */
+                                   &att->surface_state);
+
+      add_surface_state_relocs(cmd_buffer, &att->surface_state);
+
+      const VkRenderingAttachmentInfo *vk_att =
+         &pRenderingInfo->pColorAttachments[i];
+      if (GFX_VER < 10 &&
+          (vk_att->loadOp == VK_ATTACHMENT_LOAD_OP_LOAD ||
+           render_area.extent.width != att->iview->vk.extent.width ||
+           render_area.extent.height != att->iview->vk.extent.height ||
+           (gfx->rendering_flags & VK_RENDERING_RESUMING_BIT)) &&
+          att->iview->image->planes[0].aux_usage != ISL_AUX_USAGE_NONE &&
+          att->iview->planes[0].isl.base_level == 0) {
+         struct anv_state surf_state = att->surface_state.state;
+         genX(cmd_buffer_load_clear_color)(cmd_buffer, surf_state, att->iview);
+      }
+
+      if (att->clear && !att->fast_clear) {
+         if (is_multiview) {
+            u_foreach_bit(view, pRenderingInfo->viewMask) {
+               anv_image_clear_color(cmd_buffer, att->iview->image,
+                                     att->iview->vk.aspects,
+                                     att->aux_usage,
+                                     att->iview->planes[0].isl.format,
+                                     att->iview->planes[0].isl.swizzle,
+                                     att->iview->vk.base_mip_level,
+                                     att->iview->vk.base_array_layer + view, 1,
+                                     render_area, att->clear_color);
+            }
+         } else {
+            anv_image_clear_color(cmd_buffer, att->iview->image,
+                                  att->iview->vk.aspects,
+                                  att->aux_usage,
+                                  att->iview->planes[0].isl.format,
+                                  att->iview->planes[0].isl.swizzle,
+                                  att->iview->vk.base_mip_level,
+                                  att->image_clear_rect.baseArrayLayer,
+                                  att->image_clear_rect.layerCount,
+                                  render_area, att->clear_color);
+         }
+      }
    }
 
    /****** We can now start emitting code to begin the render pass ******/
@@ -6528,7 +6533,7 @@ void genX(CmdBeginRendering)(
    gfx->dirty |= ANV_CMD_DIRTY_ALL_SHADERS(cmd_buffer->device);
 
 #if GFX_VER >= 11
-   if (render_target_change) {
+   if (render_target_change && cmd_buffer->device->physical->rt_change_needs_flush) {
       /* The PIPE_CONTROL command description says:
       *
       *    "Whenever a Binding Table Index (BTI) used by a Render Target Message
@@ -6870,7 +6875,7 @@ void genX(CmdSetEvent2)(
       if ((event->flags & VK_EVENT_CREATE_DEVICE_ONLY_BIT) == 0)
          bits |= ANV_PIPE_END_OF_PIPE_SYNC_FORCE_FLUSH_L3_BIT;
 
-      genX(emit_apply_pipe_flushes)(&cmd_buffer->batch,
+      genX(emit_apply_pipe_flushes)(cmd_buffer,
                                     cmd_buffer->device,
                                     cmd_buffer->state.current_pipeline,
                                     src_stages, dst_stages, bits,
@@ -6914,7 +6919,8 @@ void genX(CmdResetEvent2)(
    case INTEL_ENGINE_CLASS_RENDER:
    case INTEL_ENGINE_CLASS_COMPUTE: {
       anv_add_pending_pipe_bits(cmd_buffer,
-                                stageMask, 0,
+                                stageMask,
+                                VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
                                 ANV_PIPE_POST_SYNC_BIT,
                                 "event reset");
       genX(cmd_buffer_apply_pipe_flushes)(cmd_buffer);
@@ -7533,18 +7539,5 @@ genX(cmd_write_buffer_cp)(struct anv_cmd_buffer *cmd_buffer,
 {
    assert(size % 4 == 0);
    struct anv_address addr = anv_address_from_u64(dstAddr);
-
-   struct mi_builder b;
-   mi_builder_init(&b, cmd_buffer->device->info, &cmd_buffer->batch);
-
-   for (uint32_t i = 0; i < size; i += 8) {
-      mi_builder_set_write_check(&b, i >= size - 8);
-      if (size - i < 8) {
-         mi_store(&b, mi_mem32(anv_address_add(addr, i)),
-                      mi_imm(*((uint32_t *)((char*)data + i))));
-      } else {
-         mi_store(&b, mi_mem64(anv_address_add(addr, i)),
-                      mi_imm(*((uint64_t *)((char*)data + i))));
-      }
-   }
+   anv_cmd_buffer_update_addr(cmd_buffer, addr, size, data);
 }

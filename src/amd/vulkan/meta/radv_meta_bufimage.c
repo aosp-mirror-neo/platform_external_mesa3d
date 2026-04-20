@@ -79,7 +79,7 @@ get_itob_pipeline(struct radv_device *device, const struct radv_image *image, Vk
       return VK_SUCCESS;
    }
 
-   nir_shader *cs = radv_meta_nir_build_itob_compute_shader(device, is_3d);
+   nir_shader *cs = radv_meta_nir_build_itob_compute_shader(is_3d);
 
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -161,7 +161,7 @@ get_btoi_pipeline(struct radv_device *device, const struct radv_image *image, Vk
       return VK_SUCCESS;
    }
 
-   nir_shader *cs = radv_meta_nir_build_btoi_compute_shader(device, is_3d);
+   nir_shader *cs = radv_meta_nir_build_btoi_compute_shader(is_3d);
 
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -254,7 +254,7 @@ get_itoi_pipeline(struct radv_device *device, const struct radv_image *src_image
       return VK_SUCCESS;
    }
 
-   nir_shader *cs = radv_meta_nir_build_itoi_compute_shader(device, src_3d, dst_3d, samples);
+   nir_shader *cs = radv_meta_nir_build_itoi_compute_shader(src_3d, dst_3d, samples);
 
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -337,7 +337,7 @@ get_cleari_pipeline(struct radv_device *device, const struct radv_image *image, 
       return VK_SUCCESS;
    }
 
-   nir_shader *cs = radv_meta_nir_build_cleari_compute_shader(device, is_3d, samples);
+   nir_shader *cs = radv_meta_nir_build_cleari_compute_shader(is_3d, samples);
 
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -397,7 +397,7 @@ get_cleari_96bit_pipeline(struct radv_device *device, VkPipeline *pipeline_out, 
       return VK_SUCCESS;
    }
 
-   nir_shader *cs = radv_meta_nir_build_cleari_96bit_compute_shader(device);
+   nir_shader *cs = radv_meta_nir_build_cleari_96bit_compute_shader();
 
    const VkPipelineShaderStageCreateInfo stage_info = {
       .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -477,7 +477,7 @@ fixup_gfx9_cs_copy(struct radv_cmd_buffer *cmd_buffer, const struct radv_meta_bl
    const struct radeon_surf *surf = &image->planes[0].surface;
    const struct radeon_info *gpu_info = &pdev->info;
    struct ac_surf_info surf_info = radv_get_ac_surf_info(device, image);
-   enum radv_copy_flags img_copy_flags = 0, mem_copy_flags = 0;
+   VkAddressCopyFlagsKHR img_copy_flags = 0, mem_copy_flags = 0;
 
    if (gpu_info->gfx_level < GFX9 || gpu_info->gfx_level >= GFX12)
       return;

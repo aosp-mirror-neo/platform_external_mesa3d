@@ -10,7 +10,7 @@
 #include "asahi/lib/agx_device.h"
 #include "asahi/lib/agx_nir_lower_vbo.h"
 #include "util/disk_cache.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "git_sha1.h"
 #include "hk_buffer.h"
 #include "hk_entrypoints.h"
@@ -739,7 +739,7 @@ hk_get_device_properties(const struct agx_device *dev,
       .maxFragmentInputComponents = max_vgt_output_components,
       .maxFragmentOutputAttachments = HK_MAX_RTS,
       .maxFragmentDualSrcAttachments = 1,
-      .maxFragmentCombinedOutputResources = 16,
+      .maxFragmentCombinedOutputResources = HK_MAX_RTS + HK_MAX_DESCRIPTORS,
       .maxComputeSharedMemorySize = HK_MAX_SHARED_SIZE,
       .maxComputeWorkGroupCount = {0x7fffffff, 65535, 65535},
       .maxComputeWorkGroupInvocations = 1024,
@@ -1089,16 +1089,16 @@ hk_get_device_properties(const struct agx_device *dev,
    properties->identicalMemoryTypeRequirements = true;
 
    {
-      struct mesa_sha1 sha1_ctx;
-      uint8_t sha1[SHA1_DIGEST_LENGTH];
+      blake3_hasher blake3_ctx;
+      uint8_t blake3[BLAKE3_KEY_LEN];
 
-      _mesa_sha1_init(&sha1_ctx);
+      _mesa_blake3_init(&blake3_ctx);
       /* Make sure we don't match with other vendors */
       const char *driver = "honeykrisp-v1";
-      _mesa_sha1_update(&sha1_ctx, driver, strlen(driver));
-      _mesa_sha1_final(&sha1_ctx, sha1);
+      _mesa_blake3_update(&blake3_ctx, driver, strlen(driver));
+      _mesa_blake3_final(&blake3_ctx, blake3);
 
-      memcpy(properties->optimalTilingLayoutUUID, sha1, VK_UUID_SIZE);
+      memcpy(properties->optimalTilingLayoutUUID, blake3, VK_UUID_SIZE);
    }
 }
 
@@ -1107,21 +1107,21 @@ hk_physical_device_init_pipeline_cache(struct hk_physical_device *pdev)
 {
    struct hk_instance *instance = hk_physical_device_instance(pdev);
 
-   struct mesa_sha1 sha_ctx;
-   _mesa_sha1_init(&sha_ctx);
+   blake3_hasher blake3_ctx;
+   _mesa_blake3_init(&blake3_ctx);
 
-   _mesa_sha1_update(&sha_ctx, instance->driver_build_sha,
+   _mesa_blake3_update(&blake3_ctx, instance->driver_build_sha,
                      sizeof(instance->driver_build_sha));
 
    const uint64_t compiler_flags = hk_physical_device_compiler_flags(pdev);
-   _mesa_sha1_update(&sha_ctx, &compiler_flags, sizeof(compiler_flags));
+   _mesa_blake3_update(&blake3_ctx, &compiler_flags, sizeof(compiler_flags));
 
-   unsigned char sha[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&sha_ctx, sha);
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   _mesa_blake3_final(&blake3_ctx, blake3);
 
-   static_assert(SHA1_DIGEST_LENGTH >= VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.pipelineCacheUUID, sha, VK_UUID_SIZE);
-   memcpy(pdev->vk.properties.shaderBinaryUUID, sha, VK_UUID_SIZE);
+   static_assert(BLAKE3_KEY_LEN >= VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.pipelineCacheUUID, blake3, VK_UUID_SIZE);
+   memcpy(pdev->vk.properties.shaderBinaryUUID, blake3, VK_UUID_SIZE);
 
 #ifdef ENABLE_SHADER_CACHE
    char renderer[10];
@@ -1131,8 +1131,8 @@ hk_physical_device_init_pipeline_cache(struct hk_physical_device *pdev)
 
    assert(len == sizeof(renderer) - 2);
 
-   char timestamp[SHA1_DIGEST_STRING_LENGTH];
-   _mesa_sha1_format(timestamp, instance->driver_build_sha);
+   char timestamp[BLAKE3_HEX_LEN];
+   _mesa_blake3_format(timestamp, instance->driver_build_sha);
 
    const uint64_t driver_flags = hk_physical_device_compiler_flags(pdev);
    pdev->vk.disk_cache = disk_cache_create(renderer, timestamp, driver_flags);

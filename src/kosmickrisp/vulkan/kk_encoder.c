@@ -13,7 +13,8 @@
 #include "kosmickrisp/bridge/mtl_bridge.h"
 #include "kosmickrisp/bridge/vk_to_mtl_map.h"
 
-#include "cl/kk_query.h"
+#include "kosmickrisp/libkk/kk_query.h"
+#include "libkk_shaders.h"
 
 static void
 kk_encoder_start_internal(struct kk_encoder_internal *encoder,
@@ -65,12 +66,10 @@ kk_encoder_start_render(struct kk_cmd_buffer *cmd,
        * like triangle fans. For this, we signal the value pre_gfx will wait on,
        * and we wait on the value pre_gfx will signal once completed.
        */
-      encoder->signal_value_pre_gfx = encoder->event_value;
-      mtl_encode_signal_event(encoder->main.cmd_buffer, encoder->event,
-                              ++encoder->event_value);
       encoder->wait_value_pre_gfx = encoder->event_value;
       mtl_encode_wait_for_event(encoder->main.cmd_buffer, encoder->event,
                                 ++encoder->event_value);
+      encoder->signal_value_pre_gfx = encoder->event_value;
 
       encoder->main.encoder = mtl_new_render_command_encoder_with_descriptor(
          encoder->main.cmd_buffer, descriptor);
@@ -115,9 +114,12 @@ kk_encoder_end(struct kk_cmd_buffer *cmd)
    upload_queue_writes(cmd);
    kk_encoder_signal_fence_and_end(cmd);
 
-   /* Let remaining render encoders run without waiting since we are done */
-   mtl_encode_signal_event(cmd->encoder->pre_gfx.cmd_buffer,
-                           cmd->encoder->event, cmd->encoder->event_value);
+   struct kk_encoder *encoder = cmd->encoder;
+   if (encoder->last_signaled_value_pre_gfx != encoder->signal_value_pre_gfx) {
+      mtl_encode_signal_event(encoder->pre_gfx.cmd_buffer, encoder->event,
+                              encoder->signal_value_pre_gfx);
+      encoder->last_signaled_value_pre_gfx = encoder->signal_value_pre_gfx;
+   }
 }
 
 struct kk_imm_write_push {
@@ -134,36 +136,33 @@ upload_queue_writes(struct kk_cmd_buffer *cmd)
        enc->copy_query_pool_result_infos.size == 0u)
       return;
 
-   struct kk_device *dev = kk_cmd_buffer_device(cmd);
-   mtl_compute_encoder *compute = kk_compute_encoder(cmd);
-   uint32_t count = util_dynarray_num_elements(&enc->imm_writes, uint64_t) / 2u;
+   uint32_t count =
+      util_dynarray_num_elements(&enc->imm_writes, struct libkk_imm_write);
    if (count != 0) {
-      struct kk_bo *bo = kk_cmd_allocate_buffer(cmd, enc->imm_writes.size, 8u);
+      uint64_t addr =
+         kk_pool_upload(cmd, enc->imm_writes.data, enc->imm_writes.size,
+                        sizeof(struct libkk_imm_write))
+            .gpu;
       /* kk_cmd_allocate_buffer sets the cmd buffer error so we can just exit */
-      if (!bo)
+      if (!addr)
          return;
-      memcpy(bo->cpu, enc->imm_writes.data, enc->imm_writes.size);
-      struct kk_imm_write_push push_data = {
-         .buffer_address = bo->gpu,
-         .count = count,
-      };
-      kk_cmd_dispatch_pipeline(cmd, compute,
-                               kk_device_lib_pipeline(dev, KK_LIB_IMM_WRITE),
-                               &push_data, sizeof(push_data), count, 1, 1);
+      struct mtl_size grid = {count, 1, 1};
+      libkk_write_u32_array(cmd, grid, false, addr);
       enc->imm_writes.size = 0u;
    }
 
    count = util_dynarray_num_elements(&enc->copy_query_pool_result_infos,
-                                      struct kk_copy_query_pool_results_info);
+                                      struct libkk_copy_queries_args);
    if (count != 0u) {
       for (uint32_t i = 0u; i < count; ++i) {
          struct kk_copy_query_pool_results_info *push_data =
             util_dynarray_element(&enc->copy_query_pool_result_infos,
                                   struct kk_copy_query_pool_results_info, i);
 
-         kk_cmd_dispatch_pipeline(
-            cmd, compute, kk_device_lib_pipeline(dev, KK_LIB_COPY_QUERY),
-            push_data, sizeof(*push_data), push_data->query_count, 1, 1);
+         struct mtl_size grid = {push_data->query_count, 1, 1};
+         const struct libkk_copy_queries_args *data =
+            (const struct libkk_copy_queries_args *)push_data;
+         libkk_copy_queries_struct(cmd, grid, false, *data);
       }
       enc->copy_query_pool_result_infos.size = 0u;
    }
@@ -219,12 +218,19 @@ kk_encoder_signal_fence_and_end(struct kk_cmd_buffer *cmd)
 
       /* We can start rendering once all pre-graphics work is done */
       mtl_encode_signal_event(encoder->pre_gfx.cmd_buffer, encoder->event,
-                              encoder->event_value);
+                              encoder->signal_value_pre_gfx);
+      encoder->last_signaled_value_pre_gfx = encoder->signal_value_pre_gfx;
    }
 
    if (encoder->main.last_used != KK_ENC_NONE) {
+      /* kk_encoder_internal_end_encoding will change this value to NONE */
+      enum kk_encoder_type last = encoder->main.last_used;
       kk_encoder_signal_fence(encoder);
       kk_encoder_internal_end_encoding(&encoder->main);
+      if (last == KK_ENC_RENDER) {
+         mtl_encode_signal_event(encoder->main.cmd_buffer, encoder->event,
+                                 ++encoder->event_value);
+      }
    }
 
    if (cmd->drawable) {
@@ -330,14 +336,19 @@ kk_blit_encoder(struct kk_cmd_buffer *cmd)
    return (mtl_blit_encoder *)encoder->encoder;
 }
 
-static mtl_compute_encoder *
+mtl_compute_encoder *
 kk_encoder_pre_gfx_encoder(struct kk_cmd_buffer *cmd)
 {
    struct kk_encoder *encoder = cmd->encoder;
    if (!encoder->pre_gfx.encoder) {
       /* Fast-forward all previous render encoders and wait for the last one */
-      mtl_encode_signal_event(encoder->pre_gfx.cmd_buffer, encoder->event,
-                              encoder->signal_value_pre_gfx);
+      uint32_t last_signaled = (encoder->wait_value_pre_gfx - 1u);
+      if (encoder->wait_value_pre_gfx != 0u &&
+          encoder->last_signaled_value_pre_gfx != last_signaled) {
+         mtl_encode_signal_event(encoder->pre_gfx.cmd_buffer, encoder->event,
+                                 last_signaled);
+         encoder->last_signaled_value_pre_gfx = last_signaled;
+      }
       mtl_encode_wait_for_event(encoder->pre_gfx.cmd_buffer, encoder->event,
                                 encoder->wait_value_pre_gfx);
       encoder->pre_gfx.encoder =
@@ -350,104 +361,4 @@ kk_encoder_pre_gfx_encoder(struct kk_cmd_buffer *cmd)
    }
 
    return encoder->pre_gfx.encoder;
-}
-
-struct kk_triangle_fan_info {
-   uint64_t index_buffer;
-   uint64_t out_ptr;
-   uint64_t in_draw;
-   uint64_t out_draw;
-   uint32_t restart_index;
-   uint32_t index_buffer_size_el;
-   uint32_t in_el_size_B;
-   uint32_t out_el_size_B;
-   uint32_t flatshade_first;
-   uint32_t mode;
-};
-
-static void
-kk_encoder_render_triangle_fan_common(struct kk_cmd_buffer *cmd,
-                                      struct kk_triangle_fan_info *info,
-                                      mtl_buffer *indirect, mtl_buffer *index,
-                                      uint32_t index_count,
-                                      uint32_t in_el_size_B,
-                                      uint32_t out_el_size_B)
-{
-   uint32_t index_buffer_size_B = index_count * out_el_size_B;
-   uint32_t buffer_size_B =
-      sizeof(VkDrawIndexedIndirectCommand) + index_buffer_size_B;
-   struct kk_bo *index_buffer =
-      kk_cmd_allocate_buffer(cmd, buffer_size_B, out_el_size_B);
-
-   if (!index_buffer)
-      return;
-
-   info->out_ptr = index_buffer->gpu + sizeof(VkDrawIndexedIndirectCommand);
-   info->out_draw = index_buffer->gpu;
-   info->in_el_size_B = in_el_size_B;
-   info->out_el_size_B = out_el_size_B;
-   info->flatshade_first = true;
-   mtl_compute_encoder *encoder = kk_encoder_pre_gfx_encoder(cmd);
-
-   struct kk_device *dev = kk_cmd_buffer_device(cmd);
-   kk_cmd_dispatch_pipeline(cmd, encoder,
-                            kk_device_lib_pipeline(dev, KK_LIB_TRIANGLE_FAN),
-                            info, sizeof(*info), 1u, 1u, 1u);
-
-   enum mtl_index_type index_type =
-      index_size_in_bytes_to_mtl_index_type(out_el_size_B);
-   mtl_render_encoder *enc = kk_render_encoder(cmd);
-   mtl_draw_indexed_primitives_indirect(
-      enc, cmd->state.gfx.primitive_type, index_type, index_buffer->map,
-      sizeof(VkDrawIndexedIndirectCommand), index_buffer->map, 0u);
-}
-
-void
-kk_encoder_render_triangle_fan_indirect(struct kk_cmd_buffer *cmd,
-                                        mtl_buffer *indirect, uint64_t offset)
-{
-   enum mesa_prim mode = cmd->state.gfx.prim;
-   uint32_t decomposed_index_count =
-      u_decomposed_prims_for_vertices(mode, cmd->state.gfx.vb.max_vertices) *
-      mesa_vertices_per_prim(mode);
-   uint32_t el_size_B = decomposed_index_count < UINT16_MAX ? 2u : 4u;
-   struct kk_triangle_fan_info info = {
-      .in_draw = mtl_buffer_get_gpu_address(indirect) + offset,
-      .restart_index = UINT32_MAX, /* No restart */
-      .mode = mode,
-   };
-   kk_encoder_render_triangle_fan_common(
-      cmd, &info, indirect, NULL, decomposed_index_count, el_size_B, el_size_B);
-}
-
-void
-kk_encoder_render_triangle_fan_indexed_indirect(struct kk_cmd_buffer *cmd,
-                                                mtl_buffer *indirect,
-                                                uint64_t offset,
-                                                bool increase_el_size)
-{
-   uint32_t el_size_B = cmd->state.gfx.index.bytes_per_index;
-
-   enum mesa_prim mode = cmd->state.gfx.prim;
-   uint32_t max_index_count =
-      (mtl_buffer_get_length(cmd->state.gfx.index.handle) -
-       cmd->state.gfx.index.offset) /
-      el_size_B;
-   uint32_t decomposed_index_count =
-      u_decomposed_prims_for_vertices(mode, max_index_count) *
-      mesa_vertices_per_prim(mode);
-
-   struct kk_triangle_fan_info info = {
-      .index_buffer = mtl_buffer_get_gpu_address(cmd->state.gfx.index.handle) +
-                      cmd->state.gfx.index.offset,
-      .in_draw = mtl_buffer_get_gpu_address(indirect) + offset,
-      .restart_index =
-         increase_el_size ? UINT32_MAX : cmd->state.gfx.index.restart,
-      .index_buffer_size_el = max_index_count,
-      .mode = mode,
-   };
-   uint32_t out_el_size_B = increase_el_size ? sizeof(uint32_t) : el_size_B;
-   kk_encoder_render_triangle_fan_common(
-      cmd, &info, indirect, cmd->state.gfx.index.handle, decomposed_index_count,
-      el_size_B, out_el_size_B);
 }

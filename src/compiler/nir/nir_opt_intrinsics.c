@@ -66,17 +66,17 @@ try_opt_bcsel_of_shuffle(nir_builder *b, nir_alu_instr *alu,
    if (block_has_discard)
       return NULL;
 
-   if (!nir_alu_src_is_trivial_ssa(alu, 0))
+   if (!nir_alu_has_trivial_src(alu, 0))
       return NULL;
 
    nir_def *data1, *index1;
-   if (!nir_alu_src_is_trivial_ssa(alu, 1) ||
+   if (!nir_alu_has_trivial_src(alu, 1) ||
        nir_def_block(alu->src[1].src.ssa) != alu->instr.block ||
        !src_is_single_use_shuffle(alu->src[1].src, &data1, &index1))
       return NULL;
 
    nir_def *data2, *index2;
-   if (!nir_alu_src_is_trivial_ssa(alu, 2) ||
+   if (!nir_alu_has_trivial_src(alu, 2) ||
        nir_def_block(alu->src[2].src.ssa) != alu->instr.block ||
        !src_is_single_use_shuffle(alu->src[2].src, &data2, &index2))
       return NULL;
@@ -136,7 +136,7 @@ src_is_alu(nir_op op, nir_src src, nir_src srcs[2])
    if (alu == NULL || alu->op != op)
       return false;
 
-   if (!nir_alu_src_is_trivial_ssa(alu, 0) || !nir_alu_src_is_trivial_ssa(alu, 1))
+   if (!nir_alu_has_trivial_src(alu, 0) || !nir_alu_has_trivial_src(alu, 1))
       return false;
 
    srcs[0] = alu->src[0].src;
@@ -151,7 +151,7 @@ try_opt_quad_vote(nir_builder *b, nir_alu_instr *alu, bool block_has_discard)
    if (block_has_discard)
       return NULL;
 
-   if (!nir_alu_src_is_trivial_ssa(alu, 0) || !nir_alu_src_is_trivial_ssa(alu, 1))
+   if (!nir_alu_has_trivial_src(alu, 0) || !nir_alu_has_trivial_src(alu, 1))
       return NULL;
 
    nir_intrinsic_instr *quad_broadcasts[4];
@@ -491,6 +491,18 @@ try_opt_atomic_exchange_to_store(nir_builder *b, nir_intrinsic_instr *intrin)
                                .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC | ACCESS_COHERENT,
                                .src_type = image_atomic_type(intrin));
       break;
+   case nir_intrinsic_image_heap_atomic:
+      nir_image_heap_store(b, intrin->src[0].ssa,
+                           intrin->src[1].ssa,
+                           intrin->src[2].ssa,
+                           intrin->src[3].ssa,
+                           nir_imm_int(b, 0),
+                           .image_dim = nir_intrinsic_image_dim(intrin),
+                           .image_array = nir_intrinsic_image_array(intrin),
+                           .format = nir_intrinsic_format(intrin),
+                           .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC | ACCESS_COHERENT,
+                           .src_type = image_atomic_type(intrin));
+      break;
    default:
       UNREACHABLE("unhandled atomic intrinsic");
    }
@@ -606,6 +618,18 @@ try_opt_atomic_to_load(nir_builder *b, nir_intrinsic_instr *intrin)
                                     .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC | ACCESS_COHERENT,
                                     .dest_type = image_atomic_type(intrin));
       break;
+   case nir_intrinsic_image_heap_atomic:
+      def = nir_image_heap_load(b, 1, bit_size,
+                                intrin->src[0].ssa,
+                                intrin->src[1].ssa,
+                                intrin->src[2].ssa,
+                                nir_imm_int(b, 0),
+                                .image_dim = nir_intrinsic_image_dim(intrin),
+                                .image_array = nir_intrinsic_image_array(intrin),
+                                .format = nir_intrinsic_format(intrin),
+                                .access = nir_intrinsic_access(intrin) | ACCESS_ATOMIC | ACCESS_COHERENT,
+                                .dest_type = image_atomic_type(intrin));
+      break;
    default:
       UNREACHABLE("unhandled atomic intrinsic");
    }
@@ -677,6 +701,7 @@ opt_intrinsics_intrin(nir_builder *b, nir_intrinsic_instr *intrin)
    case nir_intrinsic_image_deref_atomic:
    case nir_intrinsic_image_atomic:
    case nir_intrinsic_bindless_image_atomic:
+   case nir_intrinsic_image_heap_atomic:
       progress |= try_opt_atomic_isub(b, intrin);
       progress |= try_opt_atomic_to_exchange(b, intrin);
       progress |= try_opt_atomic_exchange_to_store(b, intrin);

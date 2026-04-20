@@ -27,7 +27,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_time.h"
 #include "common/intel_compute_slm.h"
 #include "common/intel_l3_config.h"
@@ -94,6 +94,7 @@ anv_shader_stage_to_nir(struct anv_device *device,
 
    const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
       .point_coord = true,
+      .primitive_id = nir->info.stage == MESA_SHADER_FRAGMENT,
    };
    NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
 
@@ -337,13 +338,13 @@ struct anv_pipeline_stage {
    VkPipelineCreateFlags2KHR pipeline_flags;
    const VkPipelineShaderStageCreateInfo *info;
 
-   unsigned char shader_sha1[SHA1_DIGEST_LENGTH];
+   unsigned char shader_blake3[BLAKE3_KEY_LEN];
 
    union elk_any_prog_key key;
 
    struct {
       mesa_shader_stage stage;
-      unsigned char sha1[SHA1_DIGEST_LENGTH];
+      unsigned char blake3[BLAKE3_KEY_LEN];
    } cache_key;
 
    nir_shader *nir;
@@ -369,53 +370,53 @@ static void
 anv_pipeline_hash_graphics(struct anv_graphics_pipeline *pipeline,
                            struct anv_pipeline_layout *layout,
                            struct anv_pipeline_stage *stages,
-                           unsigned char *sha1_out)
+                           unsigned char *blake3_out)
 {
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
 
-   _mesa_sha1_update(&ctx, &pipeline->view_mask,
+   _mesa_blake3_update(&ctx, &pipeline->view_mask,
                      sizeof(pipeline->view_mask));
 
    if (layout)
-      _mesa_sha1_update(&ctx, layout->sha1, sizeof(layout->sha1));
+      _mesa_blake3_update(&ctx, layout->blake3, sizeof(layout->blake3));
 
    for (uint32_t s = 0; s < ANV_GRAPHICS_SHADER_STAGE_COUNT; s++) {
       if (stages[s].info) {
-         _mesa_sha1_update(&ctx, stages[s].shader_sha1,
-                           sizeof(stages[s].shader_sha1));
-         _mesa_sha1_update(&ctx, &stages[s].key, elk_prog_key_size(s));
+         _mesa_blake3_update(&ctx, stages[s].shader_blake3,
+                           sizeof(stages[s].shader_blake3));
+         _mesa_blake3_update(&ctx, &stages[s].key, elk_prog_key_size(s));
       }
    }
 
-   _mesa_sha1_final(&ctx, sha1_out);
+   _mesa_blake3_final(&ctx, blake3_out);
 }
 
 static void
 anv_pipeline_hash_compute(struct anv_compute_pipeline *pipeline,
                           struct anv_pipeline_layout *layout,
                           struct anv_pipeline_stage *stage,
-                          unsigned char *sha1_out)
+                          unsigned char *blake3_out)
 {
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
 
    if (layout)
-      _mesa_sha1_update(&ctx, layout->sha1, sizeof(layout->sha1));
+      _mesa_blake3_update(&ctx, layout->blake3, sizeof(layout->blake3));
 
    const struct anv_device *device = pipeline->base.device;
 
    const bool rba = device->vk.enabled_features.robustBufferAccess;
-   _mesa_sha1_update(&ctx, &rba, sizeof(rba));
+   _mesa_blake3_update(&ctx, &rba, sizeof(rba));
 
    const uint8_t afs = device->physical->instance->assume_full_subgroups;
-   _mesa_sha1_update(&ctx, &afs, sizeof(afs));
+   _mesa_blake3_update(&ctx, &afs, sizeof(afs));
 
-   _mesa_sha1_update(&ctx, stage->shader_sha1,
-                     sizeof(stage->shader_sha1));
-   _mesa_sha1_update(&ctx, &stage->key.cs, sizeof(stage->key.cs));
+   _mesa_blake3_update(&ctx, stage->shader_blake3,
+                     sizeof(stage->shader_blake3));
+   _mesa_blake3_update(&ctx, &stage->key.cs, sizeof(stage->key.cs));
 
-   _mesa_sha1_final(&ctx, sha1_out);
+   _mesa_blake3_final(&ctx, blake3_out);
 }
 
 static nir_shader *
@@ -432,7 +433,7 @@ anv_pipeline_stage_get_nir(struct anv_pipeline *pipeline,
 
    nir = anv_device_search_for_nir(pipeline->device, cache,
                                    nir_options,
-                                   stage->shader_sha1,
+                                   stage->shader_blake3,
                                    mem_ctx);
    if (nir) {
       assert(nir->info.stage == stage->stage);
@@ -443,7 +444,7 @@ anv_pipeline_stage_get_nir(struct anv_pipeline *pipeline,
                                  stage->pipeline_flags, stage->info,
                                  stage->key.base.robust_flags, mem_ctx);
    if (nir) {
-      anv_device_upload_nir(pipeline->device, cache, nir, stage->shader_sha1);
+      anv_device_upload_nir(pipeline->device, cache, nir, stage->shader_blake3);
       return nir;
    }
 
@@ -1041,7 +1042,7 @@ anv_graphics_pipeline_init_keys(struct anv_graphics_pipeline *pipeline,
       int64_t stage_start = os_time_get_nano();
 
       vk_pipeline_hash_shader_stage(stages[s].pipeline_flags, stages[s].info,
-                                    NULL, stages[s].shader_sha1);
+                                    NULL, stages[s].shader_blake3);
 
       const struct anv_device *device = pipeline->base.device;
       enum elk_robustness_flags robust_flags = anv_device_get_robust_flags(device);
@@ -1231,15 +1232,15 @@ anv_graphics_pipeline_compile(struct anv_graphics_pipeline *pipeline,
 
    anv_graphics_pipeline_init_keys(pipeline, state, stages);
 
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
-   anv_pipeline_hash_graphics(pipeline, layout, stages, sha1);
+   unsigned char blake3[BLAKE3_KEY_LEN];
+   anv_pipeline_hash_graphics(pipeline, layout, stages, blake3);
 
    for (unsigned s = 0; s < ARRAY_SIZE(stages); s++) {
       if (!stages[s].info)
          continue;
 
       stages[s].cache_key.stage = s;
-      memcpy(stages[s].cache_key.sha1, sha1, sizeof(sha1));
+      memcpy(stages[s].cache_key.blake3, blake3, sizeof(blake3));
    }
 
    const bool skip_cache_lookup =
@@ -1450,7 +1451,7 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
       },
    };
    vk_pipeline_hash_shader_stage(stage.pipeline_flags, &info->stage,
-                                 NULL, stage.shader_sha1);
+                                 NULL, stage.shader_blake3);
 
    struct anv_shader_bin *bin = NULL;
 
@@ -1463,7 +1464,7 @@ anv_pipeline_compile_cs(struct anv_compute_pipeline *pipeline,
    const bool skip_cache_lookup =
       (pipeline->base.flags & VK_PIPELINE_CREATE_CAPTURE_INTERNAL_REPRESENTATIONS_BIT_KHR);
 
-   anv_pipeline_hash_compute(pipeline, layout, &stage, stage.cache_key.sha1);
+   anv_pipeline_hash_compute(pipeline, layout, &stage, stage.cache_key.blake3);
 
    bool cache_hit = false;
    if (!skip_cache_lookup) {
@@ -1738,7 +1739,7 @@ anv_graphics_pipeline_init(struct anv_graphics_pipeline *pipeline,
    pipeline->depth_clamp_enable = state->rs->depth_clamp_enable;
    pipeline->depth_clip_enable =
       vk_rasterization_state_depth_clip_enable(state->rs);
-   pipeline->view_mask = state->rp->view_mask;
+   pipeline->view_mask = state->mv->view_mask;
 
    result = anv_graphics_pipeline_compile(pipeline, cache, pCreateInfo, state);
    if (result != VK_SUCCESS) {
@@ -1817,6 +1818,7 @@ anv_graphics_pipeline_create(struct anv_device *device,
    struct vk_graphics_pipeline_all_state all;
    struct vk_graphics_pipeline_state state = { };
    result = vk_graphics_pipeline_state_fill(&device->vk, &state, pCreateInfo,
+                                            NULL /* driver_mv */,
                                             NULL /* driver_rp */,
                                             0 /* driver_rp_flags */,
                                             &all, NULL, 0, NULL);

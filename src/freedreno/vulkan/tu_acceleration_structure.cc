@@ -22,20 +22,16 @@
  * IN THE SOFTWARE.
  */
 
-#include "tu_buffer.h"
-#include "tu_device.h"
-#include "tu_cmd_buffer.h"
-
-#include "vk_acceleration_structure.h"
 #include "tu_acceleration_structure.h"
+
 #include "radix_sort/radix_sort_u64.h"
-
-
-#include "common/freedreno_gpu_event.h"
-
 #include "util/u_hexdump.h"
+#include "vk_acceleration_structure.h"
 
 #include "bvh/tu_build_interface.h"
+#include "tu_buffer.h"
+#include "tu_cmd_buffer.h"
+#include "tu_device.h"
 
 static const uint32_t encode_spv[] = {
 #include "bvh/encode.spv.h"
@@ -174,8 +170,8 @@ tu_get_build_config(VkDevice device,
 }
 
 static VkResult
-encode_bind_pipeline(VkCommandBuffer commandBuffer,
-                     const struct vk_acceleration_structure_build_state *state)
+encode_prepare(VkCommandBuffer commandBuffer,
+               const struct vk_acceleration_structure_build_state *state)
 {
    VK_FROM_HANDLE(tu_cmd_buffer, cmdbuf, commandBuffer);
    struct tu_device *device = cmdbuf->device;
@@ -348,7 +344,7 @@ header(VkCommandBuffer commandBuffer,
 const struct vk_acceleration_structure_build_ops tu_as_build_ops = {
    .get_build_config = tu_get_build_config,
    .get_as_size = get_bvh_size,
-   .encode_bind_pipeline = { encode_bind_pipeline, header_bind_pipeline },
+   .encode_prepare = { encode_prepare, header_bind_pipeline },
    .encode_as = { encode, header },
 };
 

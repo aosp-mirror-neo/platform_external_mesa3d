@@ -22,10 +22,10 @@ template = COPYRIGHT + """
 
 #include "dev/intel_device_info.h"
 #include "brw_compiler.h"
-#define SHA_UPDATE_FIELD(field)     _mesa_sha1_update(ctx, &devinfo->field, sizeof(devinfo->field))
+#define SHA_UPDATE_FIELD(field)     _mesa_blake3_update(ctx, &devinfo->field, sizeof(devinfo->field))
 
 void
-brw_device_sha1_update(struct mesa_sha1 *ctx,
+brw_device_blake3_update(blake3_hasher *ctx,
                        const struct intel_device_info *devinfo) {
 % for member in compiler_fields:
 % if member.ray_tracing_field:

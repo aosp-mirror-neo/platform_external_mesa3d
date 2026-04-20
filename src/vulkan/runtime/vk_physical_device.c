@@ -297,6 +297,7 @@ vk_common_GetPhysicalDeviceCalibrateableTimeDomainsKHR(
    const VkTimeDomainKHR host_time_domains[] = {
       VK_TIME_DOMAIN_CLOCK_MONOTONIC_KHR,
       VK_TIME_DOMAIN_CLOCK_MONOTONIC_RAW_KHR,
+      VK_TIME_DOMAIN_QUERY_PERFORMANCE_COUNTER_KHR,
    };
    for (uint32_t i = 0; i < ARRAY_SIZE(host_time_domains); i++) {
       const VkTimeDomainKHR domain = host_time_domains[i];
@@ -323,4 +324,34 @@ vk_common_GetPhysicalDeviceToolProperties(VkPhysicalDevice physicalDevice,
    VK_OUTARRAY_MAKE_TYPED(VkPhysicalDeviceToolProperties, out, pToolProperties, pToolCount);
 
    return vk_outarray_status(&out);
+}
+
+VKAPI_ATTR VkDeviceSize VKAPI_CALL
+vk_common_GetPhysicalDeviceDescriptorSizeEXT(VkPhysicalDevice physicalDevice,
+                                             VkDescriptorType descriptorType)
+{
+   VK_FROM_HANDLE(vk_physical_device, pdevice, physicalDevice);
+
+   switch (descriptorType) {
+   case VK_DESCRIPTOR_TYPE_SAMPLER:
+      return pdevice->properties.samplerDescriptorSize;
+
+   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
+   case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
+   case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
+      return pdevice->properties.imageDescriptorSize;
+
+   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+   case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+   case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_NV:
+      return pdevice->properties.bufferDescriptorSize;
+
+   default:
+      UNREACHABLE("Invalid descriptor type in GetPhysicalDeviceDescriptorSizeEXT");
+   }
 }

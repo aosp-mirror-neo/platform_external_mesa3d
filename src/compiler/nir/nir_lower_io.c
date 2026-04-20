@@ -992,6 +992,7 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_global_nv:
    case nir_intrinsic_load_scratch:
    case nir_intrinsic_load_scratch_nv:
+   case nir_intrinsic_load_scratch_intel:
    case nir_intrinsic_load_fs_input_interp_deltas:
    case nir_intrinsic_shared_atomic:
    case nir_intrinsic_shared_atomic_nv:
@@ -1028,6 +1029,9 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_load_per_primitive_output:
    case nir_intrinsic_load_interpolated_input:
    case nir_intrinsic_load_global_amd:
+   case nir_intrinsic_load_global_bounded:
+   case nir_intrinsic_load_global_constant_offset:
+   case nir_intrinsic_load_global_constant_bounded:
    case nir_intrinsic_store_output:
    case nir_intrinsic_store_pixel_local:
    case nir_intrinsic_store_shared:
@@ -1040,6 +1044,7 @@ nir_get_io_offset_src_number(const nir_intrinsic_instr *instr)
    case nir_intrinsic_store_urb_lsc_intel:
    case nir_intrinsic_store_scratch:
    case nir_intrinsic_store_scratch_nv:
+   case nir_intrinsic_store_scratch_intel:
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
    case nir_intrinsic_ldc_nv:
@@ -1094,10 +1099,11 @@ nir_get_io_offset_src(nir_intrinsic_instr *instr)
    return idx >= 0 ? &instr->src[idx] : NULL;
 }
 
-#define IMG_CASE(name)                    \
-   case nir_intrinsic_image_##name:       \
-   case nir_intrinsic_image_deref_##name: \
-   case nir_intrinsic_bindless_image_##name
+#define IMG_CASE(name)                          \
+   case nir_intrinsic_image_##name:             \
+   case nir_intrinsic_image_deref_##name:       \
+   case nir_intrinsic_bindless_image_##name:    \
+   case nir_intrinsic_image_heap_##name
 
 /**
  * Return the index or handle source number for a load/store intrinsic or -1
@@ -1143,6 +1149,9 @@ nir_get_io_index_src_number(const nir_intrinsic_instr *instr)
    IMG_CASE(order):
    IMG_CASE(fragment_mask_load_amd):
       return 0;
+   case nir_intrinsic_image_deref_load_param_intel:
+   case nir_intrinsic_image_heap_load_param_intel:
+      return 0;
    case nir_intrinsic_store_ssbo:
    case nir_intrinsic_store_per_vertex_output:
    case nir_intrinsic_store_per_view_output:
@@ -1182,10 +1191,12 @@ nir_get_io_data_src_number(const nir_intrinsic_instr *intr)
    case nir_intrinsic_store_global_nv:
    case nir_intrinsic_store_scratch:
    case nir_intrinsic_store_scratch_nv:
+   case nir_intrinsic_store_scratch_intel:
    case nir_intrinsic_store_raw_output_pan:
    case nir_intrinsic_store_combined_output_pan:
    case nir_intrinsic_store_tile_pan:
-   case nir_intrinsic_store_converted_mem_pan:
+   case nir_intrinsic_store_global_cvt_pan:
+   case nir_intrinsic_store_global_psiz_pan:
    case nir_intrinsic_store_tlb_sample_color_v3d:
    case nir_intrinsic_store_uvs_agx:
    case nir_intrinsic_store_local_pixel_agx:

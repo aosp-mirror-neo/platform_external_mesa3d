@@ -194,7 +194,7 @@ get_max_vbs(const struct intel_device_info *devinfo) {
 
 #define MAX_XFB_BUFFERS  4
 #define MAX_XFB_STREAMS  4
-#define MAX_SETS         8
+#define MAX_SETS        32
 #define MAX_RTS          8
 #define MAX_VIEWPORTS   16
 #define MAX_SCISSORS    16
@@ -1163,9 +1163,9 @@ enum anv_pipeline_behavior {
 #define ANV_INLINE_DWORD_MESH_PROVOKING_VERTEX (UINT8_MAX - 2)
 
 struct anv_pipeline_bind_map {
-   unsigned char                                surface_sha1[SHA1_DIGEST_LENGTH];
-   unsigned char                                sampler_sha1[SHA1_DIGEST_LENGTH];
-   unsigned char                                push_sha1[SHA1_DIGEST_LENGTH];
+   unsigned char                                surface_blake3[BLAKE3_KEY_LEN];
+   unsigned char                                sampler_blake3[BLAKE3_KEY_LEN];
+   unsigned char                                push_blake3[BLAKE3_KEY_LEN];
 
    /* enum anv_descriptor_set_layout_type */
    uint16_t layout_type;
@@ -1314,6 +1314,12 @@ struct anv_shader_group_rt_replay {
 struct anv_shader {
    struct vk_shader vk;
 
+   /**
+    * Code of the shader on the host
+    *
+    * This is before relocations are applied so that can always return the
+    * same blob of data for serialization.
+    */
    void *code;
 
    struct anv_shader_alloc kernel;
@@ -1416,6 +1422,12 @@ struct anv_shader {
 
    uint32_t *cmd_data;
 };
+
+uint32_t anv_shader_get_scratch_surf(struct anv_batch *batch,
+                                     struct anv_device *device,
+                                     mesa_shader_stage stage,
+                                     uint32_t total_scratch,
+                                     bool protected);
 
 extern struct vk_device_shader_ops anv_device_shader_ops;
 
@@ -1593,6 +1605,11 @@ struct anv_physical_device {
     /** Can the platform support cooperative matrices and is it enabled? */
     bool                                        has_cooperative_matrix;
 
+    /** Whether changing render target entries to a different surface state
+     *  requires a render target cache flush
+     */
+    bool                                        rt_change_needs_flush;
+
     struct {
       uint32_t                                  family_count;
       struct anv_queue_family                   families[ANV_MAX_QUEUE_FAMILIES];
@@ -1690,7 +1707,7 @@ struct anv_physical_device {
     struct anv_memregion                        vram_mappable;
     struct anv_memregion                        vram_non_mappable;
     struct anv_memregion                        sys;
-    uint8_t                                     driver_build_sha1[SHA1_DIGEST_LENGTH];
+    uint8_t                                     driver_build_sha1[BLAKE3_KEY_LEN];
     uint8_t                                     shader_binary_uuid[VK_UUID_SIZE];
     uint8_t                                     pipeline_cache_uuid[VK_UUID_SIZE];
     uint8_t                                     driver_uuid[VK_UUID_SIZE];
@@ -1832,6 +1849,7 @@ struct anv_instance {
     unsigned                                    binding_table_block_size;
     bool                                        barrier_post_typed_clear_shader;
     bool                                        barrier_post_untyped_clear_shader;
+    bool                                        state_cache_perf_fix;
 
     /* HW workarounds */
     bool                                        no_16bit;
@@ -1842,6 +1860,7 @@ struct anv_instance {
      * Performance workarounds
      */
     bool                                        disable_lto;
+    enum brw_divergent_atomics_flags            enable_opt_divergent_atomics;
 
     /**
      * Ray tracing configuration.
@@ -1929,14 +1948,14 @@ struct nir_shader *
 anv_device_search_for_nir(struct anv_device *device,
                           struct vk_pipeline_cache *cache,
                           const struct nir_shader_compiler_options *nir_options,
-                          unsigned char sha1_key[SHA1_DIGEST_LENGTH],
+                          unsigned char blake3_key[BLAKE3_KEY_LEN],
                           void *mem_ctx);
 
 void
 anv_device_upload_nir(struct anv_device *device,
                       struct vk_pipeline_cache *cache,
                       const struct nir_shader *nir,
-                      unsigned char sha1_key[SHA1_DIGEST_LENGTH]);
+                      unsigned char blake3_key[BLAKE3_KEY_LEN]);
 
 void
 anv_load_fp64_shader(struct anv_device *device);
@@ -4413,6 +4432,12 @@ struct anv_attachment {
    const struct anv_image_view *resolve_iview;
    VkImageLayout resolve_layout;
 
+   bool clear;
+   bool fast_clear;
+   union isl_color_value clear_color;
+   /* Clear rectangle relative to the image */
+   VkClearRect image_clear_rect;
+
    bool skip_srgb_decode;
 };
 
@@ -4708,6 +4733,9 @@ struct anv_cmd_compute_state {
    uint8_t pixel_async_compute_thread_limit;
    uint8_t z_pass_async_compute_thread_limit;
    uint8_t np_z_async_throttle_settings;
+
+   /* State tracking for Wa_14026570320. */
+   bool trace_rays_active;
 };
 
 struct anv_cmd_ray_tracing_state {
@@ -4730,6 +4758,21 @@ enum anv_cmd_descriptor_buffer_mode {
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_UNKNOWN,
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_LEGACY,
    ANV_CMD_DESCRIPTOR_BUFFER_MODE_BUFFER,
+};
+
+enum anv_color_aux_op_class {
+   /* Non color related operation class or rendering */
+   ANV_COLOR_AUX_OP_CLASS_NONE,
+   /* Software managed ambiguate operation class (MCS & CCS-pre-gfx11) */
+   ANV_COLOR_AUX_OP_CLASS_SW_AMBIGUATE,
+   /* Hardware managed ambiguate operation class (CCS gfx11+) */
+   ANV_COLOR_AUX_OP_CLASS_HW_AMBIGUATE,
+   /* Fast clear (includes CCS ambiguate) */
+   ANV_COLOR_AUX_OP_CLASS_FAST_CLEAR,
+   /* Resolves HW managed */
+   ANV_COLOR_AUX_OP_CLASS_HW_RESOLVE,
+   /* Resolves SW managed */
+   ANV_COLOR_AUX_OP_CLASS_SW_RESOLVE,
 };
 
 /** State required while building cmd buffer */
@@ -4820,14 +4863,14 @@ struct anv_cmd_state {
    struct anv_state                             binding_tables[MESA_VULKAN_SHADER_STAGES];
    struct anv_state                             samplers[MESA_VULKAN_SHADER_STAGES];
 
-   unsigned char                                sampler_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
-   unsigned char                                surface_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
-   unsigned char                                push_sha1s[MESA_VULKAN_SHADER_STAGES][SHA1_DIGEST_LENGTH];
+   unsigned char                                sampler_blake3s[MESA_VULKAN_SHADER_STAGES][BLAKE3_KEY_LEN];
+   unsigned char                                surface_blake3s[MESA_VULKAN_SHADER_STAGES][BLAKE3_KEY_LEN];
+   unsigned char                                push_blake3s[MESA_VULKAN_SHADER_STAGES][BLAKE3_KEY_LEN];
 
    /* The last auxiliary surface operation (or equivalent operation) provided
     * to genX(cmd_buffer_update_color_aux_op).
     */
-   enum isl_aux_op                              color_aux_op;
+   enum anv_color_aux_op_class                  color_aux_op;
 
    /**
     * Whether RHWO optimization is enabled (Wa_1508744258 and Wa_14024015672).
@@ -5296,15 +5339,13 @@ struct anv_event {
 #define ANV_STAGE_MASK ((1 << MESA_VULKAN_SHADER_STAGES) - 1)
 
 #define anv_foreach_stage(stage, stage_bits)                         \
-   for (mesa_shader_stage stage,                                       \
-        __tmp = (mesa_shader_stage)((stage_bits) & ANV_STAGE_MASK);    \
-        stage = __builtin_ffs(__tmp) - 1, __tmp;                     \
-        __tmp &= ~(1 << (stage)))
+   u_foreach_bit(stage, (stage_bits & ANV_STAGE_MASK))
 
 #define anv_foreach_vk_stage(stage, stage_bits)                      \
    for (VkShaderStageFlags stage,                                    \
            __tmp = (stage_bits & ANV_VK_STAGE_MASK);                 \
-        stage = BITFIELD_BIT(__builtin_ffs(__tmp) - 1), __tmp;       \
+        /* See util_bitcount in bitscan.h. */                        \
+        stage = __tmp & -__tmp, __tmp;                               \
         __tmp &= ~(stage))
 
 struct anv_shader_upload_params {

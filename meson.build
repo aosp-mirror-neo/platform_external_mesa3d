@@ -115,6 +115,7 @@ with_vulkan_anti_lag_layer = get_option('vulkan-layers').contains('anti-lag')
 with_tools = get_option('tools')
 if with_tools.contains('all')
   with_tools = [
+    'amd',
     'asahi',
     'dlclose-skip',
     'drm-shim',
@@ -250,7 +251,7 @@ if with_gallium_swrast
 endif
 
 with_gallium = gallium_drivers.length() != 0
-with_gallium_kmsro = system_has_kms_drm and [
+with_gallium_drm = system_has_kms_drm and [
   with_gallium_asahi,
   with_gallium_etnaviv,
   with_gallium_freedreno,
@@ -258,7 +259,6 @@ with_gallium_kmsro = system_has_kms_drm and [
   with_gallium_panfrost,
   with_gallium_v3d,
   with_gallium_vc4,
-  with_gallium_zink,
 ].contains(true)
 
 _vulkan_drivers = get_option('vulkan-drivers')
@@ -322,8 +322,8 @@ freedreno_kmds = get_option('freedreno-kmds')
 if freedreno_kmds.length() != 0 and freedreno_kmds != [ 'msm' ] and with_freedreno_vk
   if freedreno_kmds.contains('msm')
       warning('Turnip with the DRM KMD will require libdrm to always be present at runtime which may not always be the case on platforms such as Android.')
-  elif with_gallium_kmsro
-      warning('As a side-effect, Turnip is forced to link with libdrm when built alongside Gallium DRM drivers which platforms such as Android may not have available at runtime.')
+  elif with_gallium_drm
+      warning('Turnip is forced to link with libdrm when built alongside Gallium DRM drivers which platforms such as Android may not have available at runtime.')
   elif _vulkan_drivers != [ 'freedreno' ]
       warning('Turnip is forced to link with libdrm when built alongside other Vulkan drivers which platforms such as Android may not have available at runtime.')
   else
@@ -332,6 +332,9 @@ if freedreno_kmds.length() != 0 and freedreno_kmds != [ 'msm' ] and with_freedre
     system_has_kms_drm = false
   endif
 endif
+
+# This has to be below the freedreno_kmds check since that can change system_has_kms_drm
+with_gallium_kmsro = with_gallium_drm or (system_has_kms_drm and with_gallium_zink)
 
 pre_args += ['-DMESA_SYSTEM_HAS_KMS_DRM=@0@'.format(system_has_kms_drm.to_int())]
 if host_machine.cpu_family() == 'x86' and with_glx_read_only_text
@@ -352,7 +355,7 @@ with_vdrm = [
 ].contains(true)
 
 with_dri = false
-if with_gallium and system_has_kms_drm
+if with_gallium and (system_has_kms_drm or (freedreno_kmds.contains('kgsl') and with_gallium_zink))
   _glx = get_option('glx')
   _egl = get_option('egl')
   if _glx == 'dri' or _egl.enabled() or (_glx == 'disabled' and _egl.allowed())
@@ -413,8 +416,8 @@ elif ['windows', 'cygwin'].contains(host_machine.system())
   with_dri_platform = 'windows'
 elif system_has_kms_drm
   with_dri_platform = 'drm'
-elif host_machine.system() == 'gnu'
-  with_dri_platform = 'hurd'
+elif host_machine.system() == 'gnu' or (freedreno_kmds.contains('kgsl') and with_gallium_zink)
+  with_dri_platform = 'pseudo-drm'
 else
   # FIXME: haiku doesn't use dri, and xlib doesn't use dri, probably should
   # assert here that one of those cases has been met.
@@ -441,6 +444,15 @@ if _codecs.contains('all')
 elif _codecs.contains('all_free')
   _codecs += free_codecs
 endif
+
+with_video_encode = false
+foreach c : _codecs
+  if c.contains('enc')
+    with_video_encode = true
+    break
+  endif
+endforeach
+
 foreach c : all_codecs
    pre_args += '-DVIDEO_CODEC_@0@=@1@'.format(c.to_upper(), _codecs.contains(c).to_int())
 endforeach
@@ -538,7 +550,7 @@ with_gbm = get_option('gbm') \
   .allowed()
 
 with_xlib_lease = get_option('xlib-lease') \
-  .require(with_platform_x11 and (system_has_kms_drm or with_dri_platform == 'apple' or with_dri_platform == 'hurd'), error_message : 'xlib-lease requires X11 and KMS/DRM support') \
+  .require(with_platform_x11 and (system_has_kms_drm or with_dri_platform == 'apple' or with_dri_platform == 'pseudo-drm'), error_message : 'xlib-lease requires X11 and KMS/DRM support') \
   .allowed()
 
 with_egl = get_option('egl') \
@@ -657,7 +669,7 @@ if with_vulkan_icd_dir == ''
   with_vulkan_icd_dir = join_paths(get_option('datadir'), 'vulkan/icd.d')
 endif
 
-with_dri2 = (with_dri or with_any_vk) and (with_dri_platform == 'drm' or with_dri_platform == 'apple' or  with_dri_platform == 'hurd')
+with_dri2 = (with_dri or with_any_vk) and (with_dri_platform == 'drm' or with_dri_platform == 'apple' or  with_dri_platform == 'pseudo-drm')
 
 if with_dri
   if with_glx == 'disabled' and not with_egl and not with_gbm
@@ -735,7 +747,6 @@ _va_drivers = [
 ]
 
 allow_fallback_for_libva = get_option('allow-fallback-for').contains('libva')
-fallback_libva_options = []
 _va = get_option('gallium-va') \
   .require(_va_drivers.contains(true),
            error_message : 'VA state tracker requires at least one of the following gallium drivers: r600, radeonsi, nouveau, d3d12 (with option gallium-d3d12-video), virgl.')
@@ -743,8 +754,8 @@ _dep_va_name = host_machine.system() == 'windows' ? 'libva-win32' : 'libva'
 dep_va = dependency(
   _dep_va_name, version : '>= 1.8.0',
   required : _va,
-  allow_fallback: allow_fallback_for_libva,
-  default_options: fallback_libva_options
+  allow_fallback : allow_fallback_for_libva,
+  default_options : [ 'c_std=none' ]
 )
 if dep_va.found()
   dep_va_headers = dep_va.partial_dependency(compile_args : true, includes : true)
@@ -936,6 +947,7 @@ with_llvm = with_llvm \
 
 with_poly = [
   with_gallium_asahi, with_asahi_vk, with_tools.contains('asahi'),
+  with_kosmickrisp_vk,
 ].contains(true)
 
 dep_clc = null_dep
@@ -1041,18 +1053,13 @@ python_exec_list = ['python3.16', 'python3.15', 'python3.14', 'python3.13',
 
 foreach p : python_exec_list
   prog_python = find_program(p, required : false, version : python_version_req)
-  if prog_python.found()
-    break
+  if not prog_python.found()
+    continue
   endif
-endforeach
 
-if not prog_python.found()
-  error('Python ' + python_version_req + ' not found')
-endif
-
-has_mako = run_command(
-  prog_python, '-c',
-  '''
+  has_mako = run_command(
+    prog_python, '-c',
+    '''
 import sys
 
 try:
@@ -1071,6 +1078,21 @@ except:
 if Version(mako.__version__) < Version("0.8.0"):
     sys.exit(1)
 ''', check: false)
+  if has_mako.returncode() != 0
+    continue
+  endif
+
+  has_yaml = run_command(prog_python, '-c', 'import yaml', check: false)
+  if has_yaml.returncode() != 0
+    continue
+  endif
+
+  break
+endforeach
+
+if not prog_python.found()
+  error('Python ' + python_version_req + ' not found')
+endif
 
 if has_mako.returncode() == 1
   error('Python (3.x) mako module >= 0.8.0 required to build mesa.')
@@ -1078,11 +1100,6 @@ elif has_mako.returncode() == 2
   error('One of Python (3.x) packaging or distutils module is required.')
 endif
 
-has_yaml = run_command(
-  prog_python, '-c',
-  '''
-import yaml
-  ''', check: false)
 if has_yaml.returncode() != 0
   error('Python (3.x) yaml module (PyYAML) required to build mesa.')
 endif
@@ -2005,6 +2022,9 @@ if with_clc
     if dep_llvm.version().version_compare('>= 18.0')
       clang_modules += 'clangAPINotes'
     endif
+    if dep_llvm.version().version_compare('>= 22.0')
+      clang_modules += ['clangAnalysisLifetimeSafety', 'clangOptions']
+    endif
 
     dep_clang = []
     foreach m : clang_modules
@@ -2218,7 +2238,7 @@ if with_platform_x11
       error('libdrm required for gallium video statetrackers when using x11')
     endif
   endif
-  if with_dri_platform == 'drm' or with_dri_platform == 'hurd'
+  if with_dri_platform == 'drm' or with_dri_platform == 'pseudo-drm'
     dep_xcb_dri3 = dependency('xcb-dri3', version : dep_xcb_dri3_version)
     dep_xcb_present = dependency('xcb-present', version : dep_xcb_present_version)
     if (dep_xcb_dri3.version().version_compare('>= 1.17') and
@@ -2234,7 +2254,7 @@ if with_platform_x11
     dep_glproto = dependency('glproto', version : dep_glproto_version)
   endif
   if with_glx == 'dri'
-    if with_dri_platform == 'drm' or with_dri_platform == 'hurd'
+    if with_dri_platform == 'drm' or with_dri_platform == 'pseudo-drm'
       if with_glx_direct
         dep_xxf86vm = dependency('xxf86vm')
       endif
@@ -2344,7 +2364,7 @@ elif with_glx == 'dri'
   gl_priv_reqs += [
     'x11', 'xext', 'xfixes', 'x11-xcb', 'xcb',
     'xcb-glx >= 1.8.1']
-  if with_dri_platform == 'drm' or with_dri_platform == 'hurd'
+  if with_dri_platform == 'drm' or with_dri_platform == 'pseudo-drm'
     gl_priv_reqs += 'xcb-dri2 >= 1.8'
     if with_glx_direct
       gl_priv_reqs += 'xxf86vm'
@@ -2478,7 +2498,7 @@ if with_egl
   if with_dri
     egl_drivers += 'builtin:egl_dri2'
   endif
-  if with_dri_platform == 'drm' or with_dri_platform == 'hurd'
+  if with_dri_platform == 'drm' or with_dri_platform == 'pseudo-drm'
     egl_drivers += 'builtin:egl_dri3'
   endif
   if with_platform_windows
@@ -2518,6 +2538,7 @@ if with_any_vk
   video_apis += 'vulkan'
 endif
 video_summary += {'APIs': video_apis.length() != 0 ? video_apis : false}
+video_summary += {'Encoding': with_video_encode}
 summary(video_summary, section: 'Video', bool_yn: true, list_sep: ' ')
 
 llvm_summary = {'Required': with_llvm}

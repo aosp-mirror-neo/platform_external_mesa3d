@@ -6,6 +6,7 @@
 #include "pan_compiler.h"
 #include "pan_nir.h"
 
+#include "bifrost/bi_debug.h"
 #include "bifrost/bifrost_compile.h"
 #include "bifrost/bifrost/disassemble.h"
 #include "bifrost/valhall/disassemble.h"
@@ -33,22 +34,26 @@ pan_want_debug_info(unsigned arch)
 }
 
 const nir_shader_compiler_options *
-pan_get_nir_shader_compiler_options(unsigned arch)
+pan_get_nir_shader_compiler_options(unsigned arch, bool merge_wg)
 {
    switch (arch) {
    case 4:
    case 5:
+      assert(!merge_wg);
       return &midgard_nir_options;
    case 6:
    case 7:
+      assert(!merge_wg);
       return &bifrost_nir_options_v6;
    case 9:
    case 10:
-      return &bifrost_nir_options_v9;
+      return merge_wg ? &bifrost_nir_options_v9_merge_wg :
+                        &bifrost_nir_options_v9;
    case 11:
    case 12:
    case 13:
-      return &bifrost_nir_options_v11;
+      return merge_wg ? &bifrost_nir_options_v11_merge_wg :
+                        &bifrost_nir_options_v11;
    default:
       assert(!"Unsupported arch");
       return NULL;
@@ -56,33 +61,14 @@ pan_get_nir_shader_compiler_options(unsigned arch)
 }
 
 void
-pan_preprocess_nir(nir_shader *nir, unsigned gpu_id)
+pan_preprocess_nir(nir_shader *nir, uint64_t gpu_id)
 {
    if (pan_arch(gpu_id) >= 6)
       bifrost_preprocess_nir(nir, gpu_id);
    else
       midgard_preprocess_nir(nir, gpu_id);
-}
 
-void
-pan_optimize_nir(nir_shader *nir, unsigned gpu_id)
-{
-   assert(pan_arch(gpu_id) >= 6);
-   bifrost_optimize_nir(nir, gpu_id);
-}
-
-void
-pan_postprocess_nir(nir_shader *nir, unsigned gpu_id)
-{
-   if (pan_arch(gpu_id) >= 6)
-      bifrost_postprocess_nir(nir, gpu_id);
-   else
-      midgard_postprocess_nir(nir, gpu_id);
-}
-
-void
-pan_nir_lower_texture_early(nir_shader *nir, unsigned gpu_id)
-{
+   /* Lower textures early */
    nir_lower_tex_options lower_tex_options = {
       .lower_txs_lod = true,
       .lower_txp = ~0,
@@ -98,14 +84,19 @@ pan_nir_lower_texture_early(nir_shader *nir, unsigned gpu_id)
 }
 
 void
-pan_nir_lower_texture_late(nir_shader *nir, unsigned gpu_id)
+pan_optimize_nir(nir_shader *nir, uint64_t gpu_id)
 {
-   /* This must be called after any lowering of resource indices
-    * (panfrost_nir_lower_res_indices / panvk_per_arch(nir_lower_descriptors))
-    * and lowering of attribute indices (pan_nir_lower_image_index /
-    * pan_nir_lower_texel_buffer_fetch_index)  */
+   assert(pan_arch(gpu_id) >= 6);
+   bifrost_optimize_nir(nir, gpu_id);
+}
+
+void
+pan_postprocess_nir(nir_shader *nir, uint64_t gpu_id)
+{
    if (pan_arch(gpu_id) >= 6)
-      bifrost_lower_texture_late_nir(nir, gpu_id);
+      bifrost_postprocess_nir(nir, gpu_id);
+   else
+      midgard_postprocess_nir(nir, gpu_id);
 }
 
 /** Converts a per-component mask to a byte mask */
@@ -193,10 +184,6 @@ pan_shader_update_info(struct pan_shader_info *info, nir_shader *s,
 
       info->vs.writes_point_size =
          s->info.outputs_written & VARYING_BIT_PSIZ;
-
-      info->vs.needs_extended_fifo = arch >= 9 &&
-         valhal_writes_extended_fifo(s->info.outputs_written,
-                                     true, inputs->view_mask != 0);
       break;
    case MESA_SHADER_FRAGMENT:
       if (s->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_DEPTH))
@@ -301,8 +288,8 @@ pan_shader_compile(nir_shader *s, struct pan_compile_inputs *inputs,
 }
 
 void
-pan_disassemble(FILE *fp, const void *code, size_t size,
-                unsigned gpu_id, bool verbose)
+pan_disassemble(FILE *fp, const void *code, size_t size, uint64_t gpu_id,
+                bool verbose)
 {
    if (pan_arch(gpu_id) >= 9)
       disassemble_valhall(fp, (const uint64_t *)code, size, verbose);

@@ -14,16 +14,16 @@
 
 enum
 {
-   SI_COPY =
-      SI_SAVE_FRAMEBUFFER | SI_SAVE_TEXTURES | SI_SAVE_FRAGMENT_STATE | SI_DISABLE_RENDER_COND,
-
-   SI_BLIT = SI_SAVE_FRAMEBUFFER | SI_SAVE_TEXTURES | SI_SAVE_FRAGMENT_STATE,
-
-   SI_DECOMPRESS = SI_SAVE_FRAMEBUFFER | SI_SAVE_FRAGMENT_STATE | SI_DISABLE_RENDER_COND,
+   SI_COPY = SI_SAVE_FRAMEBUFFER | SI_SAVE_TEXTURES | SI_DISABLE_RENDER_COND,
+   SI_BLIT = SI_SAVE_FRAMEBUFFER | SI_SAVE_TEXTURES,
+   SI_DECOMPRESS = SI_SAVE_FRAMEBUFFER | SI_DISABLE_RENDER_COND,
 };
 
 void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op)
 {
+   util_blitter_save_vertex_buffers(sctx->blitter, sctx->vertex_buffer,
+                                    sctx->vertex_elements->num_vertex_buffers);
+   util_blitter_save_vertex_elements(sctx->blitter, sctx->vertex_elements);
    util_blitter_save_vertex_shader(sctx->blitter, sctx->shader.vs.cso);
    util_blitter_save_tessctrl_shader(sctx->blitter, sctx->shader.tcs.cso);
    util_blitter_save_tesseval_shader(sctx->blitter, sctx->shader.tes.cso);
@@ -32,25 +32,25 @@ void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op)
    util_blitter_save_so_targets(sctx->blitter, sctx->streamout.num_targets,
                                 (struct pipe_stream_output_target **)sctx->streamout.targets,
                                 sctx->streamout.output_prim);
+   util_blitter_save_viewport(sctx->blitter, &sctx->viewports.states[0]);
    util_blitter_save_rasterizer(sctx->blitter, sctx->queued.named.rasterizer);
 
-   if (op & SI_SAVE_FRAGMENT_STATE) {
+   if (op & SI_SAVE_FRAGMENT_CONSTANT) {
       struct pipe_constant_buffer fs_cb = {};
       si_get_pipe_constant_buffer(sctx, MESA_SHADER_FRAGMENT, 0, &fs_cb);
 
-      if (op & SI_SAVE_FRAGMENT_CONSTANT)
-         util_blitter_save_fragment_constant_buffer_slot(sctx->blitter, &fs_cb);
-
+      util_blitter_save_fragment_constant_buffer_slot(sctx->blitter, &fs_cb);
       pipe_resource_reference(&fs_cb.buffer, NULL);
-      util_blitter_save_blend(sctx->blitter, sctx->queued.named.blend);
-      util_blitter_save_depth_stencil_alpha(sctx->blitter, sctx->queued.named.dsa);
-      util_blitter_save_stencil_ref(sctx->blitter, &sctx->stencil_ref.state);
-      util_blitter_save_fragment_shader(sctx->blitter, sctx->shader.ps.cso);
-      util_blitter_save_sample_mask(sctx->blitter, sctx->sample_mask, sctx->ps_iter_samples);
-      util_blitter_save_scissor(sctx->blitter, &sctx->scissors[0]);
-      util_blitter_save_window_rectangles(sctx->blitter, sctx->window_rectangles_include,
-                                          sctx->num_window_rectangles, sctx->window_rectangles);
    }
+
+   util_blitter_save_blend(sctx->blitter, sctx->queued.named.blend);
+   util_blitter_save_depth_stencil_alpha(sctx->blitter, sctx->queued.named.dsa);
+   util_blitter_save_stencil_ref(sctx->blitter, &sctx->stencil_ref.state);
+   util_blitter_save_fragment_shader(sctx->blitter, sctx->shader.ps.cso);
+   util_blitter_save_sample_mask(sctx->blitter, sctx->sample_mask, sctx->ps_iter_samples);
+   util_blitter_save_scissor(sctx->blitter, &sctx->scissors[0]);
+   util_blitter_save_window_rectangles(sctx->blitter, sctx->window_rectangles_include,
+                                       sctx->num_window_rectangles, sctx->window_rectangles);
 
    if (op & SI_SAVE_FRAMEBUFFER)
       util_blitter_save_framebuffer(sctx->blitter, &sctx->framebuffer.state);
@@ -73,6 +73,9 @@ void si_blitter_begin(struct si_context *sctx, enum si_blitter_op op)
 
    /* Force-disable fbfetch because there are unsolvable recursion problems with u_blitter. */
    si_force_disable_ps_colorbuf0_slot(sctx);
+
+   /* This disables streamout queries. See si_get_streamout_enable_state. */
+   si_mark_atom_dirty(sctx, &sctx->atoms.s.streamout_enable);
 
    sctx->blitter_running = true;
 }
@@ -101,6 +104,9 @@ void si_blitter_end(struct si_context *sctx)
 
    sctx->vertex_buffers_dirty = sctx->num_vertex_elements > 0;
    si_mark_atom_dirty(sctx, &sctx->atoms.s.gfx_shader_pointers);
+
+   /* This re-enables streamout queries. */
+   si_mark_atom_dirty(sctx, &sctx->atoms.s.streamout_enable);
 
    /* We force-disabled fbfetch for u_blitter, so recompute the state. */
    si_update_ps_colorbuf0_slot(sctx);

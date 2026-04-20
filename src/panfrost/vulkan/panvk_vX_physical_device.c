@@ -110,6 +110,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_shader_subgroup_rotate = true,
       .KHR_shader_subgroup_uniform_control_flow = has_vk1_1,
       .KHR_shader_terminate_invocation = true,
+      .KHR_shader_untyped_pointers = PAN_ARCH >= 9,
       .KHR_spirv_1_4 = PAN_ARCH >= 10,
       .KHR_storage_buffer_storage_class = true,
 #ifdef PANVK_USE_WSI_PLATFORM
@@ -119,6 +120,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_present_wait2 = true,
       .KHR_swapchain = true,
       .KHR_swapchain_mutable_format = true,
+      .KHR_swapchain_maintenance1 = true,
 #endif
       .KHR_synchronization2 = true,
       .KHR_timeline_semaphore = true,
@@ -129,10 +131,13 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_vulkan_memory_model = true,
       .KHR_zero_initialize_workgroup_memory = true,
       .EXT_4444_formats = true,
+      .EXT_attachment_feedback_loop_dynamic_state = true,
+      .EXT_attachment_feedback_loop_layout = true,
       .EXT_border_color_swizzle = true,
       .EXT_buffer_device_address = true,
       .EXT_calibrated_timestamps =
          device->kmod.dev->props.gpu_can_query_timestamp,
+      .EXT_conditional_rendering = PAN_ARCH >= 10,
       .EXT_color_write_enable = true,
       .EXT_custom_border_color = true,
       .EXT_depth_bias_control = true,
@@ -182,17 +187,23 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_primitive_topology_list_restart = true,
       .EXT_provoking_vertex = true,
       .EXT_queue_family_foreign = true,
+      .EXT_rgba10x6_formats = PAN_ARCH >= 11,
       .EXT_robustness2 = PAN_ARCH >= 10,
       .EXT_sampler_filter_minmax = PAN_ARCH >= 10,
       .EXT_scalar_block_layout = true,
       .EXT_separate_stencil_usage = true,
-      .EXT_shader_module_identifier = true,
+      .EXT_shader_atomic_float = true,
       .EXT_shader_demote_to_helper_invocation = true,
+      .EXT_shader_module_identifier = true,
       .EXT_shader_replicated_composites = true,
       .EXT_shader_stencil_export = true,
       .EXT_shader_subgroup_ballot = true,
       .EXT_shader_subgroup_vote = true,
+      .EXT_shader_uniform_buffer_unsized_array = true,
       .EXT_subgroup_size_control = has_vk1_1,
+#ifdef PANVK_USE_WSI_PLATFORM
+      .EXT_swapchain_maintenance1 = true,
+#endif
       .EXT_texel_buffer_alignment = true,
       .EXT_astc_decode_mode = PAN_ARCH >= 9,
       .EXT_texture_compression_astc_hdr = true,
@@ -299,8 +310,7 @@ panvk_per_arch(get_physical_device_features)(
       .vertexPipelineStoresAndAtomics =
          (PAN_ARCH >= 13 && instance->enable_vertex_pipeline_stores_atomics) ||
          instance->force_enable_shader_atomics,
-      .fragmentStoresAndAtomics =
-         (PAN_ARCH >= 10) || instance->force_enable_shader_atomics,
+      .fragmentStoresAndAtomics = true,
       .shaderTessellationAndGeometryPointSize = false,
       .shaderImageGatherExtended = true,
       .shaderStorageImageExtendedFormats = true,
@@ -483,12 +493,22 @@ panvk_per_arch(get_physical_device_features)(
       .extendedDynamicState2LogicOp = true,
       .extendedDynamicState2PatchControlPoints = false,
 
+      /* VK_EXT_attachment_feedback_loop_dynamic_state */
+      .attachmentFeedbackLoopDynamicState = true,
+
+      /* VK_EXT_attachment_feedback_loop_layout */
+      .attachmentFeedbackLoopLayout = true,
+
       /* VK_EXT_4444_formats */
       .formatA4R4G4B4 = true,
       .formatA4B4G4R4 = true,
 
       /* VK_EXT_color_write_enable */
       .colorWriteEnable = true,
+
+      /* VK_EXT_conditional_rendering */
+      .conditionalRendering = PAN_ARCH >= 10,
+      .inheritedConditionalRendering = PAN_ARCH >= 10,
 
       /* VK_EXT_custom_border_color */
       .customBorderColors = true,
@@ -546,14 +566,37 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_KHR_shader_subgroup_uniform_control_flow */
       .shaderSubgroupUniformControlFlow = true,
 
+      /* VK_KHR_shader_untyped_pointers */
+      .shaderUntypedPointers = PAN_ARCH >= 9,
+
       /* VK_EXT_shader_module_identifier */
       .shaderModuleIdentifier = true,
 
       /* VK_EXT_shader_replicated_composites */
       .shaderReplicatedComposites = true,
 
+      /* VK_EXT_shader_uniform_buffer_unsized_array */
+      .shaderUniformBufferUnsizedArray = true,
+
+      /* VK_EXT_shader_atomic_float */
+      .shaderBufferFloat32Atomics = true,
+      .shaderBufferFloat32AtomicAdd = false,
+      .shaderBufferFloat64Atomics = false,
+      .shaderBufferFloat64AtomicAdd = false,
+      .shaderSharedFloat32Atomics = true,
+      .shaderSharedFloat32AtomicAdd = false,
+      .shaderSharedFloat64Atomics = false,
+      .shaderSharedFloat64AtomicAdd = false,
+      .shaderImageFloat32Atomics = true,
+      .shaderImageFloat32AtomicAdd = false,
+      .sparseImageFloat32Atomics = has_sparse,
+      .sparseImageFloat32AtomicAdd = false,
+
       /* VK_EXT_texel_buffer_alignment */
       .texelBufferAlignment = true,
+
+      /* VK_EXT_rgba10x6_formats */
+      .formatRgba10x6WithoutYCbCrSampler = PAN_ARCH >= 11,
 
       /* VK_EXT_ycbcr_2plane_444_formats */
       .ycbcr2plane444Formats = PAN_ARCH >= 10,
@@ -610,6 +653,11 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_ARM_scheduling_controls */
       .schedulingControls = PAN_ARCH >= 10,
+
+#ifdef PANVK_USE_WSI_PLATFORM
+      /* KHR_swapchain_maintenance1 */
+      .swapchainMaintenance1 = true,
+#endif
 
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
@@ -687,27 +735,13 @@ panvk_per_arch(get_physical_device_properties)(
       .deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
 
       /* Vulkan 1.0 limits */
-      /* Maximum texture dimension is 2^16, but we're limited by the
-       * size/surface-stride fields. The size/surface_stride field is 32-bit
-       * on v10-, so let's take that as a reference for now.
-       * The following limits are chosen so we don't overflow these
-       * size/surface_stride fields. We choose them so they are a power-of-two,
-       * except for 2D/Cube dimensions where taking a power-of-two would be
-       * too limiting, so we pick power-of-two-minus-one, which makes things
-       * fit exactly in our 32-bit budget.
-       *
-       * TODO: increase the limit on v11+ once we have all the necessary bits
-       * patched to handle the size/stride field extension.
-       */
+      /* Maximum texture dimension is 2^16. */
       .maxImageDimension1D = (1 << 16),
-      .maxImageDimension2D = PAN_ARCH <= 10 ? (1 << 14) - 1 : (1 << 16),
-      .maxImageDimension3D = PAN_ARCH <= 10 ? (1 << 9) : (1 << 14),
-      .maxImageDimensionCube = PAN_ARCH <= 10 ? (1 << 14) - 1 : (1 << 16),
+      .maxImageDimension2D = (1 << 16),
+      .maxImageDimension3D = (1 << 16),
+      .maxImageDimensionCube = (1 << 16),
       .maxImageArrayLayers = (1 << 16),
-      /* Pre-v11 is limited to 2^27 elements of 16 byte formats due to
-         size fields of 32 bits. */
-      .maxTexelBufferElements =
-         PAN_ARCH >= 11 ? PANVK_MAX_BUFFER_SIZE : (1 << 27),
+      .maxTexelBufferElements = UINT64_C(1) << (util_logbase2(panvk_get_max_buffer_size(device) / 16)),
       /* Each uniform entry is 16-byte and the number of entries is encoded in a
        * 12-bit field, with the minus(1) modifier, which gives 2^20.
        */
@@ -829,12 +863,12 @@ panvk_per_arch(get_physical_device_properties)(
       .viewportSubPixelBits = 0,
       /* Align on a page. */
       .minMemoryMapAlignment = os_page_size,
-      /* Some compressed texture formats require 128-byte alignment. */
-      .minTexelBufferOffsetAlignment = 64,
+      /* The largest buffer texture format is 16B */
+      .minTexelBufferOffsetAlignment = 16,
       /* Always aligned on a uniform slot (vec4). */
       .minUniformBufferOffsetAlignment = 16,
-      /* Lowered to global accesses, which happen at the 32-bit granularity. */
-      .minStorageBufferOffsetAlignment = 4,
+      /* LOAD.i128 and LD_PKA.i128 which require 16B alignment */
+      .minStorageBufferOffsetAlignment = 16,
       /* Signed 4-bit value. */
       .minTexelOffset = -8,
       .maxTexelOffset = 7,
@@ -905,7 +939,7 @@ panvk_per_arch(get_physical_device_properties)(
          VK_SUBGROUP_FEATURE_ROTATE_CLUSTERED_BIT,
       .subgroupQuadOperationsInAllStages = false,
       .pointClippingBehavior = VK_POINT_CLIPPING_BEHAVIOR_ALL_CLIP_PLANES,
-      .maxMultiviewViewCount = 8,
+      .maxMultiviewViewCount = PAN_MAX_MULTIVIEW_VIEW_COUNT,
       .maxMultiviewInstanceIndex = UINT32_MAX,
       .protectedNoFault = false,
       .maxPerSetDescriptors = UINT16_MAX,
@@ -1045,11 +1079,11 @@ panvk_per_arch(get_physical_device_properties)(
       .integerDotProductAccumulatingSaturating64BitUnsignedAccelerated = false,
       .integerDotProductAccumulatingSaturating64BitSignedAccelerated = false,
       .integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated = false,
-      .storageTexelBufferOffsetAlignmentBytes = 64,
-      .storageTexelBufferOffsetSingleTexelAlignment = false,
+      .storageTexelBufferOffsetAlignmentBytes = 16,
+      .storageTexelBufferOffsetSingleTexelAlignment = true,
       .uniformTexelBufferOffsetAlignmentBytes = 4,
       .uniformTexelBufferOffsetSingleTexelAlignment = true,
-      .maxBufferSize = PANVK_MAX_BUFFER_SIZE,
+      .maxBufferSize = panvk_get_max_buffer_size(device),
 
       /* Vulkan 1.4 properties */
       .lineSubPixelPrecisionBits = 8,
@@ -1087,8 +1121,8 @@ panvk_per_arch(get_physical_device_properties)(
       .pipelineBinaryCompressedData = false,
 
       /* VK_KHR_robustness2 */
-      .robustStorageBufferAccessSizeAlignment = 1,
-      .robustUniformBufferAccessSizeAlignment = 1,
+      .robustStorageBufferAccessSizeAlignment = 4,
+      .robustUniformBufferAccessSizeAlignment = 16,
 
       /* VK_EXT_shader_object */
       /* We do not currently support VK_EXT_shader_object but this is used
@@ -1215,6 +1249,7 @@ panvk_per_arch(get_physical_device_properties)(
 
       /*  Vulkan 1.2 */
       VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+      VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL,
       VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL,
       VK_IMAGE_LAYOUT_STENCIL_READ_ONLY_OPTIMAL,
 
@@ -1224,7 +1259,11 @@ panvk_per_arch(get_physical_device_properties)(
 
       /* Vulkan 1.4 */
       VK_IMAGE_LAYOUT_RENDERING_LOCAL_READ,
+
 #endif
+
+      /* VK_EXT_attachment_feedback_loop_layout */
+      VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT,
    };
    properties->pCopySrcLayouts = supported_host_copy_layouts;
    properties->copySrcLayoutCount = ARRAY_SIZE(supported_host_copy_layouts);

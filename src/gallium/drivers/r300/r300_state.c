@@ -1014,32 +1014,32 @@ r300_framebuffer_init(struct pipe_context *pctx, const struct pipe_framebuffer_s
          if (cbufs[i] && pipe_surface_equal(&fb->cbufs[i], cbufs[i]))
             continue;
 
-         struct pipe_surface *psurf = fb->cbufs[i].texture ? pctx->create_surface(pctx, fb->cbufs[i].texture, &fb->cbufs[i]) : NULL;
+         struct pipe_surface *psurf = fb->cbufs[i].texture ? r300_create_surface(pctx, fb->cbufs[i].texture, &fb->cbufs[i]) : NULL;
          if (cbufs[i])
-            pipe_surface_unref(pctx, &cbufs[i]);
+            pipe_surface_unref(pctx, &cbufs[i], r300_surface_destroy);
          cbufs[i] = psurf;
       }
 
       for (unsigned i = fb->nr_cbufs; i < PIPE_MAX_COLOR_BUFS; i++) {
          if (cbufs[i])
-            pipe_surface_unref(pctx, &cbufs[i]);
+            pipe_surface_unref(pctx, &cbufs[i], r300_surface_destroy);
          cbufs[i] = NULL;
       }
 
       if (*zsbuf && pipe_surface_equal(&fb->zsbuf, *zsbuf))
          return;
-      struct pipe_surface *zsurf = fb->zsbuf.texture ? pctx->create_surface(pctx, fb->zsbuf.texture, &fb->zsbuf) : NULL;
+      struct pipe_surface *zsurf = fb->zsbuf.texture ? r300_create_surface(pctx, fb->zsbuf.texture, &fb->zsbuf) : NULL;
       if (*zsbuf)
-         pipe_surface_unref(pctx, zsbuf);
+         pipe_surface_unref(pctx, zsbuf, r300_surface_destroy);
       *zsbuf = zsurf;
    } else {
       for (unsigned i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
          if (cbufs[i])
-            pipe_surface_unref(pctx, &cbufs[i]);
+            pipe_surface_unref(pctx, &cbufs[i], r300_surface_destroy);
          cbufs[i] = NULL;
       }
       if (*zsbuf)
-         pipe_surface_unref(pctx, zsbuf);
+         pipe_surface_unref(pctx, zsbuf, r300_surface_destroy);
       *zsbuf = NULL;
    }
 }
@@ -1079,7 +1079,7 @@ r300_set_framebuffer_state(struct pipe_context* pipe,
             }
         } else {
             /* We don't bind another zbuffer, so lock the current one. */
-            pipe_surface_reference(&r300->locked_zbuffer, r300->fb_zsbuf);
+            pipe_surface_reference(&r300->locked_zbuffer, r300->fb_zsbuf, pipe, r300_surface_destroy);
         }
     } else if (r300->locked_zbuffer) {
         /* We have a locked zbuffer now, what are we gonna do? */
@@ -1146,7 +1146,7 @@ r300_set_framebuffer_state(struct pipe_context* pipe,
     r300_set_blend_color(pipe, &((struct r300_blend_color_state*)r300->blend_color_state.state)->state);
 
     if (unlock_zbuffer) {
-        pipe_surface_reference(&r300->locked_zbuffer, NULL);
+        pipe_surface_reference(&r300->locked_zbuffer, NULL, pipe, r300_surface_destroy);
     }
 
     r300_mark_fb_state_dirty(r300, R300_CHANGED_FB_STATE);
@@ -1546,7 +1546,7 @@ static void* r300_create_rs_state(struct pipe_context* pipe,
 
     /* Build the two command buffers for polygon offset setup. */
     if (polygon_offset_enable) {
-        float scale = state->offset_scale * 256 * 12;
+        float scale = state->offset_scale * 16 * 12;
         float offset = state->offset_units * 256 * 2;
 
         BEGIN_CB(rs->cb_poly_offset_zb16, 5);

@@ -153,7 +153,7 @@ CDX12EncHMFT::UpdateH265EncPictureDesc( pipe_h265_enc_picture_desc *pPicInfo,
    pPicInfo->seq.sar_height = m_VUIInfo.stSARInfo.usHeight;
 
    pPicInfo->seq.num_units_in_tick = m_FrameRate.Denominator;
-   pPicInfo->seq.time_scale = m_FrameRate.Numerator * 2;
+   pPicInfo->seq.time_scale = m_FrameRate.Numerator; // Table E.6 seq.vui_flags.frame_field_info_present_flag is 0, deltaToDivisor should be 1.
 
    pPicInfo->seq.video_format = m_VUIInfo.stVidSigType.eVideoFormat;
    pPicInfo->seq.colour_primaries = m_VUIInfo.stVidSigType.eColorPrimary;
@@ -434,14 +434,17 @@ CDX12EncHMFT::PrepareForEncodeHelper( LPDX12EncodeContext pDX12EncodeContext,
       uint32_t current_poc = pPicInfo->pic_order_cnt;
 
       // Validate frame number first
-      if( moveRegionFrameNum != current_poc )
+      // Due to the way the move region frame number is generated, there can be cases where the frame number doesn't match the
+      // current POC. In those cases, we will log a warning but still try to use the move regions.
+      if( m_uiGopSize > 0 && ( moveRegionFrameNum % m_uiGopSize ) != current_poc )
       {
-         debug_printf( "[dx12 hmft 0x%p] MoveRegions frame mismatch (MRFN=%u, cur POC=%u), ignoring\n",
+         debug_printf( "[dx12 hmft 0x%p] WARNING: MoveRegions frame mismatch (MRFN=%u, cur POC=%u, GOPSize=%u)\n",
                        this,
                        moveRegionFrameNum,
-                       current_poc );
+                       current_poc,
+                       m_uiGopSize );
       }
-      else
+
       {
          MOVEREGION_INFO *pMoveInfo = reinterpret_cast<MOVEREGION_INFO *>( m_pMoveRegionBlob.data() );
          uint32_t maxRects = m_EncoderCapabilities.m_HWSupportMoveRects.bits.max_motion_hints;
@@ -980,9 +983,13 @@ GetMaxDPBSize( int width, int height, eAVEncH265VLevel level_idc, int minCBSizeY
 UINT32
 CDX12EncHMFT::GetMaxReferences( unsigned int width, unsigned int height )
 {
-   const int minCbSizeY = 1 << ( m_EncoderCapabilities.m_HWSupportH265BlockSizes.bits.log2_min_luma_coding_block_size_minus3 + 3 );
-   int maxDPBSize = GetMaxDPBSize( width, height, m_uiLevel, minCbSizeY );
-   UINT32 uiMaxReferences = std::min( (int) m_EncoderCapabilities.m_uiMaxHWSupportedDPBCapacity, maxDPBSize );
+   UINT32 uiMaxReferences = m_EncoderCapabilities.m_uiMaxHWSupportedDPBCapacity;
+   if( width != 0 && height != 0 )
+   {
+      const int minCbSizeY = 1 << ( m_EncoderCapabilities.m_HWSupportH265BlockSizes.bits.log2_min_luma_coding_block_size_minus3 + 3 );
+      int maxDPBSize = GetMaxDPBSize( width, height, m_uiLevel, minCbSizeY );
+      uiMaxReferences = std::min( (int) m_EncoderCapabilities.m_uiMaxHWSupportedDPBCapacity, maxDPBSize );
+   }
    return uiMaxReferences;
 }
 

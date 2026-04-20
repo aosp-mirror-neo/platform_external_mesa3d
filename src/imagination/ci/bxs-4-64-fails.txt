@@ -1,9 +1,3 @@
-dEQP-VK.api.info.image_format_properties.2d.optimal.d16_unorm,Fail
-dEQP-VK.api.info.image_format_properties.2d.optimal.d24_unorm_s8_uint,Fail
-dEQP-VK.api.info.image_format_properties.2d.optimal.d32_sfloat,Fail
-dEQP-VK.api.info.image_format_properties.2d.optimal.d32_sfloat_s8_uint,Fail
-dEQP-VK.api.info.image_format_properties.2d.optimal.s8_uint,Fail
-dEQP-VK.api.info.image_format_properties.2d.optimal.x8_d24_unorm_pack32,Fail
 dEQP-VK.binding_model.unused_invalid_descriptor.copy.combined_image_sampler,Crash
 dEQP-VK.binding_model.unused_invalid_descriptor.copy.sampled_image,Crash
 dEQP-VK.binding_model.unused_invalid_descriptor.copy.storage_buffer,Crash
@@ -24,10 +18,7 @@ dEQP-VK.pipeline.monolithic.stencil.no_stencil_att.dynamic_rendering.dynamic_ena
 dEQP-VK.pipeline.monolithic.stencil.no_stencil_att.dynamic_rendering.dynamic_enable.d32_sfloat_s8_uint,Fail
 dEQP-VK.pipeline.monolithic.stencil.no_stencil_att.dynamic_rendering.static_enable.d24_unorm_s8_uint,Fail
 dEQP-VK.pipeline.monolithic.stencil.no_stencil_att.dynamic_rendering.static_enable.d32_sfloat_s8_uint,Fail
-dEQP-VK.renderpasses.dynamic_rendering.complete_secondary_cmd_buff.dedicated_allocation.attachment.4.568,Fail
-dEQP-VK.renderpasses.dynamic_rendering.complete_secondary_cmd_buff.suballocation.attachment.4.568,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.basic.partial_binding_depth_stencil,Fail
-dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.dedicated_allocation.attachment.4.568,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed0,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed0_multiview,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed1,Fail
@@ -139,7 +130,6 @@ dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed58_multiview,
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed59,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed59_multiview,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed5_multiview,Fail
-dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed6,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed60,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed60_multiview,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed61,Fail
@@ -227,6 +217,3 @@ dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed98_multiview,
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed99,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed99_multiview,Fail
 dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.random.seed9_multiview,Fail
-dEQP-VK.renderpasses.dynamic_rendering.primary_cmd_buff.suballocation.attachment.4.568,Fail
-dEQP-VK.spirv_assembly.instruction.spirv1p4.opcopylogical.nested_arrays_different_inner_stride,Fail
-dEQP-VK.spirv_assembly.instruction.spirv1p4.opcopylogical.nested_arrays_different_strides,Fail

@@ -19,21 +19,19 @@
 
 #include "tu_descriptor_set.h"
 
-#include <fcntl.h>
-
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
+#include "vk_acceleration_structure.h"
 #include "vk_descriptors.h"
 #include "vk_util.h"
-#include "vk_acceleration_structure.h"
 
+#include "bvh/tu_bvh.h"
 #include "tu_buffer.h"
 #include "tu_buffer_view.h"
 #include "tu_device.h"
 #include "tu_image.h"
-#include "tu_formats.h"
 #include "tu_rmv.h"
+#include "tu_sampler.h"
 #include "tu_subsampled_image.h"
-#include "bvh/tu_build_interface.h"
 
 static inline uint8_t *
 pool_base(struct tu_descriptor_pool *pool)
@@ -451,28 +449,28 @@ tu_GetDescriptorSetLayoutBindingOffsetEXT(
 
 /* Note: we must hash any values used in tu_lower_io(). */
 
-#define SHA1_UPDATE_VALUE(ctx, x) _mesa_sha1_update(ctx, &(x), sizeof(x));
+#define BLAKE3_UPDATE_VALUE(ctx, x) _mesa_blake3_update(ctx, &(x), sizeof(x));
 
 static void
-sha1_update_ycbcr_sampler(struct mesa_sha1 *ctx,
+blake3_update_ycbcr_sampler(blake3_hasher *ctx,
                           const struct vk_ycbcr_conversion_state *sampler)
 {
-   SHA1_UPDATE_VALUE(ctx, sampler->ycbcr_model);
-   SHA1_UPDATE_VALUE(ctx, sampler->ycbcr_range);
-   SHA1_UPDATE_VALUE(ctx, sampler->format);
+   BLAKE3_UPDATE_VALUE(ctx, sampler->ycbcr_model);
+   BLAKE3_UPDATE_VALUE(ctx, sampler->ycbcr_range);
+   BLAKE3_UPDATE_VALUE(ctx, sampler->format);
 }
 
 static void
-sha1_update_descriptor_set_binding_layout(struct mesa_sha1 *ctx,
+blake3_update_descriptor_set_binding_layout(blake3_hasher *ctx,
    const struct tu_descriptor_set_binding_layout *layout,
    const struct tu_descriptor_set_layout *set_layout)
 {
-   SHA1_UPDATE_VALUE(ctx, layout->type);
-   SHA1_UPDATE_VALUE(ctx, layout->offset);
-   SHA1_UPDATE_VALUE(ctx, layout->size);
-   SHA1_UPDATE_VALUE(ctx, layout->array_size);
-   SHA1_UPDATE_VALUE(ctx, layout->dynamic_offset_offset);
-   SHA1_UPDATE_VALUE(ctx, layout->immutable_samplers_offset);
+   BLAKE3_UPDATE_VALUE(ctx, layout->type);
+   BLAKE3_UPDATE_VALUE(ctx, layout->offset);
+   BLAKE3_UPDATE_VALUE(ctx, layout->size);
+   BLAKE3_UPDATE_VALUE(ctx, layout->array_size);
+   BLAKE3_UPDATE_VALUE(ctx, layout->dynamic_offset_offset);
+   BLAKE3_UPDATE_VALUE(ctx, layout->immutable_samplers_offset);
 
    const struct tu_sampler *samplers =
       tu_immutable_samplers(set_layout, layout);
@@ -482,15 +480,15 @@ sha1_update_descriptor_set_binding_layout(struct mesa_sha1 *ctx,
 
    if (ycbcr_samplers) {
       for (unsigned i = 0; i < layout->array_size; i++)
-         sha1_update_ycbcr_sampler(ctx, ycbcr_samplers + i);
+         blake3_update_ycbcr_sampler(ctx, ycbcr_samplers + i);
    }
 
    if (samplers) {
       for (unsigned i = 0; i < layout->array_size; i++) {
          if (samplers[i].vk.flags & VK_SAMPLER_CREATE_SUBSAMPLED_BIT_EXT) {
-            SHA1_UPDATE_VALUE(ctx, i);
-            SHA1_UPDATE_VALUE(ctx, samplers[i].vk.address_mode_u);
-            SHA1_UPDATE_VALUE(ctx, samplers[i].vk.address_mode_v);
+            BLAKE3_UPDATE_VALUE(ctx, i);
+            BLAKE3_UPDATE_VALUE(ctx, samplers[i].vk.address_mode_u);
+            BLAKE3_UPDATE_VALUE(ctx, samplers[i].vk.address_mode_v);
          }
       }
    }
@@ -498,13 +496,13 @@ sha1_update_descriptor_set_binding_layout(struct mesa_sha1 *ctx,
 
 
 static void
-sha1_update_descriptor_set_layout(struct mesa_sha1 *ctx,
+blake3_update_descriptor_set_layout(blake3_hasher *ctx,
                                   const struct tu_descriptor_set_layout *layout)
 {
-   SHA1_UPDATE_VALUE(ctx, layout->has_variable_descriptors);
+   BLAKE3_UPDATE_VALUE(ctx, layout->has_variable_descriptors);
 
    for (uint16_t i = 0; i < layout->binding_count; i++)
-      sha1_update_descriptor_set_binding_layout(ctx, &layout->binding[i],
+      blake3_update_descriptor_set_binding_layout(ctx, &layout->binding[i],
                                                 layout);
 }
 
@@ -516,16 +514,16 @@ sha1_update_descriptor_set_layout(struct mesa_sha1 *ctx,
 void
 tu_pipeline_layout_init(struct tu_pipeline_layout *layout)
 {
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
    for (unsigned s = 0; s < layout->num_sets; s++) {
       if (layout->set[s].layout)
-         sha1_update_descriptor_set_layout(&ctx, layout->set[s].layout);
+         blake3_update_descriptor_set_layout(&ctx, layout->set[s].layout);
    }
-   _mesa_sha1_update(&ctx, &layout->num_sets, sizeof(layout->num_sets));
-   _mesa_sha1_update(&ctx, &layout->push_constant_size,
+   _mesa_blake3_update(&ctx, &layout->num_sets, sizeof(layout->num_sets));
+   _mesa_blake3_update(&ctx, &layout->push_constant_size,
                      sizeof(layout->push_constant_size));
-   _mesa_sha1_final(&ctx, layout->sha1);
+   _mesa_blake3_final(&ctx, layout->blake3);
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

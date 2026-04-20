@@ -75,17 +75,17 @@ panvk_per_arch(dispatch_precomp)(struct panvk_precomp_ctx *ctx,
 
    cs_update_compute_ctx(b) {
       /* No resource table */
-      cs_move64_to(b, cs_sr_reg64(b, COMPUTE, SRT_0), 0);
+      cs_move64_to(b, cs_reg64(b, PANVK_PRECOMP_SRT), 0);
 
       uint64_t fau_count =
          DIV_ROUND_UP(BIFROST_PRECOMPILED_KERNEL_SYSVALS_SIZE + data_size, 8);
       uint64_t fau_ptr = push_uniforms.gpu | (fau_count << 56);
-      cs_move64_to(b, cs_sr_reg64(b, COMPUTE, FAU_0), fau_ptr);
+      cs_move64_to(b, cs_reg64(b, PANVK_PRECOMP_FAU), fau_ptr);
 
-      cs_move64_to(b, cs_sr_reg64(b, COMPUTE, SPD_0),
+      cs_move64_to(b, cs_reg64(b, PANVK_PRECOMP_SPD),
                    panvk_priv_mem_dev_addr(shader->spd));
 
-      cs_move64_to(b, cs_sr_reg64(b, COMPUTE, TSD_0), tsd);
+      cs_move64_to(b, cs_reg64(b, PANVK_PRECOMP_TSD), tsd);
 
       /* Global attribute offset */
       cs_move32_to(b, cs_sr_reg32(b, COMPUTE, GLOBAL_ATTRIBUTE_OFFSET), 0);
@@ -95,7 +95,8 @@ panvk_per_arch(dispatch_precomp)(struct panvk_precomp_ctx *ctx,
          cfg.workgroup_size_x = shader->cs.local_size.x;
          cfg.workgroup_size_y = shader->cs.local_size.y;
          cfg.workgroup_size_z = shader->cs.local_size.z;
-         cfg.allow_merging_workgroups = false;
+         cfg.allow_merging_workgroups =
+            shader->info.cs.allow_merging_workgroups;
       }
       cs_move32_to(b, cs_sr_reg32(b, COMPUTE, WG_SIZE), wg_size.opaque[0]);
 
@@ -160,8 +161,7 @@ panvk_per_arch(dispatch_precomp)(struct panvk_precomp_ctx *ctx,
          shader, phys_dev, &dim, &task_axis, &task_increment);
    }
    cs_trace_run_compute(b, tracing_ctx, cs_scratch_reg_tuple(b, 0, 4),
-                        task_increment, task_axis,
-                        cs_shader_res_sel(0, 0, 0, 0));
+                        task_increment, task_axis, PANVK_PRECOMP_RES_SEL);
 
    if (barrier & PANLIB_BARRIER_CSF_SYNC) {
 #if PAN_ARCH >= 11
@@ -224,10 +224,4 @@ panvk_per_arch(dispatch_precomp)(struct panvk_precomp_ctx *ctx,
       }
 #endif
    }
-
-   /* XXX: clobbers the registers instead to avoid recreating them when calling
-    * a dispatch after? */
-   compute_state_set_dirty(cmdbuf, CS);
-   compute_state_set_dirty(cmdbuf, DESC_STATE);
-   compute_state_set_dirty(cmdbuf, PUSH_UNIFORMS);
 }

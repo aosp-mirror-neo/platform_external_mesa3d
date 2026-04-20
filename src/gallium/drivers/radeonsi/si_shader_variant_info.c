@@ -8,6 +8,77 @@
 #include "sid.h"
 #include "si_pipe.h"
 
+/* The spi_shader_*_format fields depend on the framebuffer state and the
+ * NIR shader (monolithic or main part).
+ */
+void si_shader_update_spi_shader_formats(struct si_shader *shader, nir_shader *nir)
+{
+   unsigned spi_shader_col_format = shader->key.ps.part.epilog.spi_shader_col_format;
+   unsigned value = 0, num_mrts = 0;
+   unsigned i, num_targets = (util_last_bit(spi_shader_col_format) + 3) / 4;
+   uint64_t colors_written = UINT64_MAX;
+
+   shader->info.spi_shader_z_format = ac_get_spi_shader_z_format(shader->info.writes_z, shader->info.writes_stencil,
+                                                                 shader->info.writes_sample_mask,
+                                                                 shader->key.ps.part.epilog.alpha_to_coverage_via_mrtz);
+
+   if (nir) {
+      colors_written = (nir->info.outputs_written >> FRAG_RESULT_DATA0) & BITFIELD_MASK(8);
+      if (nir->info.outputs_written & BITFIELD_BIT(FRAG_RESULT_DUAL_SRC_BLEND))
+         colors_written |= 0x2;
+      if (nir->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_COLOR)) {
+         if (colors_written == 0)
+            colors_written = UINT64_MAX; /* color0_writes_all_cbufs */
+         else
+            colors_written |= 0x1;
+      }
+   }
+
+   /* Remove holes in spi_shader_col_format. */
+   for (i = 0; i < num_targets; i++) {
+      unsigned spi_format = (spi_shader_col_format >> (i * 4)) & 0xf;
+
+      if (spi_format && (colors_written & 1u << num_mrts)) {
+         value |= spi_format << (num_mrts * 4);
+         num_mrts++;
+      }
+   }
+
+   /* Ensure that some export memory is always allocated, for two reasons:
+    *
+    * 1) Correctness: The hardware ignores the EXEC mask if no export
+    *    memory is allocated, so KILL and alpha test do not work correctly
+    *    without this.
+    * 2) Performance: Every shader needs at least a NULL export, even when
+    *    it writes no color/depth output. The NULL export instruction
+    *    stalls without this setting.
+    *
+    * Don't add this to CB_SHADER_MASK.
+    *
+    * GFX10 supports pixel shaders without exports by setting both
+    * the color and Z formats to SPI_SHADER_ZERO. The hw will skip export
+    * instructions if any are present.
+    *
+    * RB+ depth-only rendering requires SPI_SHADER_32_R.
+    */
+   if (!value) {
+      bool has_mrtz = shader->info.spi_shader_z_format != V_028710_SPI_SHADER_ZERO;
+
+      if (shader->key.ps.part.epilog.rbplus_depth_only_opt) {
+         value = V_028714_SPI_SHADER_32_R;
+      } else if (!has_mrtz) {
+         if (shader->selector->screen->info.gfx_level >= GFX10) {
+            if (shader->info.uses_discard)
+               value = V_028714_SPI_SHADER_32_R;
+         } else {
+            value = V_028714_SPI_SHADER_32_R;
+         }
+      }
+   }
+
+   shader->info.spi_shader_col_format = value;
+}
+
 void si_get_shader_variant_info(struct si_shader *shader,
                                 struct si_temp_shader_variant_info *temp_info, nir_shader *nir)
 {
@@ -113,7 +184,7 @@ void si_get_shader_variant_info(struct si_shader *shader,
                   shader->info.uses_vmem_load_other = true;
                } else if (nir->info.stage == MESA_SHADER_FRAGMENT) {
                   nir_io_semantics sem = nir_intrinsic_io_semantics(intr);
-                  unsigned index = nir_intrinsic_base(intr);
+                  unsigned index = ac_nir_get_io_driver_location(nir, sem.location, true);
                   assert(sem.num_slots == 1);
 
                   shader->info.num_ps_inputs = MAX2(shader->info.num_ps_inputs, index + 1);
@@ -133,13 +204,21 @@ void si_get_shader_variant_info(struct si_shader *shader,
                break;
             }
             case nir_intrinsic_load_color0_amd:
-               assert(!shader->is_monolithic);
-               shader->info.ps_colors_read |= nir_def_components_read(&intr->def);
+            case nir_intrinsic_load_color1_amd: {
+               assert(!shader->is_monolithic && nir->info.stage == MESA_SHADER_FRAGMENT);
+               unsigned col_index = intr->intrinsic == nir_intrinsic_load_color1_amd;
+               shader->info.ps_colors_read |= nir_def_components_read(&intr->def) << (col_index * 4);
+
+               gl_varying_slot location = VARYING_SLOT_COL0 + col_index;
+               unsigned index = ac_nir_get_io_driver_location(nir, location, true);
+               unsigned interp = shader->selector->info.color_interpolate[col_index];
+
+               shader->info.num_ps_inputs = MAX2(shader->info.num_ps_inputs, index + 1);
+               shader->info.ps_inputs[index].semantic = location;
+               shader->info.ps_inputs[index].interpolate =
+                  interp == INTERP_MODE_NONE ? INTERP_MODE_COLOR : interp;
                break;
-            case nir_intrinsic_load_color1_amd:
-               assert(!shader->is_monolithic);
-               shader->info.ps_colors_read |= nir_def_components_read(&intr->def) << 4;
-               break;
+            }
             case nir_intrinsic_load_ubo:
                if (intr->src[1].ssa->divergent)
                   shader->info.uses_vmem_load_other = true;
@@ -262,31 +341,24 @@ void si_get_shader_variant_info(struct si_shader *shader,
    }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
-      /* Add both front and back color inputs. */
+      /* Add back color inputs. */
       if (!shader->is_monolithic) {
          unsigned index = shader->info.num_ps_inputs;
 
-         for (unsigned back = 0; back < 2; back++) {
-            for (unsigned i = 0; i < 2; i++) {
-               if ((shader->info.ps_colors_read >> (i * 4)) & 0xf) {
-                  assert(index < ARRAY_SIZE(shader->info.ps_inputs));
-                  shader->info.ps_inputs[index].semantic =
-                     (back ? VARYING_SLOT_BFC0 : VARYING_SLOT_COL0) + i;
+         for (unsigned i = 0; i < 2; i++) {
+            if ((shader->info.ps_colors_read >> (i * 4)) & 0xf) {
+               assert(index < ARRAY_SIZE(shader->info.ps_inputs));
+               shader->info.ps_inputs[index].semantic = VARYING_SLOT_BFC0 + i;
 
-                  enum glsl_interp_mode mode = shader->selector->info.color_interpolate[i];
-                  shader->info.ps_inputs[index].interpolate =
-                     mode == INTERP_MODE_NONE ? INTERP_MODE_COLOR : mode;
-                  index++;
-
-                  /* Back-face colors don't increment num_ps_inputs. si_emit_spi_map will use
-                   * back-face colors conditionally only when needed.
-                   */
-                  if (!back)
-                     shader->info.num_ps_inputs++;
-               }
+               enum glsl_interp_mode mode = shader->selector->info.color_interpolate[i];
+               shader->info.ps_inputs[index].interpolate =
+                  mode == INTERP_MODE_NONE ? INTERP_MODE_COLOR : mode;
+               index++;
             }
          }
       }
+
+      si_shader_update_spi_shader_formats(shader, nir);
 
       /* ACO needs spi_ps_input_ena before si_init_shader_args. */
       shader->config.spi_ps_input_ena =
@@ -442,7 +514,7 @@ void si_get_late_shader_variant_info(struct si_shader *shader, struct si_shader_
             }
             break;
          case nir_intrinsic_export_amd: {
-            unsigned target = nir_intrinsic_base(intr);
+            unsigned target = nir_intrinsic_target(intr);
             if (target >= V_008DFC_SQ_EXP_POS && target <= V_008DFC_SQ_EXP_POS + 4) {
                shader->info.nr_pos_exports = MAX2(shader->info.nr_pos_exports,
                                                   target - V_008DFC_SQ_EXP_POS + 1);

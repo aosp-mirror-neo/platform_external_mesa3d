@@ -210,25 +210,6 @@ pan_nir_collect_noperspective_varyings_fs(nir_shader *s)
    return noperspective_varyings;
 }
 
-/*
- * ABI: Special (desktop GL) slots come first, tightly packed. General varyings
- * come later, sparsely packed. This handles both linked and separable shaders
- * with a common code path, with minimal keying only for desktop GL. Each slot
- * consumes 16 bytes (TODO: fp16, partial vectors).
- */
-static unsigned
-bi_varying_base_bytes(gl_varying_slot slot, uint32_t fixed_varyings)
-{
-   if (slot >= VARYING_SLOT_VAR0) {
-      unsigned nr_special = util_bitcount(fixed_varyings);
-      unsigned general_index = (slot - VARYING_SLOT_VAR0);
-
-      return 16 * (nr_special + general_index);
-   } else {
-      return 16 * (util_bitcount(fixed_varyings & BITFIELD_MASK(slot)));
-   }
-}
-
 static const struct pan_varying_slot hw_varying_slots[] = {{
    .location = VARYING_SLOT_POS,
    .alu_type = nir_type_float32,
@@ -311,7 +292,8 @@ hw_varying_slot(unsigned arch, mesa_shader_stage stage, gl_varying_slot slot)
 
 void
 pan_varying_collect_formats(struct pan_varying_layout *layout, nir_shader *nir,
-                            unsigned gpu_id, bool trust_varying_flat_highp_types,
+                            uint64_t gpu_id,
+                            bool trust_varying_flat_highp_types,
                             bool lower_mediump)
 {
    assert(nir->info.stage == MESA_SHADER_VERTEX ||
@@ -381,7 +363,7 @@ pan_varying_collect_formats(struct pan_varying_layout *layout, nir_shader *nir,
 
 void
 pan_build_varying_layout_compact(struct pan_varying_layout *layout,
-                                 nir_shader *nir, unsigned gpu_id)
+                                 nir_shader *nir, uint64_t gpu_id)
 {
    pan_varying_layout_require_format(layout);
 

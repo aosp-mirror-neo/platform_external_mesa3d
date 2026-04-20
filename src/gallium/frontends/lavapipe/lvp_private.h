@@ -106,8 +106,7 @@ extern "C" {
 #define MAX_PER_STAGE_DESCRIPTOR_UNIFORM_BLOCKS 8
 #define MAX_DGC_STREAMS 16
 #define MAX_DGC_TOKENS 16
-/* Currently lavapipe does not support more than 1 image plane */
-#define LVP_MAX_PLANE_COUNT 1
+#define LVP_MAX_PLANE_COUNT 3
 
 #define LVP_MAX_TLAS_DEPTH 24
 #define LVP_MAX_BLAS_DEPTH 29
@@ -279,13 +278,12 @@ vk_sync_as_lvp_pipe_sync(struct vk_sync *sync)
 
 struct lvp_image_plane {
    struct pipe_resource *bo;
-   VkDeviceSize plane_offset;
+   VkDeviceSize offset;
    VkDeviceSize size;
 };
 
 struct lvp_image {
    struct vk_image vk;
-   VkDeviceSize offset;
    VkDeviceSize size;
    uint32_t alignment;
    bool disjoint;
@@ -809,7 +807,9 @@ lvp_image_init(struct lvp_device *device, struct lvp_image *image,
 
 #if DETECT_OS_ANDROID
 VkResult
-lvp_import_ahb_memory(struct lvp_device *device, struct lvp_device_memory *mem);
+lvp_import_ahb_memory(struct lvp_device *device,
+                      const VkMemoryAllocateInfo *alloc_info,
+                      struct lvp_device_memory *mem);
 
 VkResult
 lvp_bind_anb_memory(struct lvp_device *device,

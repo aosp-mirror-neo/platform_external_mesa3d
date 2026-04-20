@@ -45,14 +45,19 @@ enum blorp_op {
    BLORP_OP_CCS_COLOR_CLEAR,
    BLORP_OP_CCS_PARTIAL_RESOLVE,
    BLORP_OP_CCS_RESOLVE,
+   BLORP_OP_FAST_STENCIL_CLEAR,
    BLORP_OP_HIZ_AMBIGUATE,
    BLORP_OP_HIZ_CLEAR,
+   BLORP_OP_HIZ_STENCIL_CLEAR,
    BLORP_OP_HIZ_RESOLVE,
    BLORP_OP_HIZ_PARTIAL_RESOLVE,
    BLORP_OP_MCS_AMBIGUATE,
    BLORP_OP_MCS_COLOR_CLEAR,
    BLORP_OP_MCS_PARTIAL_RESOLVE,
+   BLORP_OP_LINEAR_SURFACE_CLEAR,
    BLORP_OP_SLOW_COLOR_CLEAR,
+   BLORP_OP_SLOW_STENCIL_CLEAR,
+   BLORP_OP_SLOW_DEPTH_STENCIL_CLEAR,
    BLORP_OP_SLOW_DEPTH_CLEAR,
 };
 
@@ -353,15 +358,6 @@ blorp_hiz_clear_depth_stencil(struct blorp_batch *batch,
                               uint32_t x1, uint32_t y1,
                               bool clear_depth, float depth_value,
                               bool clear_stencil, uint8_t stencil_value);
-
-
-void
-blorp_gfx8_hiz_clear_attachments(struct blorp_batch *batch,
-                                 uint32_t num_samples,
-                                 uint32_t x0, uint32_t y0,
-                                 uint32_t x1, uint32_t y1,
-                                 bool clear_depth, bool clear_stencil,
-                                 uint8_t stencil_value);
 void
 blorp_clear_attachments(struct blorp_batch *batch,
                         uint32_t binding_table_offset,

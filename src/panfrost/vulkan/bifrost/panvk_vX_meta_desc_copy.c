@@ -176,7 +176,7 @@ set_to_table_img_copy(nir_builder *b, nir_def *set_ptr, nir_def *set_desc_count,
 
          nir_def *attrib_buf_desc = nir_vec8(
             b, nir_channel(b, src_desc, 0), nir_channel(b, src_desc, 1),
-            nir_iand_imm(b, nir_channel(b, src_desc, 2), BITFIELD_MASK(10)),
+            nir_iand_imm(b, nir_channel(b, src_desc, 2), BITFIELD_MASK(7)),
             nir_channel(b, src_desc, 3), nir_channel(b, null_desc, 0),
             nir_channel(b, null_desc, 1), nir_channel(b, null_desc, 2),
             nir_channel(b, null_desc, 3));
@@ -208,7 +208,7 @@ set_to_table_img_copy(nir_builder *b, nir_def *set_ptr, nir_def *set_desc_count,
 
          nir_def *attrib_buf_desc = nir_vec8(
             b, nir_channel(b, src_desc, 0), nir_channel(b, src_desc, 1),
-            nir_iand_imm(b, nir_channel(b, src_desc, 2), BITFIELD_MASK(10)),
+            nir_iand_imm(b, nir_channel(b, src_desc, 2), BITFIELD_MASK(7)),
             nir_channel(b, src_desc, 3), nir_channel(b, src_desc, 4),
             nir_channel(b, src_desc, 5), nir_channel(b, src_desc, 6),
             nir_channel(b, src_desc, 7));
@@ -332,7 +332,7 @@ panvk_meta_desc_copy_rsd(struct panvk_device *dev)
    nir_builder b = nir_builder_init_simple_shader(
       MESA_SHADER_COMPUTE,
       pan_get_nir_shader_compiler_options(
-         pan_arch(phys_dev->kmod.dev->props.gpu_id)),
+         pan_arch(phys_dev->kmod.dev->props.gpu_id), false),
       "%s", "desc_copy");
 
    /* We actually customize that at execution time to issue the

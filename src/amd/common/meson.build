@@ -120,8 +120,6 @@ amd_common_files = files(
   'ac_formats.c',
   'ac_formats.h',
   'ac_linux_drm.h',
-  'ac_null_device.c',
-  'ac_null_device.h',
   'ac_shadowed_regs.c',
   'ac_shadowed_regs.h',
   'ac_spm.c',
@@ -172,7 +170,6 @@ amd_common_files = files(
   'nir/ac_nir_lower_ngg_mesh.c',
   'nir/ac_nir_lower_ps_early.c',
   'nir/ac_nir_lower_ps_late.c',
-  'nir/ac_nir_lower_sin_cos.c',
   'nir/ac_nir_meta.h',
   'nir/ac_nir_meta_cs_blit.c',
   'nir/ac_nir_meta_cs_clear_copy_buffer.c',
@@ -238,6 +235,7 @@ executable(
     inc_amd, inc_include, inc_src,
   ],
   dependencies : [idep_amd_generated_headers, idep_mesautil, idep_nir_headers],
+  build_by_default: with_tools.contains('amd')
 )
 
 if with_tests and not with_platform_windows
@@ -245,7 +243,7 @@ if with_tests and not with_platform_windows
     'ac_surface_modifier_test',
     executable(
       'ac_surface_modifier_test',
-      ['ac_surface_modifier_test.c'],
+      ['ac_surface_modifier_test.c', 'amdgpu_devices.c'],
       link_with: [libamd_common, libamdgpu_addrlib],
       include_directories : [
         inc_amd, inc_include, inc_src,
@@ -262,7 +260,7 @@ if with_tests and not with_platform_windows
       'ac_surface_meta_address_test',
       executable(
         'ac_surface_meta_address_test',
-        ['ac_surface_meta_address_test.c'],
+        ['ac_surface_meta_address_test.c', 'amdgpu_devices.c'],
         link_with: [libamd_common, libamdgpu_addrlib],
         include_directories : [
           inc_amd, inc_include, inc_src,

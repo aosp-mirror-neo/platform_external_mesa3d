@@ -15,6 +15,7 @@
 #include "compiler/brw/brw_nir.h"
 #include "compiler/brw/brw_nir_rt.h"
 #include "compiler/intel_nir.h"
+#include "compiler/jay/jay.h"
 
 #include "git_sha1.h"
 
@@ -151,40 +152,43 @@ anv_shader_init_uuid(struct anv_physical_device *device)
     * compiler's output, not having that workaroung enabled with an app
     * expecting fp64 support will just crash in the backend.
     */
-   struct mesa_sha1 ctx;
-   _mesa_sha1_init(&ctx);
+   blake3_hasher ctx;
+   _mesa_blake3_init(&ctx);
 
    const bool indirect_descriptors = device->indirect_descriptors;
-   _mesa_sha1_update(&ctx, &indirect_descriptors, sizeof(indirect_descriptors));
+   _mesa_blake3_update(&ctx, &indirect_descriptors, sizeof(indirect_descriptors));
 
    const int spilling_rate = device->compiler->spilling_rate;
-   _mesa_sha1_update(&ctx, &spilling_rate, sizeof(spilling_rate));
+   _mesa_blake3_update(&ctx, &spilling_rate, sizeof(spilling_rate));
 
    const uint8_t afs = device->instance->assume_full_subgroups;
-   _mesa_sha1_update(&ctx, &afs, sizeof(afs));
+   _mesa_blake3_update(&ctx, &afs, sizeof(afs));
 
    const bool afswb = device->instance->assume_full_subgroups_with_barrier;
-   _mesa_sha1_update(&ctx, &afswb, sizeof(afswb));
+   _mesa_blake3_update(&ctx, &afswb, sizeof(afswb));
 
    const bool afs_shm = device->instance->assume_full_subgroups_with_shared_memory;
-   _mesa_sha1_update(&ctx, &afs_shm, sizeof(afs_shm));
+   _mesa_blake3_update(&ctx, &afs_shm, sizeof(afs_shm));
 
    const bool erwf = device->instance->emulate_read_without_format;
-   _mesa_sha1_update(&ctx, &erwf, sizeof(erwf));
+   _mesa_blake3_update(&ctx, &erwf, sizeof(erwf));
 
    const bool lttd = device->instance->lower_terminate_to_discard;
-   _mesa_sha1_update(&ctx, &lttd, sizeof(lttd));
+   _mesa_blake3_update(&ctx, &lttd, sizeof(lttd));
 
    const bool large_wg_wa =
       device->instance->large_workgroup_non_coherent_image_workaround;
-   _mesa_sha1_update(&ctx, &large_wg_wa, sizeof(large_wg_wa));
+   _mesa_blake3_update(&ctx, &large_wg_wa, sizeof(large_wg_wa));
 
    const bool lto_disable = device->instance->disable_lto;
-   _mesa_sha1_update(&ctx, &lto_disable, sizeof(lto_disable));
+   _mesa_blake3_update(&ctx, &lto_disable, sizeof(lto_disable));
 
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   _mesa_sha1_final(&ctx, sha1);
-   memcpy(device->shader_binary_uuid, sha1, sizeof(device->shader_binary_uuid));
+   const bool btp_bti_rcc = device->rt_change_needs_flush;
+   _mesa_blake3_update(&ctx, &btp_bti_rcc, sizeof(btp_bti_rcc));
+
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   _mesa_blake3_final(&ctx, blake3);
+   memcpy(device->shader_binary_uuid, blake3, sizeof(device->shader_binary_uuid));
 }
 
 static const struct nir_shader_compiler_options *
@@ -246,6 +250,7 @@ anv_shader_preprocess_nir(struct vk_physical_device *device,
 
    const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
       .point_coord = true,
+      .primitive_id = nir->info.stage == MESA_SHADER_FRAGMENT,
    };
    NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
 
@@ -289,6 +294,7 @@ populate_base_prog_key(struct brw_base_prog_key *key,
     */
    if (rs != NULL)
       key->robust_flags = anv_get_robust_flags(rs);
+   key->divergent_atomics_flags = pdevice->instance->enable_opt_divergent_atomics;
    key->limit_trig_input_range = pdevice->instance->limit_trig_input_range;
 }
 
@@ -304,7 +310,7 @@ populate_base_gfx_prog_key(struct brw_base_prog_key *key,
 
    populate_base_prog_key(key, device, rs);
 
-   key->view_mask = (gfx_state && gfx_state->rp) ? gfx_state->rp->view_mask : 0;
+   key->view_mask = (gfx_state && gfx_state->mv) ? gfx_state->mv->view_mask : 0;
 
    key->vue_layout =
       (util_bitcount(link_stages) > 1 && (link_stages & VK_SHADER_STAGE_FRAGMENT_BIT)) ?
@@ -828,6 +834,7 @@ anv_shader_compile_vs(struct anv_device *device,
                       char **error_str)
 {
    const struct brw_compiler *compiler = device->physical->compiler;
+   const struct intel_device_info *devinfo = compiler->devinfo;
    nir_shader *nir = shader_data->info->nir;
 
    shader_data->num_stats = 1;
@@ -845,7 +852,17 @@ anv_shader_compile_vs(struct anv_device *device,
       .prog_data = &shader_data->prog_data.vs,
    };
 
-   shader_data->code = (void *)brw_compile_vs(compiler, &params);
+   if (intel_use_jay(devinfo, nir->info.stage)) {
+      struct jay_shader_bin *bin =
+         jay_compile(devinfo, mem_ctx, nir,
+                     (union brw_any_prog_data *) params.prog_data,
+                     (union brw_any_prog_key *) params.key);
+
+      shader_data->code = (void *) bin->kernel;
+   } else {
+      shader_data->code = (void *) brw_compile_vs(compiler, &params);
+   }
+
    *error_str = params.base.error_str;
 }
 
@@ -1035,6 +1052,7 @@ anv_shader_compile_fs(struct anv_device *device,
                       char **error_str)
 {
    const struct brw_compiler *compiler = device->physical->compiler;
+   const struct intel_device_info *devinfo = compiler->devinfo;
    nir_shader *nir = shader_data->info->nir;
 
    /* When using Primitive Replication for multiview, each view gets its own
@@ -1067,7 +1085,17 @@ anv_shader_compile_fs(struct anv_device *device,
       .max_polygons = UCHAR_MAX,
    };
 
-   shader_data->code = (void *)brw_compile_fs(compiler, &params);
+   if (intel_use_jay(devinfo, nir->info.stage)) {
+      struct jay_shader_bin *bin =
+         jay_compile(devinfo, mem_ctx, nir,
+                     (union brw_any_prog_data *) params.prog_data,
+                     (union brw_any_prog_key *) params.key);
+
+      shader_data->code = (void *) bin->kernel;
+   } else {
+      shader_data->code = (void *) brw_compile_fs(compiler, &params);
+   }
+
    *error_str = params.base.error_str;
 
    shader_data->num_stats = (uint32_t)!!shader_data->prog_data.fs.dispatch_multi +
@@ -1096,6 +1124,7 @@ anv_shader_compile_cs(struct anv_device *device,
                       char **error_str)
 {
    const struct brw_compiler *compiler = device->physical->compiler;
+   const struct intel_device_info *devinfo = compiler->devinfo;
    nir_shader *nir = shader_data->info->nir;
 
    shader_data->num_stats = 1;
@@ -1113,7 +1142,21 @@ anv_shader_compile_cs(struct anv_device *device,
       .prog_data = &shader_data->prog_data.cs,
    };
 
-   shader_data->code = (void *)brw_compile_cs(compiler, &params);
+   if (intel_use_jay(devinfo, nir->info.stage)) {
+      struct jay_shader_bin *bin = jay_compile(devinfo, mem_ctx, nir,
+                             (union brw_any_prog_data*)params.prog_data,
+                             (union brw_any_prog_key*)params.key);
+
+       shader_data->code = (void*)bin->kernel;
+       shader_data->stats[0] = bin->stats;
+
+       params.prog_data->local_size[0] = nir->info.workgroup_size[0];
+       params.prog_data->local_size[1] = nir->info.workgroup_size[1];
+       params.prog_data->local_size[2] = nir->info.workgroup_size[2];
+   } else {
+       shader_data->code = (void*)brw_compile_cs(compiler, &params);
+   }
+
    *error_str = params.base.error_str;
 }
 
@@ -1325,6 +1368,23 @@ fixup_large_workgroup_image_coherency(nir_shader *nir)
 }
 
 static void
+cleanup_nir(nir_shader *nir)
+{
+   /* First run copy-prop to get rid of all of the vec() that address
+    * calculations often create and then constant-fold so that, when we get to
+    * anv_nir_lower_ubo_loads, we can detect constant offsets.
+    */
+   bool progress;
+   do {
+      progress = false;
+      NIR_PASS(progress, nir, nir_opt_algebraic);
+      NIR_PASS(progress, nir, nir_opt_copy_prop);
+      NIR_PASS(progress, nir, nir_opt_constant_folding);
+      NIR_PASS(progress, nir, nir_opt_dce);
+   } while (progress);
+}
+
+static void
 anv_shader_lower_nir(struct anv_device *device,
                      void *mem_ctx,
                      const struct vk_graphics_pipeline_state *state,
@@ -1412,7 +1472,16 @@ anv_shader_lower_nir(struct anv_device *device,
       NIR_PASS(_, nir, nir_opt_dce);
       NIR_PASS(inlined, nir, nir_inline_functions);
       nir_remove_non_entrypoints(nir);
+
       if (inlined) {
+         /* Some shader_temp vars may have remained multi-function before
+          * cmat lowering/inlining.  Now that everything was inlined,
+          * they may be lowered to locals.
+          */
+         bool lowered_globals = false;
+         NIR_PASS(lowered_globals, nir, nir_lower_global_vars_to_local);
+         if (lowered_globals)
+            NIR_PASS(_, nir, nir_split_struct_vars, nir_var_function_temp);
          NIR_PASS(_, nir, nir_opt_copy_prop_vars);
          NIR_PASS(_, nir, nir_opt_copy_prop);
       }
@@ -1424,6 +1493,8 @@ anv_shader_lower_nir(struct anv_device *device,
    }
 
    nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
+
+   NIR_PASS(_, nir, nir_lower_memory_model);
 
    /* Apply lowering for 64bit atomics pre-Xe2 */
    const bool lower_64bit_atomics = devinfo->ver < 20;
@@ -1502,18 +1573,12 @@ anv_shader_lower_nir(struct anv_device *device,
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_ssbo,
             anv_nir_ssbo_addr_format(pdevice, shader_data->key.base.robust_flags));
 
-   /* First run copy-prop to get rid of all of the vec() that address
-    * calculations often create and then constant-fold so that, when we
-    * get to anv_nir_lower_ubo_loads, we can detect constant offsets.
-    */
-   bool progress;
-   do {
-      progress = false;
-      NIR_PASS(progress, nir, nir_opt_algebraic);
-      NIR_PASS(progress, nir, nir_opt_copy_prop);
-      NIR_PASS(progress, nir, nir_opt_constant_folding);
-      NIR_PASS(progress, nir, nir_opt_dce);
-   } while (progress);
+
+   cleanup_nir(nir);
+
+   NIR_PASS(_, nir, nir_lower_vars_to_ssa);
+
+   cleanup_nir(nir);
 
    /* Required for nir_divergence_analysis() which is needed for
     * anv_nir_lower_ubo_loads.
@@ -1816,38 +1881,38 @@ anv_debug_archiver_init(void *mem_ctx, struct anv_shader_data *shaders_data,
     * are linked together, also include a combined hash of all stages to
     * distinguish from the not linked case.
     */
-   unsigned char linked_hash[SHA1_DIGEST_LENGTH];
+   unsigned char linked_hash[BLAKE3_KEY_LEN];
    if (shader_count > 1) {
-      struct mesa_sha1 ctx;
-      _mesa_sha1_init(&ctx);
+      blake3_hasher ctx;
+      _mesa_blake3_init(&ctx);
 
       for (uint32_t s = 0; s < shader_count; s++) {
          struct anv_shader_data *shader_data = &shaders_data[s];
          struct vk_shader_compile_info *info = shader_data->info;
-         _mesa_sha1_update(&ctx, info->nir->info.source_blake3, BLAKE3_OUT_LEN);
-         _mesa_sha1_update(&ctx, &shader_data->key, shader_data->key_size);
+         _mesa_blake3_update(&ctx, info->nir->info.source_blake3, BLAKE3_OUT_LEN);
+         _mesa_blake3_update(&ctx, &shader_data->key, shader_data->key_size);
       }
-      _mesa_sha1_final(&ctx, linked_hash);
+      _mesa_blake3_final(&ctx, linked_hash);
    }
 
    for (uint32_t s = 0; s < shader_count; s++) {
       struct anv_shader_data *shader_data = &shaders_data[s];
       struct vk_shader_compile_info *info = shader_data->info;
 
-      char name[SHA1_DIGEST_STRING_LENGTH + 4] = {};
+      char name[BLAKE3_HEX_LEN + 4] = {};
       {
-         struct mesa_sha1 ctx;
-         unsigned char hash[SHA1_DIGEST_LENGTH];
-         _mesa_sha1_init(&ctx);
-         _mesa_sha1_update(&ctx, info->nir->info.source_blake3, BLAKE3_OUT_LEN);
-         _mesa_sha1_update(&ctx, &shader_data->key, shader_data->key_size);
+         blake3_hasher ctx;
+         unsigned char hash[BLAKE3_KEY_LEN];
+         _mesa_blake3_init(&ctx);
+         _mesa_blake3_update(&ctx, info->nir->info.source_blake3, BLAKE3_OUT_LEN);
+         _mesa_blake3_update(&ctx, &shader_data->key, shader_data->key_size);
          if (shader_count > 1)
-            _mesa_sha1_update(&ctx, linked_hash, SHA1_DIGEST_LENGTH);
-         _mesa_sha1_final(&ctx, hash);
+            _mesa_blake3_update(&ctx, linked_hash, BLAKE3_KEY_LEN);
+         _mesa_blake3_final(&ctx, hash);
 
-         _mesa_sha1_format(name, hash);
+         _mesa_blake3_format(name, hash);
       }
-      memcpy(&name[SHA1_DIGEST_STRING_LENGTH - 1], ".anv", 4);
+      memcpy(&name[BLAKE3_HEX_LEN - 1], ".anv", 4);
 
       shader_data->archiver =
          debug_archiver_open(mem_ctx, name, PACKAGE_VERSION MESA_GIT_SHA1);

@@ -145,6 +145,9 @@ radv_pipeline_get_shader_key(const struct radv_device *device, const VkPipelineS
    if (flags & VK_PIPELINE_CREATE_2_INDIRECT_BINDABLE_BIT_EXT)
       key.indirect_bindable = 1;
 
+   if (flags & VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT)
+      key.descriptor_heap = 1;
+
    if (stage->stage & RADV_GRAPHICS_STAGE_BITS) {
       key.version = instance->drirc.misc.override_graphics_shader_version;
    } else if (stage->stage & RADV_RT_STAGE_BITS) {
@@ -216,15 +219,29 @@ radv_pipeline_stage_init(VkPipelineCreateFlags2 pipeline_flags, const VkPipeline
       out_stage->spirv.size = minfo->codeSize;
    }
 
+   const VkShaderDescriptorSetAndBindingMappingInfoEXT *mapping =
+      vk_find_struct_const(sinfo->pNext, SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT);
+   out_stage->layout.mapping = mapping;
+
    radv_shader_layout_init(pipeline_layout, out_stage->stage, &out_stage->layout);
 
-   vk_pipeline_hash_shader_stage(pipeline_flags, sinfo, NULL, out_stage->shader_sha1);
+   vk_pipeline_hash_shader_stage(pipeline_flags, sinfo, NULL, out_stage->shader_blake3);
+}
+
+void
+radv_pipeline_stage_finish(struct radv_shader_stage *stage)
+{
+   ralloc_free(stage->nir);
+   vk_sampler_state_array_finish(&stage->layout.embedded_samplers);
 }
 
 void
 radv_shader_layout_init(const struct radv_pipeline_layout *pipeline_layout, mesa_shader_stage stage,
                         struct radv_shader_layout *layout)
 {
+   if (!pipeline_layout)
+      return;
+
    layout->num_sets = pipeline_layout->num_sets;
    for (unsigned i = 0; i < pipeline_layout->num_sets; i++) {
       layout->set[i].layout = pipeline_layout->set[i].layout;
@@ -348,7 +365,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
    if (stage->nir->info.uses_resource_info_query)
       NIR_PASS(_, stage->nir, ac_nir_lower_resinfo, gfx_level);
 
-   /* Ensure split load_push_constant still have constant offsets, for radv_nir_apply_pipeline_layout. */
+   /* Ensure split load_push_constant still have constant offsets, for radv_nir_lower_descriptors. */
    if (constant_fold_for_push_const && stage->args.ac.inline_push_const_mask)
       NIR_PASS(_, stage->nir, nir_opt_constant_folding);
 
@@ -361,7 +378,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
    /* This has to be done after nir_opt_algebraic for best descriptor vectorization, but also before
     * NGG culling.
     */
-   NIR_PASS(_, stage->nir, radv_nir_apply_pipeline_layout, device, stage);
+   NIR_PASS(_, stage->nir, radv_nir_lower_descriptors, device, stage);
 
    NIR_PASS(_, stage->nir, nir_lower_alu_width, ac_nir_opt_vectorize_cb, &gfx_level);
 
@@ -506,6 +523,7 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
       NIR_PASS(_, stage->nir, nir_opt_copy_prop);
       NIR_PASS(_, stage->nir, nir_opt_constant_folding);
       NIR_PASS(_, stage->nir, nir_opt_cse);
+      NIR_PASS(_, stage->nir, nir_opt_if, nir_opt_if_optimize_phi_true_false);
       NIR_PASS(_, stage->nir, nir_opt_shrink_vectors, true);
 
       NIR_PASS(_, stage->nir, ac_nir_flag_smem_for_loads, gfx_level, use_llvm);
@@ -580,8 +598,10 @@ radv_postprocess_nir(struct radv_device *device, const struct radv_graphics_stat
       bool run_copy_prop = false;
       NIR_PASS(run_copy_prop, stage->nir, nir_opt_16bit_tex_image, &opt_16bit_options);
 
-      /* Optimizing 16bit texture/image dests leaves scalar moves that stops
-       * nir_opt_vectorize from vectorzing the alu uses of them.
+      /* Optimizing 16bit texture/image dests leaves scalar moves that need to be removed
+       * before the next alu nir_lower_alu_width, otherwise we might end up with invalid swizzles
+       * in the backend.
+       * It also allows nir_opt_vectorize to make more progress.
        */
       if (run_copy_prop) {
          NIR_PASS(_, stage->nir, nir_opt_copy_prop);
@@ -825,8 +845,8 @@ radv_GetPipelineExecutableStatisticsKHR(VkDevice _device, const VkPipelineExecut
    VK_OUTARRAY_MAKE_TYPED(VkPipelineExecutableStatisticKHR, out, pStatistics, pStatisticCount);
 
    struct amd_stats stats = {0};
-   if (shader->statistics)
-      stats = *shader->statistics;
+   if (shader->dbg.statistics)
+      stats = *shader->dbg.statistics;
    stats.driverhash = pipeline->pipeline_hash;
    stats.sgprs = shader->config.num_sgprs;
    stats.vgprs = shader->config.num_vgprs;
@@ -1011,7 +1031,7 @@ radv_GetPipelineExecutableInternalRepresentationsKHR(
       p->isText = true;
       VK_COPY_STR(p->name, "NIR Shader(s)");
       VK_COPY_STR(p->description, "The optimized NIR shader(s)");
-      if (radv_copy_representation(p->pData, &p->dataSize, shader->nir_string) != VK_SUCCESS)
+      if (radv_copy_representation(p->pData, &p->dataSize, shader->dbg.nir_string) != VK_SUCCESS)
          result = VK_INCOMPLETE;
    }
    ++p;
@@ -1026,17 +1046,17 @@ radv_GetPipelineExecutableInternalRepresentationsKHR(
          VK_COPY_STR(p->name, "ACO IR");
          VK_COPY_STR(p->description, "The ACO IR after some optimizations");
       }
-      if (radv_copy_representation(p->pData, &p->dataSize, shader->ir_string) != VK_SUCCESS)
+      if (radv_copy_representation(p->pData, &p->dataSize, shader->dbg.ir_string) != VK_SUCCESS)
          result = VK_INCOMPLETE;
    }
    ++p;
 
    /* Disassembler */
-   if (p < end && shader->disasm_string) {
+   if (p < end && shader->dbg.disasm_string) {
       p->isText = true;
       VK_COPY_STR(p->name, "Assembly");
       VK_COPY_STR(p->description, "Final Assembly");
-      if (radv_copy_representation(p->pData, &p->dataSize, shader->disasm_string) != VK_SUCCESS)
+      if (radv_copy_representation(p->pData, &p->dataSize, shader->dbg.disasm_string) != VK_SUCCESS)
          result = VK_INCOMPLETE;
    }
    ++p;
@@ -1058,6 +1078,28 @@ vk_shader_module_finish(void *_module)
 {
    struct vk_shader_module *module = _module;
    vk_object_base_finish(&module->base);
+}
+
+VkShaderDescriptorSetAndBindingMappingInfoEXT *
+radv_copy_descriptor_heap_mapping_info(const VkShaderDescriptorSetAndBindingMappingInfoEXT *mapping, void *mem_ctx)
+{
+   VkShaderDescriptorSetAndBindingMappingInfoEXT *new_mapping =
+      ralloc(mem_ctx, VkShaderDescriptorSetAndBindingMappingInfoEXT);
+   if (!new_mapping)
+      return NULL;
+
+   new_mapping->sType = mapping->sType;
+   new_mapping->pNext = NULL;
+   new_mapping->mappingCount = mapping->mappingCount;
+
+   const uint32_t mappings_size = sizeof(VkDescriptorSetAndBindingMappingEXT) * mapping->mappingCount;
+   new_mapping->pMappings = ralloc_size(mem_ctx, mappings_size);
+   if (!new_mapping->pMappings)
+      return NULL;
+
+   memcpy((void *)new_mapping->pMappings, mapping->pMappings, mappings_size);
+
+   return new_mapping;
 }
 
 VkPipelineShaderStageCreateInfo *
@@ -1130,6 +1172,17 @@ radv_copy_shader_stage_create_info(struct radv_device *device, uint32_t stageCou
             return NULL;
          new_stages[i].pNext = NULL;
       }
+
+      const VkShaderDescriptorSetAndBindingMappingInfoEXT *mapping =
+         vk_find_struct_const(pStages[i].pNext, SHADER_DESCRIPTOR_SET_AND_BINDING_MAPPING_INFO_EXT);
+      if (mapping) {
+         VkShaderDescriptorSetAndBindingMappingInfoEXT *copied_mapping =
+            radv_copy_descriptor_heap_mapping_info(mapping, mem_ctx);
+         if (!copied_mapping)
+            return NULL;
+
+         new_stages[i].pNext = copied_mapping;
+      }
    }
 
    return new_stages;
@@ -1137,23 +1190,23 @@ radv_copy_shader_stage_create_info(struct radv_device *device, uint32_t stageCou
 
 void
 radv_pipeline_hash(const struct radv_device *device, const struct radv_pipeline_layout *pipeline_layout,
-                   struct mesa_sha1 *ctx)
+                   blake3_hasher *ctx)
 {
-   _mesa_sha1_update(ctx, device->cache_hash, sizeof(device->cache_hash));
+   _mesa_blake3_update(ctx, device->cache_hash, sizeof(device->cache_hash));
    if (pipeline_layout)
-      _mesa_sha1_update(ctx, pipeline_layout->hash, sizeof(pipeline_layout->hash));
+      _mesa_blake3_update(ctx, pipeline_layout->hash, sizeof(pipeline_layout->hash));
 }
 
 void
 radv_pipeline_hash_shader_stage(VkPipelineCreateFlags2 pipeline_flags, const VkPipelineShaderStageCreateInfo *sinfo,
-                                const struct radv_shader_stage_key *stage_key, struct mesa_sha1 *ctx)
+                                const struct radv_shader_stage_key *stage_key, blake3_hasher *ctx)
 {
-   unsigned char shader_sha1[SHA1_DIGEST_LENGTH];
+   unsigned char shader_blake3[BLAKE3_KEY_LEN];
 
-   vk_pipeline_hash_shader_stage(pipeline_flags, sinfo, NULL, shader_sha1);
+   vk_pipeline_hash_shader_stage(pipeline_flags, sinfo, NULL, shader_blake3);
 
-   _mesa_sha1_update(ctx, shader_sha1, sizeof(shader_sha1));
-   _mesa_sha1_update(ctx, stage_key, sizeof(*stage_key));
+   _mesa_blake3_update(ctx, shader_blake3, sizeof(shader_blake3));
+   _mesa_blake3_update(ctx, stage_key, sizeof(*stage_key));
 }
 
 static void

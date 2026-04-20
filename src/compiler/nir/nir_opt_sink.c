@@ -187,25 +187,32 @@ can_sink_instr(nir_instr *instr, nir_move_options options, bool *can_mov_out_of_
       case nir_intrinsic_image_sparse_load:
       case nir_intrinsic_image_deref_sparse_load:
       case nir_intrinsic_bindless_image_sparse_load:
+      case nir_intrinsic_image_heap_load:
+      case nir_intrinsic_image_heap_sparse_load:
          return options & nir_move_load_image;
 
       case nir_intrinsic_image_fragment_mask_load_amd:
       case nir_intrinsic_image_deref_fragment_mask_load_amd:
       case nir_intrinsic_bindless_image_fragment_mask_load_amd:
+      case nir_intrinsic_image_heap_fragment_mask_load_amd:
       case nir_intrinsic_image_samples_identical: /* this loads fragment mask too */
       case nir_intrinsic_image_deref_samples_identical:
       case nir_intrinsic_bindless_image_samples_identical:
+      case nir_intrinsic_image_heap_samples_identical:
          return options & nir_move_load_image_fragment_mask;
 
       case nir_intrinsic_image_size:
       case nir_intrinsic_image_deref_size:
       case nir_intrinsic_bindless_image_size:
+      case nir_intrinsic_image_heap_size:
       case nir_intrinsic_image_samples:
       case nir_intrinsic_image_deref_samples:
       case nir_intrinsic_bindless_image_samples:
+      case nir_intrinsic_image_heap_samples:
       case nir_intrinsic_image_levels:
       case nir_intrinsic_image_deref_levels:
       case nir_intrinsic_bindless_image_levels:
+      case nir_intrinsic_image_heap_levels:
          return options & nir_move_query_image;
 
       case nir_intrinsic_load_input:
@@ -248,7 +255,7 @@ can_sink_instr(nir_instr *instr, nir_move_options options, bool *can_mov_out_of_
       case nir_intrinsic_load_frag_coord:
       case nir_intrinsic_load_frag_coord_z:
       case nir_intrinsic_load_frag_coord_w:
-      case nir_intrinsic_load_frag_coord_zw_pan:
+      case nir_intrinsic_load_var_special_pan:
       case nir_intrinsic_load_pixel_coord:
          *can_mov_out_of_loop = true;
          return options & nir_move_load_frag_coord;
@@ -294,7 +301,7 @@ get_innermost_loop(nir_cf_node *node)
    for (; node != NULL; node = node->parent) {
       if (node->type == nir_cf_node_loop) {
          nir_loop *loop = nir_cf_node_as_loop(node);
-         if (nir_loop_first_block(loop)->predecessors.entries > 1)
+         if (nir_loop_has_back_edge(loop))
             return loop;
       }
    }
@@ -334,10 +341,10 @@ adjust_block_for_loops(nir_block *use_block, nir_block *def_block,
       }
 
       nir_cf_node *next = nir_cf_node_next(&cur_block->cf_node);
-      if (next && next->type == nir_cf_node_loop &&
-          nir_block_cf_tree_next(cur_block)->predecessors.entries > 1) {
+      if (next && next->type == nir_cf_node_loop) {
          nir_loop *following_loop = nir_cf_node_as_loop(next);
-         if (loop_contains_block(following_loop, use_block)) {
+         if (nir_loop_has_back_edge(following_loop) &&
+             loop_contains_block(following_loop, use_block)) {
             use_block = cur_block;
             continue;
          }

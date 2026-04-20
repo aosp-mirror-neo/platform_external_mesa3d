@@ -343,8 +343,6 @@ typedef struct nir_shader_compiler_options {
     */
    bool lower_fround_even;
 
-   bool lower_ldexp;
-
    bool lower_pack_half_2x16;
    bool lower_pack_unorm_2x16;
    bool lower_pack_snorm_2x16;
@@ -539,6 +537,9 @@ typedef struct nir_shader_compiler_options {
 
    /* Lowers when 32x32->64 bit multiplication is not supported */
    bool lower_mul_2x32_64;
+
+   /* Indicates that ldexp is supported. */
+   bool has_ldexp;
 
    /* Indicates that urol and uror are supported */
    bool has_rotate8;
@@ -874,7 +875,7 @@ typedef struct nir_shader_compiler_options {
     * outputs to inputs.
     *
     * Drivers can set the maximum cost based on the types of consecutive
-    * shaders or shader SHA1s.
+    * shaders or shader BLAKE3s.
     *
     * Drivers should also set "varying_estimate_instr_cost".
     */

@@ -6821,12 +6821,27 @@ emit_wa_18020335297_dummy_draw(struct iris_batch *batch)
    }
 }
 
+#if INTEL_WA_14024997852_GFX_VER
+static void
+setup_ff_mode_autostrip(struct iris_context *ice,
+                        struct iris_batch *batch,
+                        bool enable)
+{
+   struct mi_builder b;
+   mi_builder_init(&b, batch->screen->devinfo, batch);
+   mi_builder_set_mocs(&b, isl_mocs(&batch->screen->isl_dev, 0, false));
+   mi_builder_set_write_check(&b, true);
+
+   mi_set_autostrip_state(&b, enable);
+}
+#endif
+
 static void
 setup_autostrip_state(struct iris_context *ice,
                       struct iris_batch *batch,
                       bool enable)
 {
-#if GFX_VERx10 >= 200
+#if INTEL_WA_14024997852_GFX_VER
    if (ice->state.autostrip_state != enable) {
       iris_emit_pipe_control_flush(batch,
                                    "Wa_14024997852",
@@ -6839,11 +6854,8 @@ setup_autostrip_state(struct iris_context *ice,
          vfl.PartialAutostripDisableMask = true;
       }
       /* TE and Mesh. */
-      iris_emit_reg(batch, GENX(FF_MODE), ff) {
-         ff.TEAutostripDisable = !enable;
-         ff.MeshShaderAutostripDisable = !enable;
-         ff.MeshShaderPartialAutostripDisable = !enable;
-      }
+      setup_ff_mode_autostrip(ice, batch, enable);
+
       ice->state.autostrip_state = enable;
    }
 #endif
@@ -9038,10 +9050,6 @@ iris_load_indirect_location(struct iris_context *ice,
                             struct iris_batch *batch,
                             const struct pipe_grid_info *grid)
 {
-#define GPGPU_DISPATCHDIMX 0x2500
-#define GPGPU_DISPATCHDIMY 0x2504
-#define GPGPU_DISPATCHDIMZ 0x2508
-
    assert(grid->indirect);
 
    struct iris_state_ref *grid_size = &ice->state.grid_size;
@@ -9051,9 +9059,9 @@ iris_load_indirect_location(struct iris_context *ice,
    struct mi_value size_x = mi_mem32(ro_bo(bo, grid_size->offset + 0));
    struct mi_value size_y = mi_mem32(ro_bo(bo, grid_size->offset + 4));
    struct mi_value size_z = mi_mem32(ro_bo(bo, grid_size->offset + 8));
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMX), size_x);
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMY), size_y);
-   mi_store(&b, mi_reg32(GPGPU_DISPATCHDIMZ), size_z);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMX_num)), size_x);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMY_num)), size_y);
+   mi_store(&b, mi_reg32(GENX(GPGPU_DISPATCHDIMZ_num)), size_z);
 }
 
 static bool iris_emit_indirect_dispatch_supported(const struct intel_device_info *devinfo)

@@ -705,6 +705,12 @@ ROUND_DOWN_TO(uint64_t value, uint32_t alignment)
    return ((value) & ~(uint64_t)(alignment - 1));
 }
 
+static inline uint64_t
+ROUND_DOWN_TO_NPOT(uint64_t value, uint32_t alignment)
+{
+   return value - (value % alignment);
+}
+
 /**
  * Align a value, only works pot alignemnts.
  */
@@ -871,6 +877,12 @@ static inline bool
 util_is_sint16(int x)
 {
    return x >= INT16_MIN && x <= INT16_MAX;
+}
+
+static inline bool
+util_is_uint16(int x)
+{
+   return x >= 0 && x <= UINT16_MAX;
 }
 
 /* Heuristic to determine whether a uint32_t is probably actually a float

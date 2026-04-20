@@ -29,7 +29,6 @@
 
 struct nu_handle {
    nir_def *handle;
-   nir_deref_instr *parent_deref;
    nir_def *first;
 };
 
@@ -81,7 +80,6 @@ nu_handle_init(struct nu_handle *h, nir_src *src)
          return false;
 
       h->handle = deref->arr.index.ssa;
-      h->parent_deref = parent;
 
       return true;
    } else {
@@ -89,7 +87,6 @@ nu_handle_init(struct nu_handle *h, nir_src *src)
          return false;
 
       h->handle = src->ssa;
-      h->parent_deref = NULL;
 
       return true;
    }
@@ -123,11 +120,15 @@ nu_handle_compare(const nir_lower_non_uniform_access_options *options,
 static void
 nu_handle_rewrite(nir_builder *b, struct nu_handle *h, nir_src *src)
 {
-   if (h->parent_deref) {
+   if (nir_src_is_deref(*src)) {
+      nir_deref_instr *deref = nir_src_as_deref(*src);
+      assert(deref->deref_type == nir_deref_type_array);
+      nir_deref_instr *parent = nir_deref_instr_parent(deref);
+
       /* Replicate the deref. */
-      nir_deref_instr *deref =
-         nir_build_deref_array(b, h->parent_deref, h->first);
-      nir_src_rewrite(src, &deref->def);
+      nir_deref_instr *new_deref =
+         nir_build_deref_array(b, parent, h->first);
+      nir_src_rewrite(src, &new_deref->def);
    } else {
       nir_src_rewrite(src, h->first);
    }
@@ -245,6 +246,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_texture_handle:
       case nir_tex_src_texture_deref:
       case nir_tex_src_texture_2_deref:
+      case nir_tex_src_texture_heap_offset:
          if (!tex->texture_non_uniform)
             continue;
          if (!(opts->types & base_access_type))
@@ -257,6 +259,7 @@ lower_non_uniform_tex_access(struct nu_state *state, nir_tex_instr *tex,
       case nir_tex_src_sampler_handle:
       case nir_tex_src_sampler_deref:
       case nir_tex_src_sampler_2_deref:
+      case nir_tex_src_sampler_heap_offset:
          if (!tex->sampler_non_uniform)
             continue;
          if (!(opts->types & base_access_type))
@@ -424,6 +427,13 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
             case nir_intrinsic_image_deref_atomic_swap:
             case nir_intrinsic_image_deref_samples_identical:
             case nir_intrinsic_image_deref_fragment_mask_load_amd:
+            case nir_intrinsic_image_heap_load:
+            case nir_intrinsic_image_heap_sparse_load:
+            case nir_intrinsic_image_heap_store:
+            case nir_intrinsic_image_heap_atomic:
+            case nir_intrinsic_image_heap_atomic_swap:
+            case nir_intrinsic_image_heap_samples_identical:
+            case nir_intrinsic_image_heap_fragment_mask_load_amd:
                if ((options->types & nir_lower_non_uniform_image_access) &&
                    lower_non_uniform_access_intrin(&state, intrin, 0, nir_lower_non_uniform_image_access))
                   progress = true;
@@ -438,6 +448,9 @@ nir_lower_non_uniform_access_impl(nir_function_impl *impl,
             case nir_intrinsic_image_deref_levels:
             case nir_intrinsic_image_deref_size:
             case nir_intrinsic_image_deref_samples:
+            case nir_intrinsic_image_heap_levels:
+            case nir_intrinsic_image_heap_size:
+            case nir_intrinsic_image_heap_samples:
                if ((options->types & nir_lower_non_uniform_image_query) &&
                    lower_non_uniform_access_intrin(&state, intrin, 0, nir_lower_non_uniform_image_query))
                   progress = true;

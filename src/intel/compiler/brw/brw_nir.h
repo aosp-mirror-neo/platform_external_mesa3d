@@ -138,6 +138,9 @@ void brw_preprocess_nir(const struct brw_compiler *compiler,
                         nir_shader *nir,
                         const struct brw_nir_compiler_opts *opts);
 
+bool
+brw_nir_fence_shared_stores(nir_shader *shader);
+
 void
 brw_nir_link_shaders(const struct brw_compiler *compiler,
                      nir_shader *producer, nir_shader *consumer);
@@ -229,6 +232,8 @@ void brw_nir_lower_tcs_outputs(nir_shader *nir,
                                const struct intel_device_info *devinfo,
                                const struct intel_vue_map *vue,
                                enum tess_primitive_mode tes_primitive_mode);
+void brw_nir_lower_mesh_outputs(nir_shader *nir,
+                                const struct brw_mue_map *map);
 void brw_nir_lower_fs_outputs(nir_shader *nir);
 bool brw_nir_lower_fs_load_output(nir_shader *shader,
                                   const struct brw_fs_prog_key *key);
@@ -259,7 +264,8 @@ bool brw_nir_lower_mcs_fetch(nir_shader *shader,
 bool brw_nir_texture_backend_opcode(nir_shader *shader,
                                     const struct intel_device_info *devinfo);
 
-bool brw_nir_pre_lower_texture(nir_shader *nir);
+bool brw_nir_pre_lower_texture(nir_shader *nir,
+                               const struct intel_device_info *devinfo);
 
 bool brw_nir_lower_texture(nir_shader *nir);
 
@@ -271,20 +277,18 @@ bool brw_nir_lower_mem_access_bit_sizes(nir_shader *shader,
                                         const struct
                                         intel_device_info *devinfo);
 
-bool brw_nir_lower_simd(nir_shader *nir, unsigned dispatch_width);
+bool brw_nir_lower_simd(nir_shader *nir);
 
-void brw_postprocess_nir_opts(struct brw_pass_tracker *pt,
-                              enum brw_robustness_flags robust_flags);
+void brw_postprocess_nir_opts(struct brw_pass_tracker *pt);
 
 void brw_postprocess_nir_out_of_ssa(struct brw_pass_tracker *pt,
                                     bool debug_enabled);
 
 static inline void
 brw_postprocess_nir(struct brw_pass_tracker *pt,
-                    bool debug_enabled,
-                    enum brw_robustness_flags robust_flags)
+                    bool debug_enabled)
 {
-   brw_postprocess_nir_opts(pt, robust_flags);
+   brw_postprocess_nir_opts(pt);
    brw_postprocess_nir_out_of_ssa(pt, debug_enabled);
 }
 
@@ -416,6 +420,8 @@ brw_nir_frag_convert_attrs_prim_to_vert_indirect(struct nir_shader *nir,
 
 unsigned
 brw_nir_pack_vs_input(nir_shader *nir, struct brw_vs_prog_data *prog_data);
+
+bool brw_nir_opt_divergent_atomics(nir_shader *shader, enum brw_divergent_atomics_flags flags);
 
 #ifdef __cplusplus
 }

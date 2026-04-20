@@ -1578,7 +1578,7 @@ Converter::visit(nir_cf_node *node)
 bool
 Converter::visit(nir_block *block)
 {
-   if (!block->predecessors.entries && exec_list_is_empty(&block->instr_list))
+   if (!nir_block_num_preds(block) && exec_list_is_empty(&block->instr_list))
       return true;
 
    BasicBlock *bb = convert(block);
@@ -3590,7 +3590,6 @@ nvir_nir_shader_compiler_options(int chipset, uint8_t shader_type)
    op.lower_ffract = true;
    op.lower_fceil = false; // TODO
    op.lower_ftrunc = false;
-   op.lower_ldexp = true;
    op.lower_pack_half_2x16 = true;
    op.lower_pack_unorm_2x16 = true;
    op.lower_pack_snorm_2x16 = true;

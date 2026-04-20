@@ -354,8 +354,8 @@ disk_cache_init(struct zink_screen *screen)
    blake3_hash blake3;
    _mesa_blake3_final(&ctx, blake3);
 
-   char cache_id[SHA1_DIGEST_STRING_LENGTH];
-   mesa_bytes_to_hex(cache_id, blake3, SHA1_DIGEST_LENGTH);
+   char cache_id[BLAKE3_HEX_LEN];
+   mesa_bytes_to_hex(cache_id, blake3, BLAKE3_KEY_LEN);
 
    screen->disk_cache = disk_cache_create("zink", cache_id, 0);
 
@@ -731,7 +731,7 @@ zink_init_screen_caps(struct zink_screen *screen)
    caps->texrect = false;
    caps->multi_draw_indirect_partial_stride = false;
    caps->anisotropic_filter = screen->info.feats.features.samplerAnisotropy;
-   caps->emulate_nonfixed_primitive_restart = true;
+   caps->emulate_nonfixed_primitive_restart = !screen->info.have_EXT_primitive_restart_index;
    {
       uint32_t modes = BITFIELD_BIT(MESA_PRIM_LINE_STRIP) |
          BITFIELD_BIT(MESA_PRIM_TRIANGLE_STRIP) |

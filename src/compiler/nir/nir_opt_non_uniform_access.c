@@ -27,7 +27,16 @@
 static bool
 is_ubo_intrinsic(nir_intrinsic_instr *intrin)
 {
-   return intrin->intrinsic == nir_intrinsic_load_ubo;
+   switch (intrin->intrinsic) {
+   case nir_intrinsic_load_ubo:
+      return true;
+
+   case nir_intrinsic_load_buffer_ptr_deref:
+      return nir_intrinsic_resource_type(intrin) == nir_resource_type_uniform_buffer;
+
+   default:
+      return false;
+   }
 }
 
 static bool
@@ -39,6 +48,10 @@ is_ssbo_intrinsic(nir_intrinsic_instr *intrin)
    case nir_intrinsic_ssbo_atomic:
    case nir_intrinsic_ssbo_atomic_swap:
       return true;
+
+   case nir_intrinsic_load_buffer_ptr_deref:
+      return nir_intrinsic_resource_type(intrin) == nir_resource_type_read_only_storage_buffer ||
+             nir_intrinsic_resource_type(intrin) == nir_resource_type_read_write_storage_buffer;
 
    default:
       return false;
@@ -67,6 +80,12 @@ is_image_access_intrinsic(nir_intrinsic_instr *intrin)
    case nir_intrinsic_image_deref_atomic:
    case nir_intrinsic_image_deref_atomic_swap:
    case nir_intrinsic_image_deref_fragment_mask_load_amd:
+   case nir_intrinsic_image_heap_load:
+   case nir_intrinsic_image_heap_sparse_load:
+   case nir_intrinsic_image_heap_store:
+   case nir_intrinsic_image_heap_atomic:
+   case nir_intrinsic_image_heap_atomic_swap:
+   case nir_intrinsic_image_heap_fragment_mask_load_amd:
       return true;
 
    default:
@@ -87,6 +106,9 @@ is_image_query_intrinsic(nir_intrinsic_instr *intrin)
    case nir_intrinsic_image_deref_size:
    case nir_intrinsic_image_deref_samples:
    case nir_intrinsic_image_deref_levels:
+   case nir_intrinsic_image_heap_size:
+   case nir_intrinsic_image_heap_samples:
+   case nir_intrinsic_image_heap_levels:
       return true;
 
    default:
@@ -209,6 +231,7 @@ opt_non_uniform_tex_access(nir_tex_instr *tex)
       case nir_tex_src_texture_offset:
       case nir_tex_src_texture_handle:
       case nir_tex_src_texture_deref:
+      case nir_tex_src_texture_heap_offset:
          if (tex->texture_non_uniform && !nir_src_is_divergent(&tex->src[i].src)) {
             tex->texture_non_uniform = false;
             progress = true;
@@ -218,6 +241,7 @@ opt_non_uniform_tex_access(nir_tex_instr *tex)
       case nir_tex_src_sampler_offset:
       case nir_tex_src_sampler_handle:
       case nir_tex_src_sampler_deref:
+      case nir_tex_src_sampler_heap_offset:
          if (tex->sampler_non_uniform && !nir_src_is_divergent(&tex->src[i].src)) {
             tex->sampler_non_uniform = false;
             progress = true;

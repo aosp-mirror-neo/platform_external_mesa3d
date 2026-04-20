@@ -12,9 +12,9 @@
 #include "ac_formats.h"
 
 enum {
-   SI_CLEAR = SI_SAVE_FRAGMENT_STATE | SI_SAVE_FRAGMENT_CONSTANT,
-   SI_CLEAR_SURFACE = SI_SAVE_FRAMEBUFFER | SI_SAVE_FRAGMENT_STATE | SI_SAVE_FRAGMENT_CONSTANT,
-   SI_DEPTH_STENCIL = SI_SAVE_FRAMEBUFFER | SI_SAVE_FRAGMENT_STATE,
+   SI_CLEAR = SI_SAVE_FRAGMENT_CONSTANT,
+   SI_CLEAR_SURFACE = SI_SAVE_FRAMEBUFFER | SI_SAVE_FRAGMENT_CONSTANT,
+   SI_DEPTH_STENCIL = SI_SAVE_FRAMEBUFFER,
 };
 
 void si_init_buffer_clear(struct si_clear_info *info,
@@ -1053,7 +1053,7 @@ static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
       /* TODO: This hack fixes dEQP-GLES[23].functional.fragment_ops.random.* on Navi31.
        * The root cause is unknown.
        */
-      if (sctx->gfx_level == GFX11 || sctx->gfx_level == GFX11_5)
+      if (sctx->gfx_level >= GFX11 && sctx->gfx_level < GFX12)
          si_set_barrier_flags(sctx, SI_BARRIER_SYNC_VS);
    }
 

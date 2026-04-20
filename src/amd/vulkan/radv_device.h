@@ -174,11 +174,6 @@ struct radv_device {
    struct radeon_winsys_bo *trace_bo;
    struct radv_trace_data *trace_data;
 
-   VkDeviceMemory va_validation_memory;
-   VkBuffer va_validation_buffer;
-   BITSET_WORD *valid_vas;
-   uint64_t valid_vas_addr;
-
    /* Whether to keep shader debug info, for debugging. */
    bool keep_shader_info;
 
@@ -207,9 +202,6 @@ struct radv_device {
 
    /* Whether to inline the compute dispatch size in user sgprs. */
    bool load_grid_size_from_user_sgpr;
-
-   /* Whether the driver uses a global BO list. */
-   bool use_global_bo_list;
 
    /* Whether anisotropy is forced with RADV_TEX_ANISO (-1 is disabled). */
    int force_aniso;
@@ -244,6 +236,9 @@ struct radv_device {
 
    /* Whether to use a staging buffer for SQTT/SPM buffers. */
    bool rgp_use_staging_buffer;
+
+   /* Count the number of submits for per-submit RGP captures. */
+   uint32_t rgp_num_submits;
 
    /* Memory trace. */
    struct radv_memory_trace_data memory_trace;
@@ -316,7 +311,7 @@ struct radv_device {
    struct hash_table *rt_handles;
    simple_mtx_t rt_handles_mtx;
 
-   struct radv_printf_data printf;
+   struct radv_debug_nir debug_nir;
 
    struct radv_device_cache_key cache_key;
    blake3_hash cache_hash;

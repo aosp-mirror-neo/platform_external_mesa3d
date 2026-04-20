@@ -454,8 +454,7 @@ ir3_nir_lower_io_vars_to_temporaries(nir_shader *s)
        s->info.stage == MESA_SHADER_FRAGMENT)
       lower_modes |= nir_var_shader_in;
 
-   if (s->info.stage != MESA_SHADER_TESS_CTRL &&
-       s->info.stage != MESA_SHADER_GEOMETRY)
+   if (s->info.stage != MESA_SHADER_TESS_CTRL)
       lower_modes |= nir_var_shader_out;
 
    if (lower_modes) {
@@ -957,6 +956,11 @@ ir3_nir_lower_io(nir_shader *s)
    NIR_PASS(_, s, nir_remove_dead_variables,
             nir_var_shader_in | nir_var_shader_out,
             &(nir_remove_dead_variables_options) {});
+
+   if (s->xfb_info) {
+      NIR_PASS(_, s, nir_opt_constant_folding);
+      NIR_PASS(_, s, nir_io_add_intrinsic_xfb_info);
+   }
 
    s->info.io_lowered = true;
 }
@@ -1497,8 +1501,8 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so,
     * straddling loads.  Align everything to vec4 to avoid that, though we
     * could theoretically do better.
     */
-   OPT(s, nir_opt_large_constants, glsl_get_vec4_size_align_bytes,
-       32 /* bytes */);
+   progress |= OPT(s, nir_opt_large_constants, glsl_get_vec4_size_align_bytes,
+                   32 /* bytes */);
    progress |= OPT(s, ir3_nir_lower_load_constant, so);
 
    /* Lower large temporaries to scratch, which in Qualcomm terms is private
@@ -1533,6 +1537,7 @@ ir3_nir_lower_variant(struct ir3_shader_variant *so,
    progress |= OPT(s, nir_lower_mem_access_bit_sizes, &mem_bit_size_options);
    progress |= OPT(s, ir3_nir_lower_64b_global);
    progress |= OPT(s, ir3_nir_lower_64b_undef);
+   progress |= OPT(s, ir3_nir_lower_64b_image);
    progress |= OPT(s, nir_lower_int64);
    progress |= OPT(s, nir_lower_64bit_phis);
 
@@ -1760,6 +1765,9 @@ ir3_get_driver_param_info(const nir_shader *shader, nir_intrinsic_instr *intr,
       break;
    case nir_intrinsic_load_frag_invocation_count:
       param_info->offset = IR3_DP_FS(frag_invocation_count);
+      break;
+   case nir_intrinsic_load_alpha_to_coverage_enable_ir3:
+      param_info->offset = IR3_DP_FS(alpha_to_coverage_enable);
       break;
    default:
       return false;

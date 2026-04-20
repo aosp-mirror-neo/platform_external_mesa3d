@@ -11,7 +11,7 @@
 #include "ac_debug.h"
 
 #include "si_video.h"
-#include "radeonsi/si_pipe.h"
+#include "si_pipe.h"
 #include "util/u_memory.h"
 #include "util/u_video.h"
 #include "vl/vl_video_buffer.h"
@@ -27,9 +27,16 @@ static void radeon_vcn_enc_quality_modes(struct radeon_encoder *enc,
                                     ? RENCODE_PRESET_MODE_HIGH_QUALITY
                                     : in->preset_mode;
 
-   if (u_reduce_video_profile(enc->base.profile) != PIPE_VIDEO_FORMAT_AV1 &&
+   if (sscreen->info.vcn_ip_version < VCN_4_0_0 &&
        p->preset_mode == RENCODE_PRESET_MODE_HIGH_QUALITY)
       p->preset_mode = RENCODE_PRESET_MODE_QUALITY;
+
+   if (sscreen->info.vcn_ip_version >= VCN_2_0_0 &&
+       sscreen->info.vcn_ip_version < VCN_5_0_0 &&
+       p->preset_mode == RENCODE_PRESET_MODE_SPEED &&
+       !enc->enc_pic.hevc_deblock.disable_sao &&
+       u_reduce_video_profile(enc->base.profile) == PIPE_VIDEO_FORMAT_HEVC)
+      p->preset_mode = RENCODE_PRESET_MODE_BALANCE;
 
    if (enc->first_frame) {
       p->pre_encode_mode = in->pre_encode_mode ? RENCODE_PREENCODE_MODE_4X
@@ -435,7 +442,8 @@ static void radeon_vcn_enc_h264_get_slice_ctrl_param(struct radeon_encoder *enc,
    enc->enc_pic.slice_ctrl.slice_control_mode = RENCODE_H264_SLICE_CONTROL_MODE_FIXED_MBS;
    enc->enc_pic.slice_ctrl.num_mbs_per_slice = num_mbs_in_slice;
 
-   if (ac_vcn_enc_variable_slice_mode_supported(&((struct si_screen *)enc->screen)->info) &&
+   if (ac_vcn_enc_variable_slice_mode_supported(&((struct si_screen *)enc->screen)->info,
+                                                enc->enc_pic.quality_modes.pre_encode_mode) &&
        pic->num_slice_descriptors <= RENCODE_MAX_NUM_SLICES)
    {
       enc->enc_pic.slice_ctrl.slice_control_mode = RENCODE_H264_SLICE_CONTROL_MODE_VARIABLE_MBS;
@@ -576,6 +584,7 @@ static void radeon_vcn_enc_h264_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_h264_get_dbk_param(enc, pic);
    radeon_vcn_enc_h264_get_rc_param(enc, pic);
    radeon_vcn_enc_h264_get_spec_misc_param(enc, pic);
+   radeon_vcn_enc_quality_modes(enc, &pic->quality_modes);
    radeon_vcn_enc_h264_get_slice_ctrl_param(enc, pic);
    radeon_vcn_enc_get_input_format_param(enc);
    radeon_vcn_enc_get_output_format_param(enc);
@@ -584,7 +593,6 @@ static void radeon_vcn_enc_h264_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_get_intra_refresh_param(enc, use_filter, &pic->intra_refresh);
    radeon_vcn_enc_get_roi_param(enc, &pic->roi);
    radeon_vcn_enc_get_latency_param(enc);
-   radeon_vcn_enc_quality_modes(enc, &pic->quality_modes);
 }
 
 static void radeon_vcn_enc_hevc_get_session_param(struct radeon_encoder *enc,
@@ -833,7 +841,8 @@ static void radeon_vcn_enc_hevc_get_slice_ctrl_param(struct radeon_encoder *enc,
    enc->enc_pic.hevc_slice_ctrl.fixed_ctbs_per_slice.num_ctbs_per_slice_segment =
       num_ctbs_in_slice;
 
-   if (ac_vcn_enc_variable_slice_mode_supported(&((struct si_screen *)enc->screen)->info) &&
+   if (ac_vcn_enc_variable_slice_mode_supported(&((struct si_screen *)enc->screen)->info,
+                                                enc->enc_pic.quality_modes.pre_encode_mode) &&
        pic->num_slice_descriptors <= RENCODE_MAX_NUM_SLICES)
    {
       enc->enc_pic.hevc_slice_ctrl.slice_control_mode = RENCODE_HEVC_SLICE_CONTROL_MODE_VARIABLE_CTBS;
@@ -870,6 +879,7 @@ static void radeon_vcn_enc_hevc_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_hevc_get_session_param(enc, pic);
    radeon_vcn_enc_hevc_get_dbk_param(enc, pic);
    radeon_vcn_enc_hevc_get_rc_param(enc, pic);
+   radeon_vcn_enc_quality_modes(enc, &pic->quality_modes);
    radeon_vcn_enc_hevc_get_slice_ctrl_param(enc, pic);
    radeon_vcn_enc_get_input_format_param(enc);
    radeon_vcn_enc_get_output_format_param(enc);
@@ -879,7 +889,6 @@ static void radeon_vcn_enc_hevc_get_param(struct radeon_encoder *enc,
    radeon_vcn_enc_get_roi_param(enc, &pic->roi);
    radeon_vcn_enc_hevc_get_spec_misc_param(enc, pic);
    radeon_vcn_enc_get_latency_param(enc);
-   radeon_vcn_enc_quality_modes(enc, &pic->quality_modes);
 }
 
 static void radeon_vcn_enc_av1_get_session_param(struct radeon_encoder *enc,

@@ -47,15 +47,21 @@ pan_nir_tile_default_coverage(nir_builder *b)
 
 bool pan_nir_lower_bool_to_bitsize(nir_shader *shader);
 
-bool pan_nir_lower_store_component(nir_shader *shader);
-
 bool pan_nir_lower_vertex_id(nir_shader *shader);
 
 bool pan_nir_lower_image_ms(nir_shader *shader);
 
-bool pan_nir_lower_frag_coord_zw(nir_shader *shader);
+bool pan_nir_lower_var_special_pan(nir_shader *shader);
 bool pan_nir_lower_noperspective_vs(nir_shader *shader);
 bool pan_nir_lower_noperspective_fs(nir_shader *shader);
+
+bool pan_nir_lower_vs_outputs(nir_shader *shader, uint64_t gpu_id,
+                              const struct pan_varying_layout *varying_layout,
+                              bool has_idvs, bool *needs_extended_fifo);
+
+bool pan_nir_lower_fs_inputs(nir_shader *shader, uint64_t gpu_id,
+                             const struct pan_varying_layout *varying_layout,
+                             struct pan_shader_info *info);
 
 bool pan_nir_lower_helper_invocation(nir_shader *shader);
 bool pan_nir_lower_sample_pos(nir_shader *shader);
@@ -65,9 +71,6 @@ bool pan_nir_lower_image_index(nir_shader *shader,
                                unsigned vs_img_attrib_offset);
 bool pan_nir_lower_texel_buffer_fetch_index(nir_shader *shader,
                                             unsigned attrib_offset);
-
-void pan_nir_lower_texture_early(nir_shader *nir, unsigned gpu_id);
-void pan_nir_lower_texture_late(nir_shader *nir, unsigned gpu_id);
 
 nir_alu_type
 pan_unpacked_type_for_format(const struct util_format_description *desc);

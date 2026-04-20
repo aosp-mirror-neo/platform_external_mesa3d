@@ -842,6 +842,8 @@ lower_bit_size_callback(const nir_instr *instr, UNUSED void *data)
       case nir_intrinsic_shuffle_xor:
       case nir_intrinsic_shuffle_up:
       case nir_intrinsic_shuffle_down:
+      case nir_intrinsic_shuffle_up_intel:
+      case nir_intrinsic_shuffle_down_intel:
       case nir_intrinsic_quad_broadcast:
       case nir_intrinsic_quad_swap_horizontal:
       case nir_intrinsic_quad_swap_vertical:
@@ -1450,7 +1452,7 @@ elk_postprocess_nir(nir_shader *nir, const struct elk_compiler *compiler,
 
    UNUSED bool progress; /* Written by OPT */
 
-   OPT(intel_nir_lower_sparse_intrinsics);
+   OPT(intel_nir_lower_sparse_intrinsics, false);
 
    OPT(nir_lower_bit_size, lower_bit_size_callback, (void *)compiler);
 

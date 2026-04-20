@@ -6,11 +6,13 @@
 #include "anv_api_version.h"
 #include "anv_measure.h"
 
+#include "dev/intel_debug.h"
 #include "i915/anv_device.h"
 #include "xe/anv_device.h"
 
 #include "common/intel_common.h"
 #include "common/intel_uuid.h"
+#include "common/xe/intel_queue.h"
 
 #include "perf/intel_perf.h"
 
@@ -18,7 +20,7 @@
 
 #include "util/disk_cache.h"
 #include "util/os_misc.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_misc.h"
 
 #include <xf86drm.h>
@@ -132,7 +134,8 @@ static void
 get_device_extensions(const struct anv_physical_device *device,
                       struct vk_device_extension_table *ext)
 {
-   const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing;
+   const bool rt_enabled = ANV_SUPPORT_RT && device->info.has_ray_tracing &&
+                           !intel_use_jay_any_stage(&device->info);
    const bool hw_video_encode_supported = device->info.verx10 < 125;
    const bool video_encode_enabled = hw_video_encode_supported &&
                                      (device->instance->debug & ANV_DEBUG_VIDEO_ENCODE);
@@ -488,7 +491,7 @@ get_features(const struct anv_physical_device *pdevice,
       .storageBuffer16BitAccess            = !pdevice->instance->no_16bit,
       .uniformAndStorageBuffer16BitAccess  = !pdevice->instance->no_16bit,
       .storagePushConstant16               = true,
-      .storageInputOutput16                = false,
+      .storageInputOutput16                = true,
       .multiview                           = true,
       .multiviewGeometryShader             = true,
       .multiviewTessellationShader         = true,
@@ -1714,7 +1717,7 @@ get_properties(const struct anv_physical_device *pdevice,
        */
       props->accelerationStructureCaptureReplayDescriptorDataSize = 0;
 
-      props->samplerDescriptorSize = ANV_SAMPLER_STATE_SIZE;
+      props->EDBsamplerDescriptorSize = ANV_SAMPLER_STATE_SIZE;
       props->combinedImageSamplerDescriptorSize = align(ANV_SURFACE_STATE_SIZE + ANV_SAMPLER_STATE_SIZE,
                                                         ANV_SURFACE_STATE_SIZE);
       props->sampledImageDescriptorSize = ANV_SURFACE_STATE_SIZE;
@@ -1795,23 +1798,23 @@ get_properties(const struct anv_physical_device *pdevice,
        * different tilings sometimes (see isl_gfx7.c).
        */
       {
-         struct mesa_sha1 sha1_ctx;
-         uint8_t sha1[SHA1_DIGEST_LENGTH];
+         blake3_hasher blake3_ctx;
+         uint8_t blake3[BLAKE3_KEY_LEN];
 
-         _mesa_sha1_init(&sha1_ctx);
-         _mesa_sha1_update(&sha1_ctx, pdevice->driver_build_sha1,
+         _mesa_blake3_init(&blake3_ctx);
+         _mesa_blake3_update(&blake3_ctx, pdevice->driver_build_sha1,
                            sizeof(pdevice->driver_build_sha1));
-         _mesa_sha1_update(&sha1_ctx, &pdevice->info.platform,
+         _mesa_blake3_update(&blake3_ctx, &pdevice->info.platform,
                            sizeof(pdevice->info.platform));
          if (pdevice->info.platform == INTEL_PLATFORM_SKL &&
              pdevice->info.gt == 4) {
-            _mesa_sha1_update(&sha1_ctx, &pdevice->info.gt,
+            _mesa_blake3_update(&blake3_ctx, &pdevice->info.gt,
                               sizeof(pdevice->info.gt));
          }
-         _mesa_sha1_final(&sha1_ctx, sha1);
+         _mesa_blake3_final(&blake3_ctx, blake3);
 
-         assert(ARRAY_SIZE(sha1) >= VK_UUID_SIZE);
-         memcpy(props->optimalTilingLayoutUUID, sha1, VK_UUID_SIZE);
+         assert(ARRAY_SIZE(blake3) >= VK_UUID_SIZE);
+         memcpy(props->optimalTilingLayoutUUID, blake3, VK_UUID_SIZE);
       }
 
       /* System without ReBAR cannot map all memory types on the host and that
@@ -2374,21 +2377,21 @@ anv_physical_device_init_uuids(struct anv_physical_device *device)
 
    copy_build_id_to_sha1(device->driver_build_sha1, note);
 
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(sha1));
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(blake3));
 
    /* The pipeline cache UUID is used for determining when a pipeline cache is
     * invalid.  It needs both a driver build and the PCI ID of the device.
     */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, build_id_data(note), build_id_len);
-   brw_device_sha1_update(&sha1_ctx, &device->info);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, build_id_data(note), build_id_len);
+   brw_device_blake3_update(&blake3_ctx, &device->info);
    bool always_use_bindless = !!(device->instance->debug & ANV_DEBUG_BINDLESS);
-   _mesa_sha1_update(&sha1_ctx, &always_use_bindless,
+   _mesa_blake3_update(&blake3_ctx, &always_use_bindless,
                      sizeof(always_use_bindless));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(device->pipeline_cache_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(device->pipeline_cache_uuid, blake3, VK_UUID_SIZE);
 
    intel_uuid_compute_driver_id(device->driver_uuid, &device->info, VK_UUID_SIZE);
    intel_uuid_compute_device_id(device->device_uuid, &device->info, VK_UUID_SIZE);
@@ -2405,8 +2408,8 @@ anv_physical_device_init_disk_cache(struct anv_physical_device *device)
                                device->info.pci_device_id);
    assert(len == sizeof(renderer) - 2);
 
-   char timestamp[SHA1_DIGEST_STRING_LENGTH];
-   _mesa_sha1_format(timestamp, device->driver_build_sha1);
+   char timestamp[BLAKE3_HEX_LEN];
+   _mesa_blake3_format(timestamp, device->driver_build_sha1);
 
    const uint64_t driver_flags =
       brw_get_compiler_config_value(device->compiler);
@@ -2638,8 +2641,6 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    int master_fd = -1;
    int ret;
 
-   process_intel_debug_variable();
-
    fd = open(path, O_RDWR | O_CLOEXEC);
    if (fd < 0) {
       if (errno == ENOMEM) {
@@ -2733,6 +2734,17 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
    if (result != VK_SUCCESS)
       goto fail_base;
 
+   /* Avoid BTP+BTI RCC cache keying on non LSC platforms for now. On those
+    * not using the binding table is difficult.
+    */
+   const bool platform_supports_btp_bit_rcc =
+      devinfo.has_lsc &&
+      (device->info.kmd_type == INTEL_KMD_TYPE_I915 ||
+       device->info.xe_has_state_cache_perf_fix);
+
+   device->rt_change_needs_flush =
+      !instance->state_cache_perf_fix || !platform_supports_btp_bit_rcc;
+
    device->gtt_size = device->info.gtt_size ? device->info.gtt_size :
                                               device->info.aperture_bytes;
 
@@ -2769,7 +2781,8 @@ anv_physical_device_try_create(struct vk_instance *vk_instance,
 
    device->has_cooperative_matrix =
       (device->info.has_systolic || debug_get_bool_option("INTEL_LOWER_DPAS", false)) &&
-      device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE;
+      device->info.cooperative_matrix_configurations[0].scope != INTEL_CMAT_SCOPE_NONE &&
+      !intel_use_jay_any_stage(&device->info);
 
    if (is_virtio) {
       struct util_sync_provider *sync = intel_virtio_sync_provider(fd);

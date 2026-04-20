@@ -521,6 +521,9 @@ optimize_frontfacing_ternary(nir_to_brw_state &ntb,
    const intel_device_info *devinfo = ntb.devinfo;
    brw_shader &s = ntb.s;
 
+   if (instr->def.bit_size != 32)
+      return false;
+
    nir_intrinsic_instr *src0 = nir_src_as_intrinsic(instr->src[0].src);
    if (src0 == NULL || src0->intrinsic != nir_intrinsic_load_front_face)
       return false;
@@ -797,9 +800,9 @@ try_emit_b2fi_of_inot(nir_to_brw_state &ntb, const brw_builder &bld,
 }
 
 static bool
-is_const_zero(const nir_src &src)
+is_const_zero(const nir_alu_src &src)
 {
-   return nir_src_is_const(src) && nir_src_as_int(src) == 0;
+   return nir_src_is_const(src.src) && nir_alu_src_as_uint(src) == 0;
 }
 
 static void
@@ -1554,7 +1557,7 @@ brw_from_nir_emit_alu(nir_to_brw_state &ntb, nir_alu_instr *instr,
        * either 0 or src0. Replacing the 0 with another value can eliminate a
        * temporary register.
        */
-      if (is_const_zero(instr->src[2].src))
+      if (is_const_zero(instr->src[2]))
          bld.BFI2(result, op[0], op[1], op[0]);
       else
          bld.BFI2(result, op[0], op[1], op[2]);
@@ -4561,82 +4564,6 @@ get_nir_buffer_intrinsic_index(nir_to_brw_state &ntb, const brw_builder &bld,
    return bld.emit_uniformize(retype(surf_index, type));
 }
 
-/**
- * The offsets we get from NIR act as if each SIMD channel has it's own blob
- * of contiguous space.  However, if we actually place each SIMD channel in
- * it's own space, we end up with terrible cache performance because each SIMD
- * channel accesses a different cache line even when they're all accessing the
- * same byte offset.  To deal with this problem, we swizzle the address using
- * a simple algorithm which ensures that any time a SIMD message reads or
- * writes the same address, it's all in the same cache line.  We have to keep
- * the bottom two bits fixed so that we can read/write up to a dword at a time
- * and the individual element is contiguous.  We do this by splitting the
- * address as follows:
- *
- *    31                             4-6           2          0
- *    +-------------------------------+------------+----------+
- *    |        Hi address bits        | chan index | addr low |
- *    +-------------------------------+------------+----------+
- *
- * In other words, the bottom two address bits stay, and the top 30 get
- * shifted up so that we can stick the SIMD channel index in the middle.  This
- * way, we can access 8, 16, or 32-bit elements and, when accessing a 32-bit
- * at the same logical offset, the scratch read/write instruction acts on
- * continuous elements and we get good cache locality.
- */
-static brw_reg
-swizzle_nir_scratch_addr(nir_to_brw_state &ntb,
-                         const brw_builder &bld,
-                         const nir_src &nir_addr_src,
-                         bool in_dwords)
-{
-   brw_shader &s = ntb.s;
-
-   const brw_reg chan_index = bld.LOAD_SUBGROUP_INVOCATION();
-   const unsigned chan_index_bits = ffs(s.dispatch_width) - 1;
-
-   if (nir_src_is_const(nir_addr_src)) {
-      unsigned nir_addr = nir_src_as_uint(nir_addr_src);
-      if (in_dwords) {
-         /* In this case, we know the address is aligned to a DWORD and we want
-          * the final address in DWORDs.
-          */
-         return bld.OR(chan_index,
-                       brw_imm_ud(nir_addr << (chan_index_bits - 2)));
-      } else {
-         /* This case is substantially more annoying because we have to pay
-          * attention to those pesky two bottom bits.
-          */
-         unsigned addr_hi = (nir_addr & ~0x3u) << chan_index_bits;
-         unsigned addr_lo = (nir_addr &  0x3u);
-
-         return bld.OR(bld.SHL(chan_index, brw_imm_ud(2)),
-                       brw_imm_ud(addr_lo | addr_hi));
-      }
-   }
-
-   const brw_reg nir_addr =
-      retype(get_nir_src(ntb, nir_addr_src, 0), BRW_TYPE_UD);
-
-   if (in_dwords) {
-      /* In this case, we know the address is aligned to a DWORD and we want
-       * the final address in DWORDs.
-       */
-      return bld.OR(bld.SHL(nir_addr, brw_imm_ud(chan_index_bits - 2)),
-                    chan_index);
-   } else {
-      /* This case substantially more annoying because we have to pay
-       * attention to those pesky two bottom bits.
-       */
-      brw_reg chan_addr = bld.SHL(chan_index, brw_imm_ud(2));
-      brw_reg addr_bits =
-         bld.OR(bld.AND(nir_addr, brw_imm_ud(0x3u)),
-                bld.SHL(bld.AND(nir_addr, brw_imm_ud(~0x3u)),
-                        brw_imm_ud(chan_index_bits)));
-      return bld.OR(addr_bits, chan_addr);
-   }
-}
-
 static unsigned
 choose_block_size_dwords(const intel_device_info *devinfo, unsigned dwords)
 {
@@ -4919,6 +4846,8 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
    case nir_intrinsic_global_atomic_swap:
    case nir_intrinsic_load_scratch:
    case nir_intrinsic_store_scratch:
+   case nir_intrinsic_load_scratch_intel:
+   case nir_intrinsic_store_scratch_intel:
    case nir_intrinsic_load_shader_indirect_data_intel:
       brw_from_nir_emit_memory_access(ntb, bld, xbld, instr);
       break;
@@ -5467,6 +5396,7 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
    }
 
    case nir_intrinsic_load_subgroup_size:
+   case nir_intrinsic_load_simd_width_intel:
       /* This should only happen for fragment shaders because every other case
        * is lowered in NIR so we can optimize on it.
        */
@@ -6097,8 +6027,8 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
       no_mask_handle = true;
       break;
    }
-   case nir_intrinsic_load_scratch:
-   case nir_intrinsic_store_scratch: {
+   case nir_intrinsic_load_scratch_intel:
+   case nir_intrinsic_store_scratch_intel: {
       mode = MEMORY_MODE_SCRATCH;
 
       const nir_src &addr = instr->src[is_store ? 1 : 0];
@@ -6112,24 +6042,16 @@ brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
          if (devinfo->ver >= 20 || intel_has_extended_bindless(devinfo))
             bind = ubld.SHR(bind, brw_imm_ud(4));
 
-         /* load_scratch / store_scratch cannot be is_scalar yet. */
-         assert(xbld.dispatch_width() == bld.dispatch_width());
-
          srcs[MEMORY_LOGICAL_BINDING] = component(bind, 0);
-         srcs[MEMORY_LOGICAL_ADDRESS] =
-            swizzle_nir_scratch_addr(ntb, bld, addr, false);
       } else {
-         unsigned bit_size =
-            is_store ? nir_src_bit_size(instr->src[0]) : instr->def.bit_size;
-         bool dword_aligned = alignment >= 4 && bit_size == 32;
-
-         /* load_scratch / store_scratch cannot be is_scalar yet. */
-         assert(xbld.dispatch_width() == bld.dispatch_width());
-
          binding_type = LSC_ADDR_SURFTYPE_FLAT;
-         srcs[MEMORY_LOGICAL_ADDRESS] =
-            swizzle_nir_scratch_addr(ntb, bld, addr, dword_aligned);
       }
+
+      /* load_scratch / store_scratch cannot be is_scalar yet. */
+      assert(xbld.dispatch_width() == bld.dispatch_width());
+
+      srcs[MEMORY_LOGICAL_ADDRESS] =
+         retype(get_nir_src(ntb, addr, 0), BRW_TYPE_UD);
 
       if (is_store)
          ++s.shader_stats.spill_count;
@@ -6529,7 +6451,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
 
    const unsigned dest_size = nir_tex_instr_dest_size(instr);
    unsigned dest_comp;
-   if (instr->op != nir_texop_tg4 && instr->op != nir_texop_query_levels) {
+   if (instr->op != nir_texop_tg4) {
       unsigned write_mask = nir_def_components_read(&instr->def);
       assert(write_mask != 0); /* dead code should have been eliminated */
 
@@ -6600,8 +6522,7 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
     */
    const bool non_aligned_component_stride =
       (brw_type_size_bytes(dst_type) * bld.dispatch_width()) % grf_size != 0;
-   if (instr->op != nir_texop_query_levels && !instr->is_sparse &&
-       !non_aligned_component_stride) {
+   if (!instr->is_sparse && !non_aligned_component_stride) {
       /* In most cases we can write directly to the result. */
       tex->dst = nir_def_reg;
    } else {
@@ -6614,26 +6535,6 @@ brw_from_nir_emit_texture(nir_to_brw_state &ntb,
 
       for (unsigned i = dest_comp; i < dest_size; i++)
          nir_dest[i].type = dst.type;
-
-      if (instr->op == nir_texop_query_levels) {
-         /* # levels is in .w */
-         if (devinfo->ver == 9) {
-            /**
-             * Wa_1940217:
-             *
-             * When a surface of type SURFTYPE_NULL is accessed by resinfo, the
-             * MIPCount returned is undefined instead of 0.
-             */
-            brw_inst *mov = bld.MOV(bld.null_reg_d(), dst);
-            mov->conditional_mod = BRW_CONDITIONAL_NZ;
-            nir_dest[0] = bld.vgrf(BRW_TYPE_D);
-            brw_inst *sel =
-               bld.SEL(nir_dest[0], offset(dst, bld, 3), brw_imm_d(0));
-            sel->predicate = BRW_PREDICATE_NORMAL;
-         } else {
-            nir_dest[0] = offset(dst, bld, 3);
-         }
-      }
 
       /* The residency bits are only in the first component. */
       if (instr->is_sparse) {

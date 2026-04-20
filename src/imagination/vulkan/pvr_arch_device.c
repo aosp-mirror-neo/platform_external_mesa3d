@@ -49,11 +49,6 @@
  */
 #define PVR_GLOBAL_FREE_LIST_GROW_THRESHOLD 13U
 
-/* Amount of padding required for VkBuffers to ensure we don't read beyond
- * a page boundary.
- */
-#define PVR_BUFFER_MEMORY_PADDING_SIZE 4
-
 /* Default size in bytes used by pvr_CreateDevice() for setting up the
  * suballoc_general, suballoc_pds and suballoc_usc suballocators.
  *
@@ -703,7 +698,7 @@ VkResult PVR_PER_ARCH(create_device)(struct pvr_physical_device *pdevice,
    assert(pCreateInfo->sType == VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO);
 
    result = pvr_winsys_create(pdevice->render_path,
-                              pdevice->display_path,
+                              pdevice->display_path, false,
                               pAllocator ? pAllocator : &instance->vk.alloc,
                               &ws);
    if (result != VK_SUCCESS)

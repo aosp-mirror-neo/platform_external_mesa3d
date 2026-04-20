@@ -149,6 +149,7 @@ radv_meta_save(struct radv_cmd_buffer *cmd_buffer, uint32_t flags)
       state->graphics_descriptors.old_descriptor_set0 = descriptors_state->sets[0];
       state->graphics_descriptors.old_descriptor_set0_valid = !!(descriptors_state->valid & 0x1);
       state->graphics_descriptors.old_descriptor_buffer0 = descriptors_state->descriptor_buffers[0];
+      state->graphics_descriptors.old_descriptor_heaps_dirty = descriptors_state->dirty_heaps;
    }
 
    if (save_flags & RADV_META_SAVE_COMPUTE_DESCRIPTORS) {
@@ -158,6 +159,7 @@ radv_meta_save(struct radv_cmd_buffer *cmd_buffer, uint32_t flags)
       state->compute_descriptors.old_descriptor_set0 = descriptors_state->sets[0];
       state->compute_descriptors.old_descriptor_set0_valid = !!(descriptors_state->valid & 0x1);
       state->compute_descriptors.old_descriptor_buffer0 = descriptors_state->descriptor_buffers[0];
+      state->compute_descriptors.old_descriptor_heaps_dirty = descriptors_state->dirty_heaps;
    }
 
    if (save_flags & RADV_META_SAVE_CONSTANTS)
@@ -220,6 +222,7 @@ radv_meta_end(struct radv_cmd_buffer *cmd_buffer)
                                  state->graphics_descriptors.old_descriptor_set0, 0);
       }
       descriptors_state->descriptor_buffers[0] = state->graphics_descriptors.old_descriptor_buffer0;
+      descriptors_state->dirty_heaps = state->graphics_descriptors.old_descriptor_heaps_dirty;
    }
 
    if (state->flags & RADV_META_SAVE_COMPUTE_DESCRIPTORS) {
@@ -230,6 +233,7 @@ radv_meta_end(struct radv_cmd_buffer *cmd_buffer)
                                  state->compute_descriptors.old_descriptor_set0, 0);
       }
       descriptors_state->descriptor_buffers[0] = state->compute_descriptors.old_descriptor_buffer0;
+      descriptors_state->dirty_heaps = state->compute_descriptors.old_descriptor_heaps_dirty;
    }
 
    if (state->flags & RADV_META_SAVE_CONSTANTS) {
@@ -455,15 +459,26 @@ radv_meta_bind_descriptors(struct radv_cmd_buffer *cmd_buffer, VkPipelineBindPoi
    radv_CmdSetDescriptorBufferOffsets2EXT(radv_cmd_buffer_to_handle(cmd_buffer), &descriptor_buffer_offsets);
 }
 
-enum radv_copy_flags
+VkAddressCopyFlagsKHR
 radv_get_copy_flags_from_bo(const struct radeon_winsys_bo *bo)
 {
-   enum radv_copy_flags copy_flags = 0;
+   VkAddressCopyFlagsKHR copy_flags = 0;
 
    if (bo->initial_domain & RADEON_DOMAIN_VRAM)
-      copy_flags |= RADV_COPY_FLAGS_DEVICE_LOCAL;
+      copy_flags |= VK_ADDRESS_COPY_DEVICE_LOCAL_BIT_KHR;
    if (bo->is_virtual)
-      copy_flags |= RADV_COPY_FLAGS_SPARSE;
+      copy_flags |= VK_ADDRESS_COPY_SPARSE_BIT_KHR;
+
+   return copy_flags;
+}
+
+VkAddressCopyFlagsKHR
+radv_get_copy_flags_from_command_flags(VkAddressCommandFlagsKHR command_flags)
+{
+   VkAddressCopyFlagsKHR copy_flags = 0;
+
+   if (!(command_flags & VK_ADDRESS_COMMAND_FULLY_BOUND_BIT_KHR))
+      copy_flags |= VK_ADDRESS_COPY_SPARSE_BIT_KHR;
 
    return copy_flags;
 }

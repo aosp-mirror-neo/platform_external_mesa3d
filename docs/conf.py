@@ -44,7 +44,6 @@ extensions = [
     'formatting',
     'hawkmoth',
     'nir',
-    'redirects',
     'sphinx.ext.graphviz',
 ]
 
@@ -121,12 +120,6 @@ html_extra_path = [
     'libGL.txt',
     'README.UVD',
     'README.VCE',
-]
-
-html_redirects = [
-    ('webmaster', 'https://www.mesa3d.org/website/'),
-    ('developers', 'https://www.mesa3d.org/developers/'),
-    ('thanks', 'https://gitlab.freedesktop.org/mesa/mesa/-/blob/amber/docs/thanks.rst'),
 ]
 
 

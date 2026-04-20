@@ -259,6 +259,9 @@
    DRI_CONF_OPT_B(glthread_nop_check_framebuffer_status, def, \
                   "glthread always returns GL_FRAMEBUFFER_COMPLETE to prevent synchronization.")
 
+#define DRI_CONF_FORCE_EXPLICIT_UNIFORM_LOC_ZERO() \
+   DRI_CONF_OPT_S_NODEF(force_explicit_uniform_loc_zero, "Forces an explicit uniform location of zero for the uniform.")
+
 #define DRI_CONF_FORCE_GL_VENDOR() \
    DRI_CONF_OPT_S_NODEF(force_gl_vendor, "Override GPU vendor string.")
 
@@ -685,6 +688,14 @@
    DRI_CONF_OPT_B(tu_enable_softfloat32, def, \
                   "Enable softfloat emulation for float32 denormals")
 
+#define DRI_CONF_TU_EMULATE_ALPHA_TO_COVERAGE(def) \
+   DRI_CONF_OPT_B(tu_emulate_alpha_to_coverage, def, \
+                  "Enable emulation of alpha-to-coverage")
+
+#define DRI_CONF_TU_AUTOTUNE_ALGORITHM() \
+   DRI_CONF_OPT_S_NODEF(tu_autotune_algorithm, \
+                        "Set the preferred autotune algorithm")
+
 /**
  * \brief Honeykrisp specific configuration options
  */
@@ -926,6 +937,10 @@
 #define DRI_CONF_ANV_EXTERNAL_MEMORY_IMPLICIT_SYNC(def) \
    DRI_CONF_OPT_B(anv_external_memory_implicit_sync, def, "Implicit sync on external BOs")
 
+#define DRI_CONF_ANV_STATE_CACHE_PERF_FIX(def) \
+   DRI_CONF_OPT_B(anv_state_cache_perf_fix, def, \
+                  "Whether COMMON_SLICE_CHICKEN3 bit13 should be programmed to enable BTP+BTI RCC keying")
+
 #define DRI_CONF_ANV_COMPRESSION_CONTROL_ENABLED(def) \
    DRI_CONF_OPT_B(compression_control_enabled, def, "Enable VK_EXT_image_compression_control support")
 
@@ -964,6 +979,10 @@
 #define DRI_CONF_ANV_BARRIER_POST_TYPED_CLEAR_SHADER(def) \
    DRI_CONF_OPT_B(anv_barrier_post_typed_clear_shader, def, \
                   "Insert pipeline barriers post clearing shader on typed data")
+
+#define DRI_CONF_ANV_ENABLE_OPT_DIVERGENT_ATOMICS(def) \
+   DRI_CONF_OPT_I(anv_enable_opt_divergent_atomics, def, 0, 3,\
+                  "Enable fusion of divergent atomics (see brw_divergent_atomics_flags)")
 
 /**
  * \brief HASVK specific configuration options

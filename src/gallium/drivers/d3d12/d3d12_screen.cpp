@@ -46,7 +46,7 @@
 #include "util/u_memory.h"
 #include "util/u_screen.h"
 #include "util/u_dl.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 
 #include "frontend/sw_winsys.h"
 
@@ -337,7 +337,6 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
    caps->seamless_cube_map = true;
    caps->texture_query_lod = true;
    caps->vs_instanceid = true;
-   caps->tgsi_tex_txf_lz = true;
    caps->occlusion_query = true;
    caps->viewport_transform_lowered = true;
    caps->psiz_clamped = true;
@@ -1223,6 +1222,32 @@ static void* d3d12_fence_get_win32_handle(struct pipe_screen *pscreen,
 
    return (void*) shared_handle;
 }
+
+static void *d3d12_fence_get_win32_event([[maybe_unused]] struct pipe_screen *pscreen,
+                                         struct pipe_fence_handle *fence_handle)
+{
+   struct d3d12_fence* fence = (struct d3d12_fence*) fence_handle;
+
+   if (fence->type != PIPE_FD_TYPE_NATIVE_SYNC)
+      return NULL;
+
+   /* Create a new manual-reset event rather than duplicating the fence's
+    * auto-reset event.  Duplicated handles share the same kernel object, so
+    * a wait on any handle consumes the single auto-reset signal — causing
+    * other waiters to hang.
+    * A dedicated manual-reset event with its own SetEventOnCompletion avoids
+    * this by giving each caller an independent signal. */
+   HANDLE event = CreateEvent(NULL, TRUE /* bManualReset */, FALSE, NULL);
+   if (!event)
+      return NULL;
+
+   if (FAILED(fence->cmdqueue_fence->SetEventOnCompletion(fence->value, event))) {
+      CloseHandle(event);
+      return NULL;
+   }
+
+   return event;
+}
 #endif
 
 static void
@@ -1309,6 +1334,7 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
    screen->base.interop_export_object = d3d12_interop_export_object;
 #ifdef _WIN32
    screen->base.fence_get_win32_handle = d3d12_fence_get_win32_handle;
+   screen->base.fence_get_win32_event = d3d12_fence_get_win32_event;
 #endif
    screen->base.query_memory_info = d3d12_query_memory_info;
 
@@ -1734,26 +1760,26 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
 #endif
 
    const char *mesa_version = "Mesa " PACKAGE_VERSION MESA_GIT_SHA1;
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   STATIC_ASSERT(PIPE_UUID_SIZE <= sizeof(sha1));
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   STATIC_ASSERT(PIPE_UUID_SIZE <= sizeof(blake3));
 
    /* The driver UUID is used for determining sharability of images and memory
     * between two instances in separate processes.  People who want to
     * share memory need to also check the device UUID or LUID so all this
     * needs to be is the build-id.
     */
-   _mesa_sha1_compute(mesa_version, strlen(mesa_version), sha1);
-   memcpy(screen->driver_uuid, sha1, PIPE_UUID_SIZE);
+   _mesa_blake3_compute(mesa_version, strlen(mesa_version), blake3);
+   memcpy(screen->driver_uuid, blake3, PIPE_UUID_SIZE);
 
    /* The device UUID uniquely identifies the given device within the machine. */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &screen->vendor_id, sizeof(screen->vendor_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->device_id, sizeof(screen->device_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->subsys_id, sizeof(screen->subsys_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->revision, sizeof(screen->revision));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(screen->device_uuid, sha1, PIPE_UUID_SIZE);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &screen->vendor_id, sizeof(screen->vendor_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->device_id, sizeof(screen->device_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->subsys_id, sizeof(screen->subsys_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->revision, sizeof(screen->revision));
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(screen->device_uuid, blake3, PIPE_UUID_SIZE);
 
    d3d12_init_shader_caps(screen);
    d3d12_init_compute_caps(screen);

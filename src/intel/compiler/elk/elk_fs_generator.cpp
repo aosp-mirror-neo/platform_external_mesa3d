@@ -14,7 +14,7 @@
 #include "elk_fs.h"
 #include "elk_cfg.h"
 #include "dev/intel_debug.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/half_float.h"
 
 static enum elk_reg_file
@@ -1508,7 +1508,7 @@ elk_fs_generator::generate_code(const elk_cfg_t *cfg, int dispatch_width,
 
    int start_offset = p->next_insn_offset;
 
-   int loop_count = 0, send_count = 0, nop_count = 0, sync_nop_count = 0;
+   int loop_count = 0, send_count = 0, nop_count = 0;
    bool is_accum_used = false;
 
    struct elk_disasm_info *elk_disasm_info = elk_disasm_initialize(p->isa, cfg);
@@ -2188,27 +2188,27 @@ elk_fs_generator::generate_code(const elk_cfg_t *cfg, int dispatch_width,
    int after_size = p->next_insn_offset - start_offset;
 
    bool dump_shader_bin = elk_should_dump_shader_bin();
-   unsigned char sha1[SHA1_DIGEST_LENGTH + 1];
-   char sha1buf[SHA1_DIGEST_STRING_LENGTH];
+   unsigned char blake3[BLAKE3_KEY_LEN + 1];
+   char blake3buf[BLAKE3_HEX_LEN];
 
    if (unlikely(debug_flag || dump_shader_bin)) {
-      _mesa_sha1_compute(p->store + start_offset / sizeof(elk_inst),
-                         after_size, sha1);
-      _mesa_sha1_format(sha1buf, sha1);
+      _mesa_blake3_compute(p->store + start_offset / sizeof(elk_inst),
+                         after_size, blake3);
+      _mesa_blake3_format(blake3buf, blake3);
    }
 
    if (unlikely(dump_shader_bin))
       elk_dump_shader_bin(p->store, start_offset, p->next_insn_offset,
-                          sha1buf);
+                          blake3buf);
 
    if (unlikely(debug_flag)) {
-      fprintf(stderr, "Native code for %s (src_hash 0x%08x) (sha1 %s)\n"
+      fprintf(stderr, "Native code for %s (src_hash 0x%08x) (blake3 %s)\n"
               "SIMD%d shader: %d instructions. %d loops. %u cycles. "
               "%d:%d spills:fills, %u sends, "
               "scheduled with mode %s. "
               "Promoted %u constants. "
               "Compacted %d to %d bytes (%.0f%%)\n",
-              shader_name, params->source_hash, sha1buf,
+              shader_name, params->source_hash, blake3buf,
               dispatch_width, before_size / 16,
               loop_count, perf.latency,
               shader_stats.spill_count,
@@ -2220,11 +2220,11 @@ elk_fs_generator::generate_code(const elk_cfg_t *cfg, int dispatch_width,
               100.0f * (before_size - after_size) / before_size);
 
       /* overriding the shader makes elk_disasm_info invalid */
-      if (!elk_try_override_assembly(p, start_offset, sha1buf)) {
+      if (!elk_try_override_assembly(p, start_offset, blake3buf)) {
          elk_dump_assembly(p->store, start_offset, p->next_insn_offset,
                        elk_disasm_info, perf.block_latency);
       } else {
-         fprintf(stderr, "Successfully overrode shader with sha1 %s\n\n", sha1buf);
+         fprintf(stderr, "Successfully overrode shader with blake3 %s\n\n", blake3buf);
       }
    }
    ralloc_free(elk_disasm_info);
@@ -2244,7 +2244,7 @@ elk_fs_generator::generate_code(const elk_cfg_t *cfg, int dispatch_width,
                         "compacted %d to %d bytes.\n",
                         _mesa_shader_stage_to_abbrev(stage),
                         dispatch_width,
-                        before_size / 16 - nop_count - sync_nop_count,
+                        before_size / 16 - nop_count,
                         loop_count, perf.latency,
                         shader_stats.spill_count,
                         shader_stats.fill_count,
@@ -2255,7 +2255,7 @@ elk_fs_generator::generate_code(const elk_cfg_t *cfg, int dispatch_width,
    if (stats) {
       stats->dispatch_width = dispatch_width;
       stats->max_dispatch_width = dispatch_width;
-      stats->instructions = before_size / 16 - nop_count - sync_nop_count;
+      stats->instructions = before_size / 16 - nop_count;
       stats->sends = send_count;
       stats->loops = loop_count;
       stats->cycles = perf.latency;

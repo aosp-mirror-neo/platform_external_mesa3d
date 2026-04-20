@@ -435,25 +435,25 @@ set_dirty_for_bind_map(struct anv_cmd_buffer *cmd_buffer,
                        mesa_shader_stage stage,
                        const struct anv_pipeline_bind_map *map)
 {
-   assert(stage < ARRAY_SIZE(cmd_buffer->state.surface_sha1s));
-   if (mem_update(cmd_buffer->state.surface_sha1s[stage],
-                  map->surface_sha1, sizeof(map->surface_sha1))) {
+   assert(stage < ARRAY_SIZE(cmd_buffer->state.surface_blake3s));
+   if (mem_update(cmd_buffer->state.surface_blake3s[stage],
+                  map->surface_blake3, sizeof(map->surface_blake3))) {
       anv_cmd_buffer_dirty_descriptors(cmd_buffer,
                                        mesa_to_vk_shader_stage(stage),
                                        "shader surfaces change");
    }
 
-   assert(stage < ARRAY_SIZE(cmd_buffer->state.sampler_sha1s));
-   if (mem_update(cmd_buffer->state.sampler_sha1s[stage],
-                  map->sampler_sha1, sizeof(map->sampler_sha1))) {
+   assert(stage < ARRAY_SIZE(cmd_buffer->state.sampler_blake3s));
+   if (mem_update(cmd_buffer->state.sampler_blake3s[stage],
+                  map->sampler_blake3, sizeof(map->sampler_blake3))) {
       anv_cmd_buffer_dirty_descriptors(cmd_buffer,
                                        mesa_to_vk_shader_stage(stage),
                                        "shader samplers change");
    }
 
-   assert(stage < ARRAY_SIZE(cmd_buffer->state.push_sha1s));
-   if (mem_update(cmd_buffer->state.push_sha1s[stage],
-                  map->push_sha1, sizeof(map->push_sha1)))
+   assert(stage < ARRAY_SIZE(cmd_buffer->state.push_blake3s));
+   if (mem_update(cmd_buffer->state.push_blake3s[stage],
+                  map->push_blake3, sizeof(map->push_blake3)))
       cmd_buffer->state.push_constants_dirty |= mesa_to_vk_shader_stage(stage);
 }
 
@@ -1449,15 +1449,17 @@ anv_cmd_write_buffer_cp(VkCommandBuffer commandBuffer,
 void
 anv_cmd_flush_buffer_write_cp(VkCommandBuffer commandBuffer)
 {
-   /* TODO: cmd_write_buffer_cp is implemented with MI store +
-    * ForceWriteCompletionCheck so that should make the content globally
-    * observable.
-    *
-    * If we encounter any functional or perf bottleneck issues, let's revisit
-    * this helper and add ANV_PIPE_HDC_PIPELINE_FLUSH_BIT +
-    * ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT +
-    * ANV_PIPE_DATA_CACHE_FLUSH_BIT.
+   ANV_FROM_HANDLE(anv_cmd_buffer, cmd_buffer, commandBuffer);
+
+   /* IR header would get written by compute shader using BLORP code path, so
+    * we need to flush HDC and untyped dataport cache.
     */
+   anv_add_pending_pipe_bits(cmd_buffer,
+                             VK_PIPELINE_STAGE_2_ACCELERATION_STRUCTURE_BUILD_BIT_KHR,
+                             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
+                             ANV_PIPE_HDC_PIPELINE_FLUSH_BIT |
+                             ANV_PIPE_UNTYPED_DATAPORT_CACHE_FLUSH_BIT,
+                             "Flush buffer write cp");
 }
 
 void

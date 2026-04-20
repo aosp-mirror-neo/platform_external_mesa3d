@@ -66,6 +66,7 @@ struct kk_encoder {
    /* Track what values pre_gfx must wait/signal before starting the encoding */
    uint64_t wait_value_pre_gfx;
    uint64_t signal_value_pre_gfx;
+   uint64_t last_signaled_value_pre_gfx;
 
    /* uint64_t pairs with first being the address, second being the value to
     * write */
@@ -101,15 +102,8 @@ mtl_compute_encoder *kk_compute_encoder(struct kk_cmd_buffer *cmd);
 
 mtl_blit_encoder *kk_blit_encoder(struct kk_cmd_buffer *cmd);
 
+mtl_compute_encoder *kk_encoder_pre_gfx_encoder(struct kk_cmd_buffer *cmd);
+
 void upload_queue_writes(struct kk_cmd_buffer *cmd);
-
-void kk_encoder_render_triangle_fan_indirect(struct kk_cmd_buffer *cmd,
-                                             mtl_buffer *indirect,
-                                             uint64_t offset);
-
-void kk_encoder_render_triangle_fan_indexed_indirect(struct kk_cmd_buffer *cmd,
-                                                     mtl_buffer *indirect,
-                                                     uint64_t offset,
-                                                     bool increase_el_size);
 
 #endif /* KK_ENCODER_H */

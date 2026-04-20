@@ -803,7 +803,7 @@ st_context_flush(struct st_context *st, unsigned flags,
    st_flush(st, fence, pipe_flags);
 
    if ((flags & ST_FLUSH_WAIT) && fence && *fence) {
-      st->screen->fence_finish(st->screen, NULL, *fence,
+      st->screen->fence_finish(st->screen, st->pipe, *fence,
                                      OS_TIMEOUT_INFINITE);
       st->screen->fence_reference(st->screen, fence, NULL);
    }
@@ -909,6 +909,34 @@ st_context_invalidate_state(struct st_context *st, unsigned flags)
    }
    if (flags & ST_INVALIDATE_FB_STATE)
       ST_SET_STATE(ctx->NewDriverState, ST_NEW_FB_STATE);
+   if (flags & ST_INVALIDATE_VIEWPORT)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_VIEWPORT);
+   if (flags & ST_INVALIDATE_VS_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_VS_STATE);
+   if (flags & ST_INVALIDATE_GS_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_GS_STATE);
+   if (flags & ST_INVALIDATE_TCS_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_TCS_STATE);
+   if (flags & ST_INVALIDATE_TES_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_TES_STATE);
+   if (flags & ST_INVALIDATE_MESH_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_MS_STATE);
+   if (flags & ST_INVALIDATE_RASTERIZER)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_RASTERIZER);
+   if (flags & ST_INVALIDATE_FS_SAMPLERS)
+      ST_SET_STATE2(ctx->NewDriverState, ST_NEW_FS_SAMPLERS, ST_NEW_FS_SAMPLER_VIEWS);
+   if (flags & ST_INVALIDATE_FS_STATE)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_FS_STATE);
+   if (flags & ST_INVALIDATE_BLEND)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_BLEND);
+   if (flags & ST_INVALIDATE_DSA)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_DSA);
+   if (flags & ST_INVALIDATE_SAMPLE_MASK)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_SAMPLE_STATE);
+   if (flags & ST_INVALIDATE_SAMPLE_SHADING)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_SAMPLE_SHADING);
+   if (flags & ST_INVALIDATE_FS_IMAGES)
+      ST_SET_STATE(ctx->NewDriverState, ST_NEW_FS_IMAGES);
 }
 
 

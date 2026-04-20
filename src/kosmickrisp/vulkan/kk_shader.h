@@ -17,6 +17,8 @@
 
 #include "vk_shader.h"
 
+struct kk_cmd_buffer;
+
 struct kk_shader_info {
    mesa_shader_stage stage;
    union {
@@ -65,7 +67,7 @@ struct kk_pipeline_handles {
    union {
       struct {
          mtl_render_pipeline_state *handle;
-         mtl_depth_stencil_state *mtl_depth_stencil_state_handle;
+         mtl_depth_stencil_state *ds_handle;
       } gfx;
       mtl_compute_pipeline_state *cs;
    };
@@ -113,5 +115,8 @@ bool kk_nir_lower_fs_multiview(nir_shader *nir, uint32_t view_mask);
 VkResult kk_compile_nir_shader(struct kk_device *dev, nir_shader *nir,
                                const VkAllocationCallbacks *alloc,
                                struct kk_shader **shader_out);
+
+void kk_cmd_bind_compute_shader(struct kk_cmd_buffer *cmd,
+                                struct kk_shader *shader);
 
 #endif /* KK_SHADER_H */

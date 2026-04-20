@@ -454,9 +454,9 @@ enum pipe_flush_flags
  * Resource binding flags -- gallium frontends must specify in advance all
  * the ways a resource might be used.
  */
-#define PIPE_BIND_DEPTH_STENCIL        (1 << 0) /* create_surface */
-#define PIPE_BIND_RENDER_TARGET        (1 << 1) /* create_surface */
-#define PIPE_BIND_BLENDABLE            (1 << 2) /* create_surface */
+#define PIPE_BIND_DEPTH_STENCIL        (1 << 0) /* set_framebuffer_state */
+#define PIPE_BIND_RENDER_TARGET        (1 << 1) /* set_framebuffer_state */
+#define PIPE_BIND_BLENDABLE            (1 << 2) /* set_framebuffer_state */
 #define PIPE_BIND_SAMPLER_VIEW         (1 << 3) /* create_sampler_view */
 #define PIPE_BIND_VERTEX_BUFFER        (1 << 4) /* set_vertex_buffers */
 #define PIPE_BIND_INDEX_BUFFER         (1 << 5) /* draw_elements */
@@ -960,7 +960,6 @@ struct pipe_caps {
    bool fp16;
    bool doubles;
    bool int64;
-   bool tgsi_tex_txf_lz;
    bool shader_clock;
    bool shader_realtime_clock;
    bool polygon_mode_fill_rectangle;

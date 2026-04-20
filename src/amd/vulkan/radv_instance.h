@@ -99,6 +99,7 @@ struct radv_instance {
 
    uint64_t debug_flags;
    uint64_t perftest_flags;
+   uint64_t experimental_flags;
    uint64_t trap_excp_flags;
    enum radeon_ctx_pstate profile_pstate;
 
@@ -114,5 +115,18 @@ const char *radv_get_debug_option_name(int id);
 const char *radv_get_perftest_option_name(int id);
 
 bool radv_is_rt_wave64_enabled(const struct radv_instance *instance);
+
+static const char *
+radv_bvh_stats_file()
+{
+   return os_get_option_secure("RADV_BVH_STATS_FILE");
+}
+
+static bool
+radv_bvh_dumping_enabled(const struct radv_instance *instance)
+{
+   /* Gathering bvh stats uses a large part of the rra code for dumping bvhs. */
+   return (instance->vk.trace_mode & RADV_TRACE_MODE_RRA) || radv_bvh_stats_file();
+}
 
 #endif /* RADV_INSTANCE_H */

@@ -118,8 +118,9 @@ opt_alu_fp_math_ctrl(nir_alu_instr *alu, struct opt_fp_ctrl_state *state)
       case nir_op_fexp2:
       case nir_op_flog2:
       case nir_op_fcos:
-      case nir_op_fcos_amd:
+      case nir_op_fcos_normalized_2_pi:
       case nir_op_fmulz:
+      case nir_op_ffract:
          break;
       case nir_op_fmin: {
          bool had_neg_zero = false;
@@ -224,10 +225,20 @@ opt_intrin_fp_math_ctrl(nir_intrinsic_instr *intrin)
    case nir_intrinsic_ddx_fine:
    case nir_intrinsic_ddy:
    case nir_intrinsic_ddy_coarse:
-   case nir_intrinsic_ddy_fine:
-      if (intrin->instr.pass_flags)
+   case nir_intrinsic_ddy_fine: {
+      unsigned fp_math_ctrl = nir_intrinsic_fp_math_ctrl(intrin);
+      if ((fp_math_ctrl & nir_fp_preserve_signed_zero) == 0)
+         return false;
+
+      if (intrin->instr.pass_flags) {
          src_mark_preserve_sz(&intrin->src[0], NULL);
-      return false;
+         return false;
+      } else {
+         fp_math_ctrl &= ~nir_fp_preserve_signed_zero;
+         nir_intrinsic_set_fp_math_ctrl(intrin, fp_math_ctrl);
+         return true;
+      }
+   }
    default:
       break;
    }

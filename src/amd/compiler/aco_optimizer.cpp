@@ -869,7 +869,7 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
             return false;
          break;
       case aco_opcode::v_mad_f32:
-         if (ctx.program->dev.fused_mad_mix && info.defs[0].isPrecise())
+         if (ctx.program->dev.fused_mad_mix && info.defs[0].isNoContract())
             return false;
          break;
       default: return false;
@@ -997,9 +997,32 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
    if (is_dpp_or_sdwa && !format_is(info.format, Format::VOPC) && info.defs[0].size() != 1)
       return false;
 
-   if (is_dpp && !opcode_supports_dpp(ctx.program->gfx_level, info.opcode,
-                                      format_is(info.format, Format::VOP3P)))
-      return false;
+   if (is_dpp) {
+      if ((info.opcode == aco_opcode::v_dot2_f32_f16 || info.opcode == aco_opcode::v_dot4_i32_i8) &&
+          ctx.program->gfx_level >= GFX10 && ctx.program->gfx_level <= GFX10_3) {
+         /* DPP only supports v_dotc for GFX10(.3), but it's really important it gets applied.
+          * So already do the transformation before RA.
+          */
+         if (neg || abs || vmask != 0x7 || opsel || !info.operands[0].extract[1].offset() ||
+             !info.operands[1].extract[1].offset())
+            return false;
+
+         if (info.opcode == aco_opcode::v_dot2_f32_f16)
+            info.opcode = aco_opcode::v_dot2c_f32_f16;
+         else
+            info.opcode = aco_opcode::v_dot4c_i32_i8;
+
+         if (info.operands[0].dpp16)
+            info.format = format_combine(Format::VOP2, Format::DPP16);
+         else if (info.operands[0].dpp8)
+            info.format = format_combine(Format::VOP2, Format::DPP8);
+
+         return true;
+      } else if (!opcode_supports_dpp(ctx.program->gfx_level, info.opcode,
+                                      format_is(info.format, Format::VOP3P))) {
+         return false;
+      }
+   }
 
    if (format_is(info.format, Format::VOP1) || format_is(info.format, Format::VOP2) ||
        format_is(info.format, Format::VOPC) || format_is(info.format, Format::VOP3)) {
@@ -1157,6 +1180,12 @@ alu_opt_info_is_valid(opt_ctx& ctx, alu_opt_info& info)
             lmask[2] = true;
             info.opcode = aco_opcode::s_fmaak_f32;
          }
+      } else if ((info.opcode == aco_opcode::s_bitset0_b32 ||
+                  info.opcode == aco_opcode::s_bitset1_b32 ||
+                  info.opcode == aco_opcode::s_bitset0_b64 ||
+                  info.opcode == aco_opcode::s_bitset1_b64) &&
+                 !smask[1]) {
+         return false;
       }
 
       if ((info.opcode == aco_opcode::s_fmac_f16 || info.opcode == aco_opcode::s_fmac_f32) &&
@@ -1222,11 +1251,11 @@ alu_opt_gather_info(opt_ctx& ctx, Instruction* instr, alu_opt_info& info)
       return false;
 
    switch (instr->opcode) {
+   case aco_opcode::v_dot2c_f32_f16:
+   case aco_opcode::v_dot4c_i32_i8: assert(instr->isDPP()); return false;
    case aco_opcode::s_addk_i32:
    case aco_opcode::s_cmovk_i32:
    case aco_opcode::s_mulk_i32:
-   case aco_opcode::v_dot2c_f32_f16:
-   case aco_opcode::v_dot4c_i32_i8:
    case aco_opcode::v_fmac_f32:
    case aco_opcode::v_fmac_f16:
    case aco_opcode::v_fmac_legacy_f32:
@@ -1768,6 +1797,8 @@ pseudo_can_accept_constant(const aco_ptr<Instruction>& instr, unsigned operand)
     */
    assert(instr->operands.size() > operand);
    if (instr->operands[operand].isFixed())
+      return false;
+   if (!util_is_power_of_two_nonzero(instr->operands[operand].bytes()))
       return false;
 
    switch (instr->opcode) {
@@ -2834,7 +2865,8 @@ label_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
                instr->operands[0] = op;
                break;
             }
-         } else if (info.is_constant()) {
+         } else if (info.is_constant() &&
+                    util_is_power_of_two_nonzero(instr->definitions[0].bytes())) {
             /* propagate constants */
             uint64_t mask = u_bit_consecutive64(0, instr->definitions[0].bytes() * 8u);
             uint64_t val = (info.val >> (dst_offset * 8u)) & mask;
@@ -3438,8 +3470,10 @@ match_and_apply_patterns(opt_ctx& ctx, alu_opt_info& info,
 
          new_info.opcode = pattern.res_opcode;
 
-         if (op_instr.defs[0].isPrecise())
-            new_info.defs[0].setPrecise(true);
+         if (op_instr.defs[0].isNoContract())
+            new_info.defs[0].setNoContract(true);
+         if (op_instr.defs[0].isNoReassoc())
+            new_info.defs[0].setNoReassoc(true);
          if (op_instr.defs[0].isNaNPreserve())
             new_info.defs[0].setNaNPreserve(true);
          if (op_instr.defs[0].isInfPreserve())
@@ -3973,7 +4007,7 @@ apply_output(opt_ctx& ctx, aco_ptr<Instruction>& instr)
 bool
 create_fma_cb(opt_ctx& ctx, alu_opt_info& info)
 {
-   if (!info.defs[0].isPrecise())
+   if (!info.defs[0].isNoContract())
       return true;
 
    aco_type type = instr_info.alu_opcode_infos[(int)info.opcode].def_types[0];
@@ -4040,14 +4074,14 @@ can_reassoc_omod(opt_ctx& ctx, const alu_opt_info& info, unsigned bit_size)
    bool no_signed_zero =
       info.opcode == aco_opcode::v_mul_legacy_f32 || !info.defs[0].isSZPreserve();
 
-   return no_signed_zero && !info.omod && !info.defs[0].isPrecise() && denorm == fp_denorm_flush;
+   return no_signed_zero && !info.omod && !info.defs[0].isNoReassoc() && denorm == fp_denorm_flush;
 }
 
 template <bool is_rcp>
 bool
 reassoc_omod_cb(opt_ctx& ctx, alu_opt_info& info)
 {
-   if (info.defs[0].isPrecise())
+   if (info.defs[0].isNoReassoc())
       return false;
 
    aco_type type = instr_info.alu_opcode_infos[(int)info.opcode].def_types[0];
@@ -4254,16 +4288,6 @@ combine_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
 
    if (apply_output(ctx, instr))
       return;
-
-   /* TODO: There are still some peephole optimizations that could be done:
-    * - abs(a - b) -> s_absdiff_i32
-    * - various patterns for s_bitcmp{0,1}_b32 and s_bitset{0,1}_b32
-    * - patterns for v_alignbit_b32 and v_alignbyte_b32
-    * These aren't probably too interesting though.
-    * There are also patterns for v_cmp_class_f{16,32,64}. This is difficult but
-    * probably more useful than the previously mentioned optimizations.
-    * The various comparison optimizations also currently only work with 32-bit
-    * floats. */
 
    alu_opt_info info;
    if (!alu_opt_gather_info(ctx, instr.get(), info))
@@ -5084,6 +5108,12 @@ select_instruction(opt_ctx& ctx, aco_ptr<Instruction>& instr)
          alu_opt_info candidate = input_info;
          candidate.operands[i] = inner;
          if (!alu_opt_info_is_valid(ctx, candidate))
+            continue;
+
+         /* Don't use dotc if it might need to mov the accumulator. */
+         if ((candidate.opcode == aco_opcode::v_dot2c_f32_f16 ||
+              candidate.opcode == aco_opcode::v_dot4c_i32_i8) &&
+             ctx.uses[candidate.operands[2].op.tempId()] > 1)
             continue;
 
          if (--ctx.uses[parent->definitions[0].tempId()])

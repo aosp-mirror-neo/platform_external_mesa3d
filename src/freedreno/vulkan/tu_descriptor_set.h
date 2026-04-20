@@ -8,10 +8,8 @@
 
 #include "tu_common.h"
 
-#include "vk_descriptor_set_layout.h"
-
-#include "tu_sampler.h"
 #include "util/vma.h"
+#include "vk_descriptor_set_layout.h"
 
 #include "common/freedreno_pm4.h"
 #include "fdl/fd6_format_table.h"
@@ -110,7 +108,7 @@ struct tu_pipeline_layout
    uint32_t num_sets;
    uint32_t push_constant_size;
 
-   unsigned char sha1[SHA1_DIGEST_LENGTH];
+   unsigned char blake3[BLAKE3_KEY_LEN];
 };
 VK_DEFINE_NONDISP_HANDLE_CASTS(tu_pipeline_layout, base, VkPipelineLayout,
                                VK_OBJECT_TYPE_PIPELINE_LAYOUT)
@@ -449,9 +447,16 @@ template <chip CHIP>
 static inline uint64_t
 tu_desc_get_addr(uint32_t *desc)
 {
-   const int idx = (CHIP >= A8XX) ? 0 : 4;
-   uint64_t addr = desc[idx];
-   addr |= (uint64_t)(desc[idx+1] & 0xffff) << 32;
+   uint64_t addr = 0;
+
+   if (CHIP >= A8XX) {
+      addr = pkt_field_get(A8XX_TEX_MEMOBJ_0_BASE_LO, desc[0]) << 6;
+      addr |= (uint64_t)pkt_field_get(A8XX_TEX_MEMOBJ_1_BASE_HI, desc[1]) << 32;
+   } else {
+      addr = pkt_field_get(A6XX_TEX_MEMOBJ_4_BASE_LO, desc[4]) << 5;
+      addr |= (uint64_t)pkt_field_get(A6XX_TEX_MEMOBJ_5_BASE_HI, desc[5]) << 32;
+   }
+
    return addr;
 }
 
@@ -459,26 +464,53 @@ template <chip CHIP>
 static inline void
 tu_desc_set_addr(uint32_t *desc, uint64_t addr)
 {
-   const int idx = (CHIP >= A8XX) ? 0 : 4;
-   desc[idx] = addr;
-   desc[idx+1] = (desc[idx+1] & ~0xffff) | addr >> 32;
+   if (CHIP >= A8XX) {
+      desc[0] = pkt_field_set(A8XX_TEX_MEMOBJ_0_BASE_LO, desc[0], addr);
+      desc[1] = pkt_field_set(A8XX_TEX_MEMOBJ_1_BASE_HI, desc[1], addr >> 32);
+   } else {
+      desc[4] = pkt_field_set(A6XX_TEX_MEMOBJ_4_BASE_LO, desc[4], addr);
+      desc[5] = pkt_field_set(A6XX_TEX_MEMOBJ_5_BASE_HI, desc[5], addr >> 32);
+   }
+}
+
+template <chip CHIP>
+static inline uint64_t
+tu_desc_get_buffer_addr(uint32_t *desc)
+{
+   if (CHIP < A8XX)
+      return tu_desc_get_addr<CHIP>(desc);
+
+   uint64_t addr = pkt_field_get(A8XX_TEX_MEMOBJ_0_INSTANCE_DESC_BASE_LO, desc[0]);
+   addr |= (uint64_t)pkt_field_get(A8XX_TEX_MEMOBJ_1_INSTANCE_DESC_BASE_HI, desc[1]) << 32;
+   return addr;
+}
+
+template <chip CHIP>
+static inline void
+tu_desc_set_buffer_addr(uint32_t *desc, uint64_t addr)
+{
+   if (CHIP < A8XX)
+      return tu_desc_set_addr<CHIP>(desc, addr);
+
+   desc[0] = pkt_field_set(A8XX_TEX_MEMOBJ_0_INSTANCE_DESC_BASE_LO, desc[0], addr);
+   desc[1] = pkt_field_set(A8XX_TEX_MEMOBJ_1_INSTANCE_DESC_BASE_HI, desc[1], addr >> 32);
 }
 
 template <chip CHIP>
 static inline uint64_t
 tu_desc_get_ubwc(uint32_t *desc)
 {
+   uint64_t addr = 0;
+
    if ((CHIP >= A8XX) && (desc[4] & A8XX_TEX_MEMOBJ_4_FLAG)) {
-      uint64_t addr = desc[4] & ~0x1f;
-      addr |= (uint64_t)(desc[5] & 0xffff) << 32;
-      return addr;
+      addr = pkt_field_get(A8XX_TEX_MEMOBJ_4_FLAG_LO, desc[4]) << 6;
+      addr |= (uint64_t)pkt_field_get(A8XX_TEX_MEMOBJ_5_FLAG_HI, desc[5]) << 32;
    } else if ((CHIP <= A7XX) && (desc[3] & A6XX_TEX_MEMOBJ_3_FLAG)) {
-      uint64_t addr = desc[7];
-      addr |= (uint64_t)(desc[8] & 0xffff) << 32;
-      return addr;
-   } else {
-      return 0;
+      addr = pkt_field_get(A6XX_TEX_MEMOBJ_7_FLAG_LO, desc[7]) << 5;
+      addr |= (uint64_t)pkt_field_get(A6XX_TEX_MEMOBJ_8_FLAG_HI, desc[8]) << 32;
    }
+
+   return addr;
 }
 
 template <chip CHIP>
@@ -486,18 +518,17 @@ static inline void
 tu_desc_set_ubwc(uint32_t *desc, uint64_t addr)
 {
    if (CHIP >= A8XX) {
-      assert(!(addr & 0x1f));
       if (addr) {
-         desc[4] = (desc[4] & 0x1f) | addr;
-         desc[5] = (desc[5] & 0xffff) | addr >> 32;
+         desc[4] = pkt_field_set(A8XX_TEX_MEMOBJ_4_FLAG_LO, desc[4], addr);
+         desc[5] = pkt_field_set(A8XX_TEX_MEMOBJ_5_FLAG_HI, desc[5], addr >> 32);
          desc[4] |= A8XX_TEX_MEMOBJ_4_FLAG;
       } else {
          desc[4] &= ~A8XX_TEX_MEMOBJ_4_FLAG;
       }
    } else {
       if (addr) {
-         desc[7] = addr;
-         desc[8] = (desc[8] & 0xffff) | addr >> 32;
+         desc[7] = pkt_field_set(A6XX_TEX_MEMOBJ_7_FLAG_LO, desc[7], addr);
+         desc[8] = pkt_field_set(A6XX_TEX_MEMOBJ_8_FLAG_HI, desc[8], addr >> 32);
          desc[3] |= A6XX_TEX_MEMOBJ_3_FLAG;
       } else {
          desc[3] &= ~A6XX_TEX_MEMOBJ_3_FLAG;

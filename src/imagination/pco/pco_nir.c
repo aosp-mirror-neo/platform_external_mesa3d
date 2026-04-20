@@ -53,13 +53,9 @@ static const nir_shader_compiler_options nir_options = {
    .lower_fpow = true,
    .lower_fsqrt = true,
    .lower_ftrunc = true,
+   .lower_iadd_sat = true,
    .lower_ifind_msb = true,
-   .lower_ldexp = true,
    .lower_layer_fs_input_to_sysval = true,
-   .lower_uadd_carry = true,
-   .lower_uadd_sat = true,
-   .lower_usub_borrow = true,
-   .lower_usub_sat = true,
    .lower_mul_2x32_64 = true,
    .compact_arrays = true,
    .scalarize_ddx = true,
@@ -540,6 +536,7 @@ void pco_preprocess_nir(pco_ctx *ctx, nir_shader *nir)
       const struct nir_lower_sysvals_to_varyings_options sysvals_to_varyings = {
          .frag_coord = true,
          .point_coord = true,
+         .primitive_id = nir->info.stage == MESA_SHADER_FRAGMENT,
       };
       NIR_PASS(_, nir, nir_lower_sysvals_to_varyings, &sysvals_to_varyings);
       NIR_PASS(_, nir, nir_lower_helper_writes, true);
@@ -827,8 +824,9 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
 
    nir_move_options move_options = nir_move_load_global | nir_move_load_ubo |
                                    nir_move_load_ssbo | nir_move_load_input |
-                                   nir_move_load_frag_coord |
-                                   nir_intrinsic_load_uniform;
+                                   nir_move_load_frag_coord | nir_move_alu |
+                                   nir_move_comparisons | nir_move_copies;
+
    NIR_PASS(_, nir, nir_opt_sink, move_options);
    NIR_PASS(_, nir, nir_opt_move, move_options);
 

@@ -11,7 +11,7 @@
 
 #include "util/build_id.h"
 #include "util/driconf.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/os_misc.h"
 #include "util/u_call_once.h"
 
@@ -39,7 +39,6 @@ static const struct debug_control panvk_debug_options[] = {
    {"noafbc", PANVK_DEBUG_NO_AFBC},
    {"linear", PANVK_DEBUG_LINEAR},
    {"dump", PANVK_DEBUG_DUMP},
-   {"no_known_warn", PANVK_DEBUG_NO_KNOWN_WARN},
    {"cs", PANVK_DEBUG_CS},
    {"copy_gfx", PANVK_DEBUG_COPY_GFX},
    {"force_simultaneous", PANVK_DEBUG_FORCE_SIMULTANEOUS},
@@ -100,6 +99,8 @@ static const struct vk_instance_extension_table panvk_instance_extensions = {
 #ifdef PANVK_USE_WSI_PLATFORM
    .KHR_get_surface_capabilities2 = true,
    .KHR_surface = true,
+   .KHR_surface_maintenance1 = true,
+   .EXT_surface_maintenance1 = true,
 #endif
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
    .KHR_display = true,
@@ -288,7 +289,7 @@ panvk_CreateInstance(const VkInstanceCreateInfo *pCreateInfo,
 
    VG(VALGRIND_CREATE_MEMPOOL(instance, 0, false));
 
-   STATIC_ASSERT(sizeof(instance->driver_build_sha) == SHA1_DIGEST_LENGTH);
+   STATIC_ASSERT(sizeof(instance->driver_build_sha) == BLAKE3_KEY_LEN);
    copy_build_id_to_sha1(instance->driver_build_sha, note);
 
    *pInstance = panvk_instance_to_handle(instance);

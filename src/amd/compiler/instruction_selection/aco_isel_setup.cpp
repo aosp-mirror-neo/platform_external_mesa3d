@@ -141,7 +141,7 @@ sanitize_cf_list(nir_function_impl* impl, struct exec_list* cf_list)
           * from the loop header are live. Handle this without complicating the ACO IR by creating a
           * dummy break.
           */
-         if (nir_cf_node_cf_tree_next(&loop->cf_node)->predecessors.entries == 0) {
+         if (nir_block_num_preds(nir_cf_node_cf_tree_next(&loop->cf_node)) == 0) {
             nir_builder b = nir_builder_create(impl);
             b.cursor = nir_after_block_before_jump(nir_loop_last_block(loop));
 
@@ -514,8 +514,8 @@ init_context(isel_context* ctx, nir_shader* shader)
                case nir_op_fsqrt:
                case nir_op_fexp2:
                case nir_op_flog2:
-               case nir_op_fsin_amd:
-               case nir_op_fcos_amd:
+               case nir_op_fsin_normalized_2_pi:
+               case nir_op_fcos_normalized_2_pi:
                case nir_op_pack_half_2x16_rtz_split:
                case nir_op_pack_half_2x16_split: {
                   if (ctx->program->gfx_level < GFX11_5 ||

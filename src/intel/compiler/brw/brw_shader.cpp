@@ -17,6 +17,7 @@
 #include "dev/intel_wa.h"
 #include "compiler/glsl_types.h"
 #include "compiler/nir/nir_builder.h"
+#include "util/bitscan.h"
 #include "util/u_math.h"
 
 void
@@ -845,6 +846,17 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
       if (OPT(brw_opt_cmod_propagation))
          OPT(brw_opt_dead_code_eliminate);
 
+      if (OPT(brw_opt_cmp_flag_destination,
+               /* We want something like
+                * brw_wm_prog_data(s.prog_data)->uses_kill, but there are
+                * other things that can cause the sample_mask_flag_subreg to
+                * be used.
+                */
+              s.stage == MESA_SHADER_FRAGMENT)) {
+         OPT(brw_opt_cmod_propagation);
+         OPT(brw_opt_dead_code_eliminate);
+      }
+
       allocated = brw_assign_regs(s, allow_spilling, spill_all);
    }
 
@@ -905,6 +917,15 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
     */
    OPT(brw_opt_cmod_propagation);
 
+   if (OPT(brw_opt_cmp_flag_destination,
+           /* We want something like brw_wm_prog_data(s.prog_data)->uses_kill,
+            * but there are other things that can cause the
+            * sample_mask_flag_subreg to be used.
+            */
+           s.stage == MESA_SHADER_FRAGMENT)) {
+      OPT(brw_opt_cmod_propagation);
+   }
+
    if (s.devinfo->ver >= 30)
       OPT(brw_lower_send_gather);
 
@@ -935,6 +956,8 @@ brw_allocate_registers(brw_shader &s, bool allow_spilling)
 
    if (s.failed)
       return;
+
+   brw_workaround_emit_dummy_mov_mulmac(s);
 
    OPT(brw_lower_scoreboard);
 }
@@ -977,7 +1000,17 @@ brw_cs_get_dispatch_info(const struct intel_device_info *devinfo,
       override_local_size ? override_local_size :
                             prog_data->local_size;
 
-   const int simd = brw_simd_select_for_workgroup_size(devinfo, prog_data, sizes);
+   int simd = -1;
+   if (intel_use_jay(devinfo, MESA_SHADER_COMPUTE)) {
+      /* Currently Jay compiles only a single binary, just select that. In the
+       * future this needs to get smarter.
+       */
+      assert(util_is_power_of_two_nonzero(prog_data->prog_mask));
+      simd = util_logbase2(prog_data->prog_mask);
+   } else {
+      simd = brw_simd_select_for_workgroup_size(devinfo, prog_data, sizes);
+   }
+
    assert(simd >= 0 && simd < 3);
 
    info.group_size = sizes[0] * sizes[1] * sizes[2];

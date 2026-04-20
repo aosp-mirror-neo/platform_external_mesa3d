@@ -274,6 +274,7 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .EXT_post_depth_coverage               = true,
    .EXT_private_data                      = true,
    .EXT_primitives_generated_query        = true,
+   .EXT_primitive_restart_index           = true,
    .EXT_primitive_topology_list_restart   = true,
    .EXT_rasterization_order_attachment_access = true,
    .EXT_queue_family_foreign              = true,
@@ -690,6 +691,9 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_custom_border_color */
       .customBorderColors = true,
       .customBorderColorWithoutFormat = true,
+
+      /* VK_EXT_primitive_restart_index */
+      .primitiveRestartIndex = true,
 
       /* VK_EXT_color_write_enable */
       .colorWriteEnable = true,
@@ -1230,7 +1234,7 @@ lvp_get_properties(const struct lvp_physical_device *device, struct vk_propertie
       .imageViewCaptureReplayDescriptorDataSize = 0,
       .samplerCaptureReplayDescriptorDataSize = 0,
       .accelerationStructureCaptureReplayDescriptorDataSize = 0,
-      .samplerDescriptorSize = sizeof(struct lp_descriptor),
+      .EDBsamplerDescriptorSize = sizeof(struct lp_descriptor),
       .combinedImageSamplerDescriptorSize = sizeof(struct lp_descriptor),
       .sampledImageDescriptorSize = sizeof(struct lp_descriptor),
       .storageImageDescriptorSize = sizeof(struct lp_descriptor),
@@ -2130,7 +2134,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
    }
 #if DETECT_OS_ANDROID
    else if (mem->vk.ahardware_buffer) {
-      error = lvp_import_ahb_memory(device, mem);
+      error = lvp_import_ahb_memory(device, pAllocateInfo, mem);
       if (error != VK_SUCCESS)
          goto fail;
    }
@@ -2398,6 +2402,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageMemoryRequirements2(
    const VkImageMemoryRequirementsInfo2       *pInfo,
    VkMemoryRequirements2                      *pMemoryRequirements)
 {
+   VK_FROM_HANDLE(lvp_image, image, pInfo->image);
+
    lvp_GetImageMemoryRequirements(device, pInfo->image,
                                   &pMemoryRequirements->memoryRequirements);
 
@@ -2406,7 +2412,8 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetImageMemoryRequirements2(
       case VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS: {
          VkMemoryDedicatedRequirements *req =
             (VkMemoryDedicatedRequirements *) ext;
-         req->requiresDedicatedAllocation = false;
+         req->requiresDedicatedAllocation =
+            vk_image_is_android_hardware_buffer(&image->vk);
          req->prefersDedicatedAllocation = req->requiresDedicatedAllocation;
          break;
       }
@@ -2451,24 +2458,19 @@ static VkResult
 lvp_image_plane_bind(struct lvp_device *device,
                      struct lvp_image_plane *plane,
                      struct lvp_device_memory *mem,
-                     VkDeviceSize memory_offset,
-                     VkDeviceSize *min_plane_offset)
+                     VkDeviceSize memory_offset)
 {
-   VkDeviceSize plane_offset = MAX2(plane->plane_offset, *min_plane_offset);
-
    if (!device->pscreen->resource_bind_backing(device->pscreen,
                                                plane->bo,
                                                mem->pmem,
                                                0, 0,
-                                               memory_offset + plane_offset)) {
+                                               memory_offset + plane->offset)) {
       /* This is probably caused by the texture being too large, so let's
        * report this as the *closest* allowed error-code. It's not ideal,
        * but it's unlikely that anyone will care too much.
        */
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
    }
-   plane->plane_offset = plane_offset;
-   *min_plane_offset = plane_offset + plane->size;
    return VK_SUCCESS;
 }
 
@@ -2496,20 +2498,19 @@ lvp_image_bind(struct lvp_device *device,
    }
 
    assert(mem);
-   uint64_t offset_B = 0;
    if (image->disjoint) {
       const VkBindImagePlaneMemoryInfo *plane_info =
          vk_find_struct_const(bind_info->pNext, BIND_IMAGE_PLANE_MEMORY_INFO);
       const uint8_t plane =
          lvp_image_aspects_to_plane(image, plane_info->planeAspect);
       result = lvp_image_plane_bind(device, &image->planes[plane], mem,
-                                    mem_offset, &offset_B);
+                                    mem_offset);
       if (result != VK_SUCCESS)
          return result;
    } else {
       for (unsigned plane = 0; plane < image->plane_count; plane++) {
          result = lvp_image_plane_bind(device, &image->planes[plane], mem,
-                                       mem_offset + image->offset, &offset_B);
+                                       mem_offset);
          if (result != VK_SUCCESS)
             return result;
       }

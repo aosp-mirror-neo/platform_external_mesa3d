@@ -713,26 +713,28 @@ cmd_buffer_maybe_flush_rt_writes(struct anv_cmd_buffer *cmd_buffer,
                                        VK_SHADER_STAGE_FRAGMENT_BIT,
                                        "render target remap");
 #if GFX_VER >= 11
-      /* The PIPE_CONTROL command description says:
-       *
-       *    "Whenever a Binding Table Index (BTI) used by a Render Target Message
-       *     points to a different RENDER_SURFACE_STATE, SW must issue a Render
-       *     Target Cache Flush by enabling this bit. When render target flush
-       *     is set due to new association of BTI, PS Scoreboard Stall bit must
-       *     be set in this packet."
-       *
-       * Within a renderpass, the render target entries in the binding tables
-       * remain the same as what was setup at CmdBeginRendering() with one
-       * exception where have to setup a null render target because a fragment
-       * writes only depth/stencil yet the renderpass has been setup with at
-       * least one color attachment. This is because our render target messages
-       * in the shader always send the color.
-       */
-      anv_add_pending_pipe_bits(cmd_buffer,
-                                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-                                ANV_PIPE_RT_BTI_CHANGE,
-                                "change RT due to shader outputs");
+      if (cmd_buffer->device->physical->rt_change_needs_flush) {
+         /* The PIPE_CONTROL command description says:
+          *
+          *    "Whenever a Binding Table Index (BTI) used by a Render Target
+          *     Message points to a different RENDER_SURFACE_STATE, SW must
+          *     issue a Render Target Cache Flush by enabling this bit. When
+          *     render target flush is set due to new association of BTI, PS
+          *     Scoreboard Stall bit must be set in this packet."
+          *
+          * Within a renderpass, the render target entries in the binding
+          * tables remain the same as what was setup at CmdBeginRendering()
+          * with one exception where have to setup a null render target
+          * because a fragment writes only depth/stencil yet the renderpass
+          * has been setup with at least one color attachment. This is because
+          * our render target messages in the shader always send the color.
+          */
+         anv_add_pending_pipe_bits(cmd_buffer,
+                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                   VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                                   ANV_PIPE_RT_BTI_CHANGE,
+                                   "change RT due to shader outputs");
+      }
 #endif
    }
 }
@@ -801,7 +803,7 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
 
    genX(cmd_buffer_config_l3)(cmd_buffer, device->l3_config);
 
-   genX(cmd_buffer_update_color_aux_op(cmd_buffer, ISL_AUX_OP_NONE));
+   genX(cmd_buffer_update_color_aux_op)(cmd_buffer, ANV_COLOR_AUX_OP_CLASS_NONE);
 
    genX(cmd_buffer_emit_hashing_mode)(cmd_buffer, UINT_MAX, UINT_MAX, 1);
 
@@ -830,12 +832,8 @@ cmd_buffer_flush_gfx_state(struct anv_cmd_buffer *cmd_buffer)
     * drirc key.
     */
 #if INTEL_WA_14024015672_GFX_VER
-   if (intel_needs_workaround(device->info, 14024015672) &&
-       BITSET_TEST(dyn->dirty, MESA_VK_DYNAMIC_MS_RASTERIZATION_SAMPLES)) {
-      cmd_buffer->state.pending_rhwo_optimization_enabled =
-         !device->physical->instance->intel_enable_wa_14024015672_msaa &&
-         dyn->ms.rasterization_samples > 1;
-   }
+   genX(cmd_buffer_rhwo_wa_14024015672)(cmd_buffer,
+                                        dyn->ms.rasterization_samples > 1);
 #endif
 
    /* Apply any pending pipeline flushes we may have.  We want to apply them

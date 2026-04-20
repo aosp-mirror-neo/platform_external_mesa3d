@@ -3,33 +3,31 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include "tu_knl.h"
-
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/dma-heap.h>
 #include <poll.h>
 #include <stdint.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <linux/dma-heap.h>
 
 #define __user
-#include "msm_kgsl.h"
 #include "ion/ion.h"
 #include "ion/ion_4.19.h"
+#include "msm_kgsl.h"
 
-#include "vk_util.h"
-
+#include "util/libsync.h"
 #include "util/os_file.h"
+#include "util/timespec.h"
 #include "util/u_debug.h"
 #include "util/u_vector.h"
-#include "util/libsync.h"
-#include "util/timespec.h"
+#include "vk_util.h"
 
 #include "tu_cmd_buffer.h"
 #include "tu_cs.h"
 #include "tu_device.h"
 #include "tu_dynamic_rendering.h"
+#include "tu_knl.h"
 #include "tu_queue.h"
 #include "tu_rmv.h"
 
@@ -97,7 +95,7 @@ bo_init_new_dmaheap(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
                        "DMA_HEAP_IOCTL_ALLOC failed (%s)", strerror(errno));
    }
 
-   return tu_bo_init_dmabuf(dev, out_bo, -1, alloc.fd);
+   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
 }
 
 static VkResult
@@ -118,7 +116,7 @@ bo_init_new_ion(struct tu_device *dev, struct tu_bo **out_bo, uint64_t size,
                        "ION_IOC_NEW_ALLOC failed (%s)", strerror(errno));
    }
 
-   return tu_bo_init_dmabuf(dev, out_bo, -1, alloc.fd);
+   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, alloc.fd);
 }
 
 static VkResult
@@ -160,7 +158,7 @@ bo_init_new_ion_legacy(struct tu_device *dev, struct tu_bo **out_bo, uint64_t si
                        "ION_IOC_FREE failed (%s)", strerror(errno));
    }
 
-   return tu_bo_init_dmabuf(dev, out_bo, -1, share.fd);
+   return tu_bo_init_dmabuf(dev, out_bo, -1, TU_BO_ALLOC_NO_FLAGS, share.fd);
 }
 
 static VkResult
@@ -328,6 +326,7 @@ static VkResult
 kgsl_bo_init_dmabuf(struct tu_device *dev,
                     struct tu_bo **out_bo,
                     uint64_t size,
+                    enum tu_bo_alloc_flags flags,
                     int fd)
 {
    struct kgsl_gpuobj_import_dma_buf import_dmabuf = {
@@ -1869,6 +1868,9 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
    /* preemption is always supported on kgsl */
    device->has_preemption = true;
 
+   /* KGSL doesn't allow writing the perf counter selector as the expectation is to use the uAPI provided for this. */
+   device->is_perf_cntr_selectable = false;
+
    device->ubwc_config.highest_bank_bit = highest_bank_bit;
 
    /* The other config values can be partially inferred from the UBWC version,
@@ -1889,6 +1891,8 @@ tu_knl_kgsl_load(struct tu_instance *instance, int fd)
       device->ubwc_config.macrotile_mode = FDL_MACROTILE_4_CHANNEL;
       break;
    case KGSL_UBWC_4_0:
+   case KGSL_UBWC_5_0:
+   case KGSL_UBWC_6_0:
       device->ubwc_config.bank_swizzle_levels = 0x6;
       device->ubwc_config.macrotile_mode = FDL_MACROTILE_8_CHANNEL;
       break;

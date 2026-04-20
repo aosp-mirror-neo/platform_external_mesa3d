@@ -34,7 +34,6 @@
 #include "util/memstream.h"
 #include "util/mesa-blake3.h"
 #include "util/ralloc.h"
-#include "vulkan/vulkan_core.h"
 #include "nir.h"
 #include "nir_builder.h"
 
@@ -489,7 +488,16 @@ print_fp_math_ctrl(unsigned fp_math_ctrl, print_state *state)
    FILE *fp = state->fp;
 
    if (fp_math_ctrl & nir_fp_exact) {
-      fprintf(fp, "exact");
+      if ((fp_math_ctrl & nir_fp_exact) == nir_fp_exact) {
+         fprintf(fp, "exact");
+      } else if (fp_math_ctrl & nir_fp_no_contract) {
+         fprintf(fp, "no-contract");
+      } else if (fp_math_ctrl & nir_fp_no_reassoc) {
+         fprintf(fp, "no-reassoc");
+      } else if (fp_math_ctrl & nir_fp_no_transform) {
+         fprintf(fp, "no-transform");
+      }
+
       if (fp_math_ctrl & ~nir_fp_exact)
          fprintf(fp, ", ");
    }
@@ -814,6 +822,10 @@ get_variable_mode_str(nir_variable_mode mode, bool want_local_global_mode)
       return "node_payload";
    case nir_var_mem_node_payload_in:
       return "node_payload_in";
+   case nir_var_resource_heap:
+      return "resource_heap";
+   case nir_var_sampler_heap:
+      return "sampler_heap";
    default:
       if (mode && (mode & nir_var_mem_generic) == mode)
          return "generic";
@@ -900,6 +912,8 @@ print_access(enum gl_access_qualifier access, print_state *state, const char *se
       { ACCESS_ATOMIC, "atomic" },
       { ACCESS_FUSED_EU_DISABLE_INTEL, "fused-eu-disable-intel" },
       { ACCESS_SPARSE, "sparse" },
+      { ACCESS_ISTREAM_PAN, "istream-pan" },
+      { ACCESS_ESTREAM_PAN, "estream-pan" },
    };
 
    bool first = true;
@@ -1201,39 +1215,42 @@ print_deref_instr(nir_deref_instr *instr, print_state *state)
 }
 
 static const char *
-vulkan_descriptor_type_name(VkDescriptorType type)
+nir_descriptor_type_name(nir_descriptor_type type)
 {
    switch (type) {
-   case VK_DESCRIPTOR_TYPE_SAMPLER:
-      return "sampler";
-   case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER:
-      return "texture+sampler";
-   case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
-      return "texture";
-   case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
-      return "image";
-   case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
-      return "texture-buffer";
-   case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
-      return "image-buffer";
-   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+   case nir_descriptor_type_uniform_buffer:
       return "UBO";
-   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+   case nir_descriptor_type_storage_buffer:
       return "SSBO";
-   case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC:
-      return "UBO";
-   case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC:
-      return "SSBO";
-   case VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT:
-      return "input-att";
-   case VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK:
-      return "inline-UBO";
-   case VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR:
+   case nir_descriptor_type_acceleration_structure:
       return "accel-struct";
-   case VK_DESCRIPTOR_TYPE_SAMPLE_WEIGHT_IMAGE_QCOM:
-      return "sample-weight-image";
-   case VK_DESCRIPTOR_TYPE_BLOCK_MATCH_IMAGE_QCOM:
-      return "block-match-image";
+   default:
+      return "unknown";
+   }
+}
+
+static const char *
+nir_resource_type_name(nir_resource_type type)
+{
+   switch (type) {
+   case nir_resource_type_sampler:
+      return "sampler";
+   case nir_resource_type_sampled_image:
+      return "texture";
+   case nir_resource_type_read_only_image:
+      return "RO-image";
+   case nir_resource_type_read_write_image:
+      return "RW-image";
+   case nir_resource_type_combined_sampled_image:
+      return "texture+sampler";
+   case nir_resource_type_uniform_buffer:
+      return "UBO";
+   case nir_resource_type_read_only_storage_buffer:
+      return "RO-SSBO";
+   case nir_resource_type_read_write_storage_buffer:
+      return "RW-SSBO";
+   case nir_resource_type_acceleration_structure:
+      return "accel-struct";
    default:
       return "unknown";
    }
@@ -1421,8 +1438,14 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
       }
 
       case NIR_INTRINSIC_DESC_TYPE: {
-         VkDescriptorType desc_type = nir_intrinsic_desc_type(instr);
-         fprintf(fp, "desc_type=%s", vulkan_descriptor_type_name(desc_type));
+         nir_descriptor_type desc_type = nir_intrinsic_desc_type(instr);
+         fprintf(fp, "desc_type=%s", nir_descriptor_type_name(desc_type));
+         break;
+      }
+
+      case NIR_INTRINSIC_RESOURCE_TYPE: {
+         nir_resource_type res_type = nir_intrinsic_resource_type(instr);
+         fprintf(fp, "resource_type=%s", nir_resource_type_name(res_type));
          break;
       }
 
@@ -1809,6 +1832,15 @@ print_intrinsic_instr(nir_intrinsic_instr *instr, print_state *state)
          break;
       }
 
+      case NIR_INTRINSIC_FP_MATH_CTRL: {
+         unsigned fp_math_ctrl = nir_intrinsic_fp_math_ctrl(instr);
+         if (fp_math_ctrl)
+            print_fp_math_ctrl(fp_math_ctrl, state);
+         else
+            fprintf(fp, "fp-fast-math");
+         break;
+      }
+
       default: {
          unsigned off = info->index_map[idx] - 1;
          fprintf(fp, "%s=%d", nir_intrinsic_index_names[idx], instr->const_index[off]);
@@ -1970,6 +2002,15 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
    case nir_texop_block_match_ssd_qcom:
       fprintf(fp, "block_match_ssd_qcom ");
       break;
+   case nir_texop_resinfo_intel:
+      fprintf(fp, "resinfo_intel ");
+      break;
+   case nir_texop_sparse_residency_intel:
+      fprintf(fp, "sparse_residency_intel ");
+      break;
+   case nir_texop_sparse_residency_txf_intel:
+      fprintf(fp, "sparse_residency_txf_intel ");
+      break;
    default:
       UNREACHABLE("Invalid texture operation");
       break;
@@ -2078,6 +2119,12 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
          break;
       case nir_tex_src_box_size:
          fprintf(fp, "(box_size)");
+         break;
+      case nir_tex_src_texture_heap_offset:
+         fprintf(fp, "(texture_heap_offset)");
+         break;
+      case nir_tex_src_sampler_heap_offset:
+         fprintf(fp, "(sampler_heap_offset)");
          break;
       case nir_tex_src_plane:
          fprintf(fp, "(plane)");
@@ -2254,7 +2301,7 @@ print_phi_instr(nir_phi_instr *instr, print_state *state)
    nir_block **preds =
       state->preds ? state->preds : nir_block_get_predecessors_sorted(instr->instr.block, NULL);
 
-   for (unsigned i = 0; i < instr->instr.block->predecessors.entries; i++) {
+   for (unsigned i = 0; i < nir_block_num_preds(instr->instr.block); i++) {
       nir_phi_src *src = nir_phi_get_src_from_block(instr, preds[i]);
       if (i != 0)
          fprintf(fp, ", ");
@@ -2393,7 +2440,7 @@ static void
 print_block_preds(nir_block *block, print_state *state)
 {
    FILE *fp = state->fp;
-   for (unsigned i = 0; i < block->predecessors.entries; i++) {
+   for (unsigned i = 0; i < nir_block_num_preds(block); i++) {
       fprintf(fp, " b%u", state->preds[i]->index);
    }
 }

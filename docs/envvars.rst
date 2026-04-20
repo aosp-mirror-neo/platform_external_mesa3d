@@ -1356,6 +1356,14 @@ LLVMpipe driver environment variables
    turns off threading completely. The default value is the number of
    CPU cores present.
 
+.. envvar:: LP_CONTEXT_RESET_FILE
+
+   a file path. If set, contexts using the LOSE_CONTEXT_ON_RESET strategy will
+   check it for the presence and modification time of a file and trigger an
+   emulated device reset if they were created before the last modification time.
+
+   Currently not available on Windows.
+
 VMware SVGA driver environment variables
 ----------------------------------------
 
@@ -1419,7 +1427,7 @@ RADV driver environment variables
    a comma-separated list of named flags, which do various things:
 
    ``llvm``
-      enable LLVM compiler backend
+      enable LLVM compiler backend. Only available in debug builds.
    ``allbos``
       force all allocated buffers to be referenced in submissions
    ``bo_history``
@@ -1437,6 +1445,9 @@ RADV driver environment variables
    ``forcecompress``
       Enables DCC,FMASK,CMASK,HTILE in situations where the driver supports it
       but normally does not deem it beneficial.
+   ``fullsync``
+      synchronize all pending work after all draws/dispatches (this includes
+      syncshaders but also flushes all caches)
    ``hang``
       enable GPU hangs detection and dump a report to
       $HOME/radv_dumps_<pid>_<time> if a GPU hang is detected
@@ -1450,8 +1461,6 @@ RADV driver environment variables
       disable dithering for alpha to coverage
    ``nobinning``
       disable primitive binning
-   ``nobolist``
-      disable the global BO list when no features require it
    ``nocache``
       disable shaders cache
    ``nocompute``
@@ -1559,23 +1568,20 @@ RADV driver environment variables
 
    a comma-separated list of named flags, which do various things:
 
-   ``bfloat16``
-      enable bfloat16 cooperative matrix support on GFX11-11.5
    ``cswave32``
       enable wave32 for compute shaders (GFX10+)
    ``dccmsaa``
       enable DCC for MSAA images
    ``dmashaders``
       upload shaders to invisible VRAM (might be useful for non-resizable BAR systems)
-   ``emulate_rt``
-      forces ray-tracing to be emulated in software on GFX10_3+ and enables
-      rt extensions with older hardware.
    ``gewave32``
       enable wave32 for vertex/tess/geometry shaders (GFX10+)
-   ``hic``
-      enable experimental implementation of VK_EXT_host_image_copy (GFX10+)
    ``localbos``
       enable local BOs
+   ``lowlatencydec``
+      Enable low latency decoding
+   ``lowlatencyenc``
+      Enable low latency encoding
    ``nggc``
       enable NGG culling for GFX11+
    ``nircache``
@@ -1586,10 +1592,30 @@ RADV driver environment variables
       disable optimizations that get enabled when all VRAM is CPU visible.
    ``pswave32``
       enable wave32 for pixel shaders (GFX10+)
+   ``rtcps``
+      enable CPS lowering mode instead of function calls for RT
    ``rtwave64``
       enable wave64 for ray tracing shaders (GFX10+)
    ``sam``
       enable optimizations to move more driver internal objects to VRAM.
+
+   Note that bfloat16, emulate_rt, hic, sparse, transfer_queue, video_decode
+   and video_encode are deprecated and RADV_EXPERIMENTAL should be
+   used instead.
+
+.. envvar:: RADV_EXPERIMENTAL
+
+   a comma-separated list of named flags, which do various things:
+
+   ``bfloat16``
+      enable bfloat16 cooperative matrix support on GFX11-11.5
+   ``emulate_rt``
+      forces ray-tracing to be emulated in software on GFX10_3+ and enables
+      rt extensions with older hardware.
+   ``heap``
+      enable experimental implementation of VK_EXT_descriptor_heap
+   ``hic``
+      enable experimental implementation of VK_EXT_host_image_copy (GFX10+)
    ``sparse``
       enable experimental sparse binding and sparse residency on GPUs where we don't support it by default (pre Polaris)
    ``transfer_queue``
@@ -1606,7 +1632,7 @@ RADV driver environment variables
 .. envvar:: RADV_THREAD_TRACE_BUFFER_SIZE
 
    set the SQTT/RGP buffer size in bytes (default value is 32MiB, the buffer is
-   automatically resized if too small)
+   automatically resized if too small, except for per-submit captures)
 
 .. envvar:: RADV_THREAD_TRACE_CACHE_COUNTERS
 
@@ -1619,6 +1645,12 @@ RADV driver environment variables
 .. envvar:: RADV_THREAD_TRACE_QUEUE_EVENTS
 
    enable/disable SQTT/RGP queue events (enabled by default)
+
+.. envvar:: RADV_CACHE_COUNTERS_BUFFER_SIZE
+
+   set the SQTT/RGP cache counters buffer size in bytes (default value is
+   32MiB, the buffer is automatically resized if too small, except for
+   per-submit captures)
 
 .. envvar:: RADV_TRAP_HANDLER
 

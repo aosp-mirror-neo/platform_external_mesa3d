@@ -38,26 +38,31 @@
 #include <sys/sysmacros.h>
 #endif
 
-#include "v3dv_private.h"
+#include "v3dv_device.h"
+#include "v3dv_cmd_buffer.h"
+#include "v3dv_image.h"
+#include "v3dv_entrypoints.h"
+#include "v3dv_version_dispatch.h"
 
-#include "common/v3d_debug.h"
-
-#include "compiler/v3d_compiler.h"
-
-#include "drm-uapi/v3d_drm.h"
 #include "vk_android.h"
 #include "vk_drm_syncobj.h"
 #include "vk_util.h"
 #include "git_sha1.h"
 
 #include "util/build_id.h"
+#include "util/disk_cache.h"
 #include "util/driconf.h"
 #include "util/os_file.h"
 #include "util/u_debug.h"
 #include "util/format/u_format.h"
+#include "perfcntrs/v3d_perfcntrs.h"
+#include "vk_shader_module.h"
+#include "vk_format.h"
+#include "vk_ycbcr_conversion.h"
+
+#include <sys/stat.h>
 
 #if DETECT_OS_ANDROID
-#include "vk_android.h"
 #include <vndk/hardware_buffer.h>
 #include "util/u_gralloc/u_gralloc.h"
 #endif
@@ -199,7 +204,9 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .KHR_swapchain_maintenance1           = true,
       .KHR_swapchain_mutable_format         = true,
       .KHR_incremental_present              = true,
+      .KHR_present_id                       = true,
       .KHR_present_id2                      = true,
+      .KHR_present_wait                     = true,
       .KHR_present_wait2                    = true,
 #endif
       .KHR_variable_pointers                = true,
@@ -219,6 +226,9 @@ get_device_extensions(const struct v3dv_physical_device *device,
       .EXT_extended_dynamic_state           = true,
       .EXT_extended_dynamic_state2          = true,
       .EXT_external_memory_dma_buf          = true,
+#ifdef V3DV_USE_WSI_PLATFORM
+      .EXT_hdr_metadata                     = true,
+#endif
       .EXT_host_query_reset                 = true,
       .EXT_image_drm_format_modifier        = true,
       .EXT_image_robustness                 = true,
@@ -522,8 +532,14 @@ get_features(const struct v3dv_physical_device *physical_device,
       /* VK_KHR_swapchain_maintenance1 */
       .swapchainMaintenance1 = true,
 
+      /* VK_KHR_present_id */
+      .presentId = true,
+
       /* VK_KHR_present_id2 */
       .presentId2 = true,
+
+      /* VK_KHR_present_wait */
+      .presentWait = true,
 
       /* VK_KHR_present_wait2 */
       .presentWait2 = true,
@@ -550,6 +566,13 @@ v3dv_EnumerateInstanceExtensionProperties(const char *pLayerName,
 static VkResult enumerate_devices(struct vk_instance *vk_instance);
 
 static void destroy_physical_device(struct vk_physical_device *device);
+
+enum v3dv_pipeline_cache_flags {
+   V3DV_PIPELINE_CACHE_FULL = 1 << 0,
+   V3DV_PIPELINE_CACHE_NO_DEFAULT = 1 << 1,
+   V3DV_PIPELINE_CACHE_NO_META = 1 << 2,
+   V3DV_PIPELINE_CACHE_OFF = 1 << 3,
+};
 
 static const struct debug_control v3dv_pipeline_cache_control[] = {
    { "full", V3DV_PIPELINE_CACHE_FULL },
@@ -817,18 +840,18 @@ init_uuids(struct v3dv_physical_device *device)
    uint32_t vendor_id = v3dv_physical_device_vendor_id(device);
    uint32_t device_id = v3dv_physical_device_device_id(device);
 
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(sha1));
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   STATIC_ASSERT(VK_UUID_SIZE <= sizeof(blake3));
 
    /* The pipeline cache UUID is used for determining when a pipeline cache is
     * invalid.  It needs both a driver build and the PCI ID of the device.
     */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, build_id_data(note), build_id_len);
-   _mesa_sha1_update(&sha1_ctx, &device_id, sizeof(device_id));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(device->pipeline_cache_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, build_id_data(note), build_id_len);
+   _mesa_blake3_update(&blake3_ctx, &device_id, sizeof(device_id));
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(device->pipeline_cache_uuid, blake3, VK_UUID_SIZE);
 
    /* The driver UUID is used for determining sharability of images and memory
     * between two Vulkan instances in separate processes.  People who want to
@@ -841,11 +864,11 @@ init_uuids(struct v3dv_physical_device *device)
     * Since we never have more than one device, this doesn't need to be a real
     * UUID.
     */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &vendor_id, sizeof(vendor_id));
-   _mesa_sha1_update(&sha1_ctx, &device_id, sizeof(device_id));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(device->device_uuid, sha1, VK_UUID_SIZE);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &vendor_id, sizeof(vendor_id));
+   _mesa_blake3_update(&blake3_ctx, &device_id, sizeof(device_id));
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(device->device_uuid, blake3, VK_UUID_SIZE);
 
    return VK_SUCCESS;
 }
@@ -854,8 +877,8 @@ static void
 v3dv_physical_device_init_disk_cache(struct v3dv_physical_device *device)
 {
 #ifdef ENABLE_SHADER_CACHE
-   char timestamp[SHA1_DIGEST_STRING_LENGTH];
-   _mesa_sha1_format(timestamp, device->driver_build_sha1);
+   char timestamp[BLAKE3_HEX_LEN];
+   _mesa_blake3_format(timestamp, device->driver_build_sha1);
 
    assert(device->name);
    device->disk_cache = disk_cache_create(device->name, timestamp, v3d_mesa_debug);
