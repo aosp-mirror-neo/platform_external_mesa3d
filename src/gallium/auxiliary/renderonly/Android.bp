@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_14",
+    name: "files_libgallium_13",
     srcs: [
         "renderonly.c",
     ],

@@ -96,7 +96,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
         "-DHAVE_FUNC_ATTRIBUTE_WEAK",
         "-DHAVE_GFX_COMPUTE",
-        "-DHAVE_GNU_QSORT_R",
         "-DHAVE_ISSIGNALING",
         "-DHAVE_LIBDRM",
         "-DHAVE_LINUX_FUTEX_H",
@@ -226,16 +225,19 @@ cc_defaults {
     }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
         ("x86_64", "linux_glibc", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
         ("x86_64", "linux_musl", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
         ("arm64", "linux_musl", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
@@ -298,7 +300,6 @@ cc_defaults {
         "-DHAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
         "-DHAVE_FUNC_ATTRIBUTE_WEAK",
         "-DHAVE_GFX_COMPUTE",
-        "-DHAVE_GNU_QSORT_R",
         "-DHAVE_ISSIGNALING",
         "-DHAVE_LIBDRM",
         "-DHAVE_LINUX_FUTEX_H",
@@ -421,16 +422,19 @@ cc_defaults {
     }) + select((arch(), os(), soong_config_variable("aosp_mesa3d", "perfetto")), {
         ("x86_64", "linux_glibc", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
         ("x86_64", "linux_musl", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
         ("arm64", "linux_musl", default): [
             "-DALLOW_KCMP",
+            "-DHAVE_GNU_QSORT_R",
             "-DHAVE_SECURE_GETENV",
             "-D__INTRODUCED_IN(api_level)=",
         ],
@@ -604,6 +608,11 @@ cc_defaults {
     whole_static_libs: [
         "mesa_platform_virtgpu",
     ],
+    static_libs: [
+        "mesa_util",
+        "mesa_util_c11",
+        "vulkan_util",
+    ],
     shared_libs: [
         "libdrm",
     ],
@@ -613,6 +622,10 @@ cc_defaults {
     target: {
         android: {
             shared_libs: [
+                "libcutils",
+                "libhardware",
+                "liblog",
+                "libnativewindow",
                 "libsync",
             ],
         },
@@ -641,10 +654,14 @@ cc_library_static {
     whole_static_libs: [
         "platform_virtgpu",
         "platform_virtgpu_kumquat",
-        "vulkan_util",
         "platform_virtgpu_drm",
         "libvirtgpu_kumquat_ffi",
         "gfxstream_vulkan_mapper",
+    ],
+    static_libs: [
+        "mesa_util",
+        "mesa_util_c11",
+        "vulkan_util",
     ],
     shared_libs: [
         "libdrm",
@@ -658,6 +675,10 @@ cc_library_static {
         },
         android: {
             shared_libs: [
+                "libcutils",
+                "libhardware",
+                "liblog",
+                "libnativewindow",
                 "libsync",
             ],
         },

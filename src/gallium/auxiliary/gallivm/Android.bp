@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_15",
+    name: "files_libgallium_14",
     srcs: [
         "lp_bld_arit.c",
         "lp_bld_arit_overflow.c",

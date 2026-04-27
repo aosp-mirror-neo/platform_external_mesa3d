@@ -20,6 +20,7 @@ cc_defaults {
     host_supported: true,
     cflags: [
         "-Wno-error",
+        "-fvisibility=hidden",
     ],
 }
 
