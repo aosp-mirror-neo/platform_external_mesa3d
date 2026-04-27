@@ -71,6 +71,10 @@ genX(cmd_buffer_ensure_cfe_state)(struct anv_cmd_buffer *cmd_buffer,
       }
 #endif
 
+#if GFX_VER >= 30
+      cfe.DynamicStackIDControl = true;
+#endif
+
       cfe.OverDispatchControl = 2; /* 50% overdispatch */
    }
 
@@ -433,7 +437,7 @@ fill_inline_param(uint8_t param_value,
 }
 
 static inline void
-fill_inline_params(struct GENX(COMPUTE_WALKER_BODY) *body,
+fill_inline_params(uint32_t *compute_walker_inline_data,
                    const struct anv_cmd_compute_state *comp_state,
                    uint64_t push_addr64,
                    uint32_t base_wg[3],
@@ -446,7 +450,7 @@ fill_inline_params(struct GENX(COMPUTE_WALKER_BODY) *body,
       &comp_state->shader->bind_map;
 
    for (uint32_t i = 0; i < bind_map->inline_dwords_count; i++) {
-      body->InlineData[i] = fill_inline_param(
+      compute_walker_inline_data[i] = fill_inline_param(
          bind_map->inline_dwords[i], push_data, push_addr64,
          base_wg, num_wg, unaligned_x_offset);
    }
@@ -517,7 +521,7 @@ emit_indirect_compute_walker(struct anv_cmd_buffer *cmd_buffer,
       indirect_addr64 & 0xffffffff,
       indirect_addr64 >> 32,
    };
-   fill_inline_params(&body, comp_state, push_addr64,
+   fill_inline_params(body.InlineData, comp_state, push_addr64,
                       (uint32_t[]) {0, 0, 0},
                       num_workgroup_data, 0);
 
@@ -579,7 +583,7 @@ emit_compute_walker(struct anv_cmd_buffer *cmd_buffer,
       },
    };
 
-   fill_inline_params(&body, comp_state, push_addr64,
+   fill_inline_params(body.InlineData, comp_state, push_addr64,
                       base_wg, num_workgroup_data,
                       unaligned_invocations_x);
 
@@ -643,11 +647,10 @@ emit_cs_walker(struct anv_cmd_buffer *cmd_buffer,
                bool is_unaligned_size_x, uint32_t unaligned_invocations_x)
 {
    struct anv_device *device = cmd_buffer->device;
-   struct anv_instance *instance = device->physical->instance;
    bool is_indirect = !anv_address_is_null(indirect_addr);
 
    struct mi_builder b;
-   if (unlikely(instance->debug & ANV_DEBUG_SHADER_HASH)) {
+   if (ANV_DEBUG(SHADER_HASH)) {
       mi_builder_init(&b, device->info, &cmd_buffer->batch);
       mi_builder_set_mocs(&b, isl_mocs(&device->isl_dev, 0, false));
       mi_store(&b, mi_mem32(device->workaround_address),
@@ -891,7 +894,8 @@ genX(cmd_buffer_ray_query_globals)(struct anv_cmd_buffer *cmd_buffer)
             .bo = device->ray_query_bo[idx],
             .offset = (i + 1) * (device->ray_query_bo[idx]->size / 2),
          },
-         .AsyncRTStackSize = BRW_RT_SIZEOF_RAY_QUERY / 64,
+         .AsyncRTStackSize =
+            cmd_buffer->state.rt.scratch.layout.ray_stack_stride / 64,
          .NumDSSRTStacks = stack_ids_per_dss,
          .MaxBVHLevels = BRW_RT_MAX_BVH_LEVELS,
          .Flags = RT_DEPTH_TEST_LESS_EQUAL,
@@ -1125,6 +1129,28 @@ cmd_buffer_emit_rt_dispatch_globals_indirect(struct anv_cmd_buffer *cmd_buffer,
    return rtdg_state;
 }
 
+static uint8_t
+get_stack_id_reduction_cap(uint32_t stack_ids)
+{
+   /* Bspec 57497: Dynamic stack management mechanism - REDUCTION_CAP
+    * bitfield states:
+    *
+    *    This value must always be smaller than value given by
+    *    CFE_STATE.Stack_ID_Control.
+    */
+#if GFX_VER >= 30
+   switch (stack_ids) {
+   case 2048: return REDUCTION_CAP_1024;
+   case 1024: return REDUCTION_CAP_512;
+   case 512:  return REDUCTION_CAP_256;
+   case 256:  return REDUCTION_CAP_128;
+   default:   UNREACHABLE("Invalid stack_ids value");
+   }
+#endif
+
+   return 0;
+}
+
 static void
 cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
                       struct trace_params *params)
@@ -1280,12 +1306,17 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
 #endif
 
    anv_batch_emit(&cmd_buffer->batch, GENX(3DSTATE_BTD), btd) {
-      /* TODO: This is the timeout after which the bucketed thread dispatcher
-       *       will kick off a wave of threads. We go with the lowest value
-       *       for now. It could be tweaked on a per application basis
-       *       (drirc).
-       */
-      btd.DispatchTimeoutCounter = _64clocks;
+      uint32_t dispatch_timeout_counter =
+         cmd_buffer->device->physical->instance->dispatch_timeout_counter;
+      uint32_t clamped_timeout_counter =
+         genX(anv_get_btd_dispatch_timeout_counter)(dispatch_timeout_counter);
+#if GFX_VERx10 >= 200
+      btd.DispatchTimeoutCounter = clamped_timeout_counter;
+#else
+      btd.DispatchTimeoutCounter = clamped_timeout_counter & 0x3;
+      btd.DispatchTimeoutCounterExtend = (clamped_timeout_counter >> 2) & 0x3;
+#endif
+
       /* BSpec 43851: "This field must be programmed to 6h i.e. memory backed
        *               buffer must be 128KB."
        */
@@ -1309,6 +1340,11 @@ cmd_buffer_trace_rays(struct anv_cmd_buffer *cmd_buffer,
 #endif
 #if GFX_VER >= 30
       btd.RTMemStructures64bModeEnable = true;
+      btd.DynamicstackmanagementmechanismMISSPENALTY = MISS_PENALTY_16;
+      btd.DynamicstackmanagementmechanismHITREWARD = HIT_REWARD_1;
+      btd.DynamicstackmanagementmechanismSCALINGFACTOR = SCALING_FACTOR_4;
+      btd.DynamicstackmanagementmechanismREDUCTIONCAP =
+         get_stack_id_reduction_cap(cmd_buffer->device->physical->instance->stack_ids);
 #endif
    }
 

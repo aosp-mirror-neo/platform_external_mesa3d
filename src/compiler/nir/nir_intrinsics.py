@@ -2335,7 +2335,7 @@ intrinsic("quad_ballot_agx", src_comp=[1], dest_comp=1, flags=[CAN_ELIMINATE])
 # 1] clipping, we need to transform z' = (z + w) / 2. We express both cases as a
 # lerp between z and w, where this is the lerp coefficient: 0 for [0, 1] and 0.5
 # for [-1, 1].
-system_value("clip_z_coeff_agx", 1)
+system_value("clip_z_coeff", 1)
 
 # True if drawing triangle fans with first vertex provoking, false otherwise.
 # This affects flatshading, which is defined weirdly for fans with first.
@@ -3011,7 +3011,8 @@ intrinsic("smp_pco", src_comp=[16, 4, 4], dest_comp=0, indices=[SMP_FLAGS_PCO, R
 
 # smp_coeffs_pco(data, tex_state, smp_state)
 # Returns the calculated sampling coefficients for the given data and state words.
-intrinsic("smp_coeffs_pco", src_comp=[16, 4, 4], dest_comp=8, indices=[SMP_FLAGS_PCO, RANGE], bit_sizes=[32])
+# Actually outputs 7/14 components, but NIR doesn't support those for num_components, so fake it as 16 for now.
+intrinsic("smp_coeffs_pco", src_comp=[16, 4, 4], dest_comp=16, indices=[SMP_FLAGS_PCO, RANGE], bit_sizes=[32])
 
 # smp_raw_pco(data, tex_state, smp_state)
 # Returns the raw sampling data for the given data and state words.

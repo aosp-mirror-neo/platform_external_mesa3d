@@ -170,6 +170,9 @@ struct radv_physical_device {
    /* Bitmask of memory types that are host-visible. */
    uint32_t memory_types_host_visible;
 
+   /* Bitmask of memory types that are protected. */
+   uint32_t memory_types_protected;
+
 #ifndef _WIN32
    int available_nodes;
    drmPciBusInfo bus_info;
@@ -301,6 +304,8 @@ bool radv_transfer_queue_enabled(const struct radv_physical_device *pdev);
 bool radv_compute_queue_enabled(const struct radv_physical_device *pdev);
 
 bool radv_spm_trace_enabled(const struct radv_physical_device *pdev);
+
+bool radv_tmz_enabled(const struct radv_physical_device *pdev);
 
 static inline uint32_t
 radv_get_sampled_image_desc_size(const struct radv_physical_device *pdev)

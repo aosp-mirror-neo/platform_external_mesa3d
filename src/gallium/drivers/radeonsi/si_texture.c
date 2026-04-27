@@ -8,21 +8,15 @@
 #include "drm-uapi/drm_fourcc.h"
 #include "si_pipe.h"
 #include "si_query.h"
-#include "sid.h"
 #include "frontend/drm_driver.h"
 #include "util/format/u_format.h"
-#include "util/os_time.h"
 #include "util/u_log.h"
 #include "util/u_memory.h"
-#include "util/u_pack_color.h"
 #include "util/u_resource.h"
-#include "util/u_surface.h"
 #include "util/u_transfer.h"
 
-#include <errno.h>
 #include <inttypes.h>
 
-#include "amd/addrlib/inc/addrinterface.h"
 #include "ac_formats.h"
 
 static enum radeon_surf_mode si_choose_tiling(struct si_screen *sscreen,
@@ -1393,6 +1387,10 @@ static enum radeon_surf_mode si_choose_tiling(struct si_screen *sscreen,
     * which requires 2D tiling.
     */
    if (sscreen->info.gfx_level == GFX8 && tc_compatible_htile)
+      return RADEON_SURF_MODE_2D;
+
+   /* Video DPB must be 2D tiled. */
+   if (templ->bind & (PIPE_BIND_VIDEO_DECODE_DPB | PIPE_BIND_VIDEO_ENCODE_DPB))
       return RADEON_SURF_MODE_2D;
 
    /* Handle common candidates for the linear mode.

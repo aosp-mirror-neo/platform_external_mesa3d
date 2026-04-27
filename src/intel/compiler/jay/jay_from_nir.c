@@ -31,6 +31,7 @@
 #include "nir_intrinsics.h"
 #include "nir_intrinsics_indices.h"
 #include "nir_opcodes.h"
+#include "nir_search_helpers.h"
 #include "shader_enums.h"
 #include "shader_stats.h"
 
@@ -528,11 +529,28 @@ jay_emit_alu(struct nir_to_jay_state *nj, nir_alu_instr *alu)
       assert(alu->def.bit_size < 64);
       assert(jay_is_flag(src[0]));
 
+      /* sel.s32 can propagate more modifiers than sel.u32 with no drawback */
+      type = jay_type_rebase(type, JAY_TYPE_S);
+
       /* b2i8 gets lowered into 8-bit csel. Just use the upper bits garbage
        * convention to implement with SEL.u16 instead.
        */
-      if (type == JAY_TYPE_U8) {
-         type = JAY_TYPE_U16;
+      if (type == JAY_TYPE_S8) {
+         type = JAY_TYPE_S16;
+      }
+
+      /* SEL.f32 flushes denorms but SEL.u32 does not, so we can only use the
+       * float types when we are used only as a float. We care about the uses
+       * and not the sources here, to ensure we pick u32 instead of f32 for:
+       *
+       *    ieq(1, bcsel(a, fneg(b), c))
+       *
+       * Picking sel.f32 would incorrectly "flush" the integer c. However, when
+       * we can use sel.f32, we prefer it since it usually gives more
+       * flexibility for modifiers and saturation.
+       */
+      if (is_only_used_as_float(alu)) {
+         type = jay_type_rebase(type, JAY_TYPE_F);
       }
 
       jay_SEL(b, type, dst, src[1], src[2], src[0]);
@@ -2587,7 +2605,10 @@ jay_compile(const struct intel_device_info *devinfo,
             union brw_any_prog_key *key)
 {
    jay_debug = debug_get_option_jay_debug();
-   bool debug = INTEL_DEBUG(intel_debug_flag_for_shader_stage(nir->info.stage));
+   bool debug =
+      INTEL_DEBUG(intel_debug_flag_for_shader_stage(nir->info.stage)) &&
+      !(nir->info.internal || NIR_DEBUG(PRINT_INTERNAL));
+
    unsigned simd_width = jay_process_nir(devinfo, nir, prog_data, key);
 
    if (debug) {
@@ -2621,8 +2642,14 @@ jay_compile(const struct intel_device_info *devinfo,
 
    jay_validate(s, "NIR->Jay translation");
 
+   /* After each propagation pass, eliminate dead code. This ensures use counts
+    * are correct in jay_opt_propagate_backwards which allows more progress. We
+    * don't do a progress loop - just run DCE an extra time. DCE is cheap.
+    */
    if (!(jay_debug & JAY_DBG_NOOPT)) {
       JAY_PASS(s, jay_opt_propagate_forwards);
+      JAY_PASS(s, jay_opt_dead_code);
+
       JAY_PASS(s, jay_opt_propagate_backwards);
       JAY_PASS(s, jay_opt_dead_code);
    }
@@ -2656,7 +2683,7 @@ jay_compile(const struct intel_device_info *devinfo,
    }
 
    struct jay_shader_bin *bin =
-      jay_to_binary(s, nir->constant_data, nir->constant_data_size);
+      jay_to_binary(s, nir->constant_data, nir->constant_data_size, debug);
    assert(bin->kernel);
    ralloc_steal(mem_ctx, bin);
 

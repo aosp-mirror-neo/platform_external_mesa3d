@@ -11,7 +11,6 @@
 #include <fcntl.h>
 #include "util/os_misc.h"
 #include "vulkan/vulkan_core.h"
-#include "vk_sync_dummy.h"
 
 #ifdef MAJOR_IN_SYSMACROS
 #include <sys/sysmacros.h>
@@ -43,7 +42,7 @@ typedef void *drmDevicePtr;
 #include "git_sha1.h"
 
 #if AMD_LLVM_AVAILABLE
-#include "ac_llvm_util.h"
+#include <llvm-c/TargetMachine.h>
 #endif
 
 #ifdef _WIN32
@@ -57,9 +56,10 @@ radv_perf_query_supported(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
 
-   /* SQTT / SPM interfere with the register states for perf counters, and
-    * the code has only been tested on GFX10.3 */
-   return pdev->info.gfx_level == GFX10_3 && !(instance->vk.trace_mode & RADV_TRACE_MODE_RGP);
+   /* SQTT / SPM interfere with the register states for perf counters. */
+   return (pdev->info.gfx_level == GFX10_3 ||
+           (pdev->info.gfx_level >= GFX11 && pdev->info.gfx_level < GFX12)) &&
+          !(instance->vk.trace_mode & RADV_TRACE_MODE_RGP);
 }
 
 static bool
@@ -80,6 +80,17 @@ radv_spm_trace_enabled(const struct radv_physical_device *pdev)
 
    return (instance->vk.trace_mode & RADV_TRACE_MODE_RGP) &&
           debug_get_bool_option("RADV_THREAD_TRACE_CACHE_COUNTERS", pdev->info.gfx_level >= GFX10);
+}
+
+bool
+radv_tmz_enabled(const struct radv_physical_device *pdev)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   /* TODO: Fix GFX/SDMA rings hang on GFX9 APUs. */
+   const bool radv_supports_tmz = pdev->info.gfx_level >= GFX10 || pdev->info.family == CHIP_VEGA10;
+
+   return pdev->info.has_tmz_support && radv_supports_tmz && !(instance->debug_flags & RADV_DEBUG_NO_TMZ);
 }
 
 bool
@@ -203,7 +214,12 @@ bool
 radv_host_image_copy_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
-   return pdev->info.gfx_level >= GFX10 && (instance->experimental_flags & RADV_EXPERIMENTAL_HIC);
+   /* TODO: HIC is supported on GFX10 but the recent addrlib bump introduced few regressions that
+    * should be fixed soon, it's also still missing AVX for some formats. Let's not enable it by
+    * default for now.
+    */
+   return pdev->info.gfx_level >= GFX10_3 ||
+          (pdev->info.gfx_level == GFX10 && (instance->experimental_flags & RADV_EXPERIMENTAL_HIC));
 }
 
 bool
@@ -284,7 +300,7 @@ radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
 
    key->clear_lds = instance->drirc.misc.clear_lds;
    key->cs_wave32 = pdev->cs_wave_size == 32;
-   key->disable_aniso_single_level = instance->drirc.debug.disable_aniso_single_level && pdev->info.gfx_level < GFX8;
+   key->disable_aniso_single_level = instance->drirc.debug.disable_aniso_single_level;
    key->disable_shrink_image_store = instance->drirc.debug.disable_shrink_image_store;
    key->disable_sinking_load_input_fs = instance->drirc.debug.disable_sinking_load_input_fs;
    key->disable_trunc_coord = instance->drirc.debug.disable_trunc_coord;
@@ -556,6 +572,58 @@ radv_physical_device_init_mem_types(struct radv_physical_device *pdev)
    }
    pdev->memory_properties.memoryTypeCount = type_count;
 
+   if (radv_tmz_enabled(pdev)) {
+      if (vram_index >= 0 || visible_vram_index >= 0) {
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_VRAM;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED | RADEON_FLAG_NO_CPU_ACCESS;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = vram_index >= 0 ? vram_index : visible_vram_index,
+         };
+
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_VRAM;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED | RADEON_FLAG_NO_CPU_ACCESS | RADEON_FLAG_32BIT;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = vram_index >= 0 ? vram_index : visible_vram_index,
+         };
+      }
+
+      if (visible_vram_index >= 0) {
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_VRAM;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = visible_vram_index,
+         };
+
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_VRAM;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED | RADEON_FLAG_32BIT;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = visible_vram_index,
+         };
+      }
+
+      if (gart_index >= 0) {
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_GTT;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = gart_index,
+         };
+
+         pdev->memory_domains[type_count] = RADEON_DOMAIN_GTT;
+         pdev->memory_flags[type_count] = RADEON_FLAG_ENCRYPTED | RADEON_FLAG_32BIT;
+         pdev->memory_properties.memoryTypes[type_count++] = (VkMemoryType){
+            .propertyFlags = VK_MEMORY_PROPERTY_PROTECTED_BIT,
+            .heapIndex = gart_index,
+         };
+      }
+
+      pdev->memory_properties.memoryTypeCount = type_count;
+   }
+
    if (pdev->info.has_l2_uncached) {
       for (int i = 0; i < pdev->memory_properties.memoryTypeCount; i++) {
          VkMemoryType mem_type = pdev->memory_properties.memoryTypes[i];
@@ -583,6 +651,8 @@ radv_physical_device_init_mem_types(struct radv_physical_device *pdev)
          pdev->memory_types_32bit |= BITFIELD_BIT(i);
       if (pdev->memory_flags[i] & RADEON_FLAG_CPU_ACCESS)
          pdev->memory_types_host_visible |= BITFIELD_BIT(i);
+      if (pdev->memory_flags[i] & RADEON_FLAG_ENCRYPTED)
+         pdev->memory_types_protected |= BITFIELD_BIT(i);
    }
 }
 
@@ -676,7 +746,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_performance_query = radv_perf_query_supported(pdev),
       .KHR_pipeline_binary = true,
       .KHR_pipeline_executable_properties = true,
-      .KHR_pipeline_library = !pdev->use_llvm,
+      .KHR_pipeline_library = true,
 #ifdef RADV_USE_WSI_PLATFORM
       .KHR_present_id = true,
       .KHR_present_id2 = true,
@@ -696,6 +766,7 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .KHR_shader_atomic_int64 = true,
       .KHR_shader_bfloat16 = radv_bfloat16_enabled(pdev),
       .KHR_shader_clock = true,
+      .KHR_shader_constant_data = true,
       .KHR_shader_draw_parameters = true,
       .KHR_shader_expect_assume = true,
       .KHR_shader_float16_int8 = true,
@@ -967,7 +1038,7 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       .multiviewTessellationShader = true,
       .variablePointersStorageBuffer = true,
       .variablePointers = true,
-      .protectedMemory = false,
+      .protectedMemory = radv_tmz_enabled(pdev),
       .samplerYcbcrConversion = true,
       .shaderDrawParameters = true,
 
@@ -1542,6 +1613,9 @@ radv_physical_device_get_features(const struct radv_physical_device *pdev, struc
       /* VK_EXT_descriptor_heap */
       .descriptorHeap = true,
       .descriptorHeapCaptureReplay = true,
+
+      /* VK_KHR_shader_constant_data */
+      .shaderConstantData = true,
    };
 }
 
@@ -2755,6 +2829,22 @@ radv_physical_device_destroy(struct vk_physical_device *vk_device)
    vk_free(&instance->vk.alloc, pdev);
 }
 
+static VkQueueFlags
+radv_queue_family_protected_flag(const struct radv_physical_device *pdev, enum radv_queue_family qf)
+{
+   if (!radv_tmz_enabled(pdev))
+      return 0;
+
+   switch (qf) {
+   /* Only GFX and SDMA support TMZ. */
+   case RADV_QUEUE_GENERAL:
+   case RADV_QUEUE_TRANSFER:
+      return VK_QUEUE_PROTECTED_BIT;
+   default:
+      return 0;
+   }
+}
+
 static void
 radv_get_physical_device_queue_family_properties(struct radv_physical_device *pdev, uint32_t *pCount,
                                                  VkQueueFamilyProperties **pQueueFamilyProperties)
@@ -2796,7 +2886,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
          VkQueueFlags gfx_flags =
             VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT;
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = gfx_flags,
+            .queueFlags = gfx_flags | radv_queue_family_protected_flag(pdev, RADV_QUEUE_GENERAL),
             .queueCount = 1,
             .timestampValidBits = 64,
             .minImageTransferGranularity = (VkExtent3D){1, 1, 1},
@@ -2809,7 +2899,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
       VkQueueFlags compute_flags = VK_QUEUE_COMPUTE_BIT | VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT;
       if (*pCount > idx) {
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = compute_flags,
+            .queueFlags = compute_flags | radv_queue_family_protected_flag(pdev, RADV_QUEUE_COMPUTE),
             .queueCount = pdev->info.ip[AMD_IP_COMPUTE].num_queues,
             .timestampValidBits = 64,
             .minImageTransferGranularity = (VkExtent3D){1, 1, 1},
@@ -2821,7 +2911,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
    if (radv_video_decode_queue_enabled(pdev)) {
       if (*pCount > idx) {
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = VK_QUEUE_VIDEO_DECODE_BIT_KHR,
+            .queueFlags = VK_QUEUE_VIDEO_DECODE_BIT_KHR | radv_queue_family_protected_flag(pdev, RADV_QUEUE_VIDEO_DEC),
             .queueCount = pdev->info.ip[pdev->vid_decode_ip].num_queues,
             .timestampValidBits = 0,
             .minImageTransferGranularity = (VkExtent3D){1, 1, 1},
@@ -2833,7 +2923,8 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
    if (radv_transfer_queue_enabled(pdev)) {
       if (*pCount > idx) {
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT,
+            .queueFlags = VK_QUEUE_TRANSFER_BIT | VK_QUEUE_SPARSE_BINDING_BIT |
+                          radv_queue_family_protected_flag(pdev, RADV_QUEUE_TRANSFER),
             .queueCount = pdev->info.ip[AMD_IP_SDMA].num_queues,
             .timestampValidBits = 64,
             .minImageTransferGranularity = (VkExtent3D){16, 16, 8},
@@ -2845,7 +2936,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
    if (radv_video_encode_queue_enabled(pdev)) {
       if (*pCount > idx) {
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = VK_QUEUE_VIDEO_ENCODE_BIT_KHR,
+            .queueFlags = VK_QUEUE_VIDEO_ENCODE_BIT_KHR | radv_queue_family_protected_flag(pdev, RADV_QUEUE_VIDEO_ENC),
             .queueCount = pdev->info.ip[AMD_IP_VCN_ENC].num_queues,
             .timestampValidBits = 0,
             .minImageTransferGranularity = (VkExtent3D){1, 1, 1},
@@ -2857,7 +2948,7 @@ radv_get_physical_device_queue_family_properties(struct radv_physical_device *pd
    if (radv_dedicated_sparse_queue_enabled(pdev)) {
       if (*pCount > idx) {
          *pQueueFamilyProperties[idx] = (VkQueueFamilyProperties){
-            .queueFlags = VK_QUEUE_SPARSE_BINDING_BIT,
+            .queueFlags = VK_QUEUE_SPARSE_BINDING_BIT | radv_queue_family_protected_flag(pdev, RADV_QUEUE_SPARSE),
             .queueCount = 1,
             .timestampValidBits = 0,
             .minImageTransferGranularity = (VkExtent3D){1, 1, 1},

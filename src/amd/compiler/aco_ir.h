@@ -1042,13 +1042,7 @@ private:
 struct RegisterDemand {
    constexpr RegisterDemand() = default;
    constexpr RegisterDemand(const int16_t v, const int16_t s) noexcept : vgpr{v}, sgpr{s} {}
-   constexpr RegisterDemand(Temp t) noexcept
-   {
-      if (t.regClass().type() == RegType::sgpr)
-         sgpr = t.size();
-      else
-         vgpr = t.size();
-   }
+   constexpr RegisterDemand(Temp t) noexcept { (*this)[t.type()] = t.size(); }
    int16_t vgpr = 0;
    int16_t sgpr = 0;
 
@@ -1065,6 +1059,18 @@ struct RegisterDemand {
    constexpr bool exceeds(const RegisterDemand other) const noexcept
    {
       return vgpr > other.vgpr || sgpr > other.sgpr;
+   }
+
+   constexpr bool empty() const noexcept { return !exceeds(RegisterDemand()); }
+
+   constexpr const int16_t& operator[](RegType type) const noexcept
+   {
+      return type == RegType::vgpr ? vgpr : sgpr;
+   }
+
+   constexpr int16_t& operator[](RegType type) noexcept
+   {
+      return type == RegType::vgpr ? vgpr : sgpr;
    }
 
    constexpr RegisterDemand operator+(const Temp t) const noexcept
@@ -1101,19 +1107,13 @@ struct RegisterDemand {
 
    constexpr RegisterDemand& operator+=(const Temp t) noexcept
    {
-      if (t.type() == RegType::sgpr)
-         sgpr += t.size();
-      else
-         vgpr += t.size();
+      (*this)[t.type()] += t.size();
       return *this;
    }
 
    constexpr RegisterDemand& operator-=(const Temp t) noexcept
    {
-      if (t.type() == RegType::sgpr)
-         sgpr -= t.size();
-      else
-         vgpr -= t.size();
+      (*this)[t.type()] -= t.size();
       return *this;
    }
 

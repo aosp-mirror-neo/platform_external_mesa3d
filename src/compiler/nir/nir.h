@@ -3674,6 +3674,7 @@ typedef struct nir_loop {
    nir_loop_info *info;
    nir_loop_control control;
    bool partially_unrolled;
+   bool do_while;
 
    /**
     * Whether some loop-active invocations might take a different control-flow path:
@@ -5443,6 +5444,7 @@ bool nir_lower_vars_to_scratch_global(nir_shader *shader,
 bool nir_lower_scratch_to_var(nir_shader *nir);
 
 bool nir_lower_clip_halfz(nir_shader *shader);
+bool nir_lower_clip_halfz_dynamic(nir_shader *shader);
 
 void nir_shader_gather_info(nir_shader *shader, nir_function_impl *entrypoint);
 void nir_gather_clip_cull_distance_sizes_from_vars(nir_shader *nir);
@@ -6698,6 +6700,7 @@ bool nir_opt_copy_prop_vars(nir_shader *shader);
 
 bool nir_opt_cse(nir_shader *shader);
 
+bool nir_opt_dce_impl(nir_function_impl *impl);
 bool nir_opt_dce(nir_shader *shader);
 
 bool nir_opt_dead_cf(nir_shader *shader);
