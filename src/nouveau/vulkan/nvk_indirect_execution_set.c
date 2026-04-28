@@ -31,7 +31,6 @@ nvk_ies_cs_qmd_init(const struct nvk_physical_device *pdev,
    struct nak_qmd_info qmd_info = {
       .addr = shader->hdr_addr,
       .smem_size = shader->info.cs.smem_size,
-      .smem_max = NVK_MAX_SHARED_SIZE,
    };
 
    assert(shader->cbuf_map.cbuf_count <= ARRAY_SIZE(qmd_info.cbufs));
@@ -86,16 +85,16 @@ uint16_t
 nvk_ies_gfx_pipeline_max_dw_count(const struct nvk_physical_device *pdev,
                                   VkShaderStageFlags stages)
 {
-   gl_shader_stage last_vtgm = MESA_SHADER_VERTEX;
+   mesa_shader_stage last_vtgm = MESA_SHADER_VERTEX;
    u_foreach_bit(s, stages) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
       if (stage != MESA_SHADER_FRAGMENT)
          last_vtgm = stage;
    }
 
    uint16_t push_dw = 0;
    u_foreach_bit(s, stages) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
       push_dw += nvk_max_shader_push_dw(pdev, stage, stage == last_vtgm);
    }
 
@@ -116,10 +115,10 @@ nvk_ies_set_gfx_pipeline(struct nvk_device *dev,
                          uint32_t index,
                          struct vk_pipeline *pipeline)
 {
-   gl_shader_stage last_vtgm = MESA_SHADER_VERTEX;
+   mesa_shader_stage last_vtgm = MESA_SHADER_VERTEX;
    struct nvk_shader *type_shader[6] = {};
    u_foreach_bit(s, pipeline->stages) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
       struct vk_shader *vk_shader = vk_pipeline_get_shader(pipeline, stage);
       struct nvk_shader *shader =
          container_of(vk_shader, struct nvk_shader, vk);
@@ -162,7 +161,7 @@ nvk_ies_gfx_shader_max_dw_count(const struct nvk_physical_device *pdev,
    /* Each entry is a single shader so take the max */
    uint16_t max_push_dw = 0;
    u_foreach_bit(s, stages) {
-      gl_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
+      mesa_shader_stage stage = vk_to_mesa_shader_stage(1 << s);
       uint16_t push_dw = nvk_max_shader_push_dw(pdev, stage, last_vtgm);
       max_push_dw = MAX2(max_push_dw, push_dw);
    }
@@ -306,6 +305,8 @@ nvk_CreateIndirectExecutionSetEXT(VkDevice _device,
       UNREACHABLE("Unknown indirect execution set info type");
    }
 
+   ies->stride_B = align(ies->stride_B, pdev->info.nc_atom_size_B);
+
    size_t size = ies->count * (size_t)ies->stride_B;
    result = nvkmd_dev_alloc_mapped_mem(dev->nvkmd, &dev->vk.base,
                                        size, 0, NVKMD_MEM_LOCAL,
@@ -320,6 +321,7 @@ nvk_CreateIndirectExecutionSetEXT(VkDevice _device,
       VK_FROM_HANDLE(vk_pipeline, pipeline,
                      pCreateInfo->info.pPipelineInfo->initialPipeline);
       nvk_ies_set_pipeline(dev, ies, 0, pipeline);
+      nvkmd_mem_sync_map_to_gpu(ies->mem, 0, ies->stride_B);
       break;
    }
 
@@ -331,6 +333,7 @@ nvk_CreateIndirectExecutionSetEXT(VkDevice _device,
          VK_FROM_HANDLE(nvk_shader, shader, info->pInitialShaders[i]);
          nvk_ies_set_shader(dev, ies, i, shader);
       }
+      nvkmd_mem_sync_map_to_gpu(ies->mem, 0, ies->stride_B * info->shaderCount);
       break;
    }
 
@@ -369,10 +372,21 @@ nvk_UpdateIndirectExecutionSetPipelineEXT(
    VK_FROM_HANDLE(nvk_device, dev, _device);
    VK_FROM_HANDLE(nvk_indirect_execution_set, ies, indirectExecutionSet);
 
+   if (executionSetWriteCount == 0)
+      return;
+
+   uint32_t min_idx = UINT32_MAX, max_idx = 0;
    for (uint32_t i = 0; i < executionSetWriteCount; i++) {
       VK_FROM_HANDLE(vk_pipeline, pipeline, pExecutionSetWrites[i].pipeline);
+
+      min_idx = MIN2(min_idx, pExecutionSetWrites[i].index);
+      max_idx = MAX2(max_idx, pExecutionSetWrites[i].index);
+
       nvk_ies_set_pipeline(dev, ies, pExecutionSetWrites[i].index, pipeline);
    }
+
+   nvkmd_mem_sync_map_to_gpu(ies->mem, min_idx * (uint64_t)ies->stride_B,
+                             (max_idx + 1) * (uint64_t)ies->stride_B);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -385,8 +399,19 @@ nvk_UpdateIndirectExecutionSetShaderEXT(
    VK_FROM_HANDLE(nvk_device, dev, _device);
    VK_FROM_HANDLE(nvk_indirect_execution_set, ies, indirectExecutionSet);
 
+   if (executionSetWriteCount == 0)
+      return;
+
+   uint32_t min_idx = UINT32_MAX, max_idx = 0;
    for (uint32_t i = 0; i < executionSetWriteCount; i++) {
       VK_FROM_HANDLE(nvk_shader, shader, pExecutionSetWrites[i].shader);
+
+      min_idx = MIN2(min_idx, pExecutionSetWrites[i].index);
+      max_idx = MAX2(max_idx, pExecutionSetWrites[i].index);
+
       nvk_ies_set_shader(dev, ies, pExecutionSetWrites[i].index, shader);
    }
+
+   nvkmd_mem_sync_map_to_gpu(ies->mem, min_idx * (uint64_t)ies->stride_B,
+                             (max_idx + 1) * (uint64_t)ies->stride_B);
 }

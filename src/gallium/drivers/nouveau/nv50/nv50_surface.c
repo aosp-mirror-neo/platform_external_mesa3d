@@ -454,7 +454,9 @@ nv50_clear_depth_stencil(struct pipe_context *pipe,
 }
 
 void
-nv50_clear(struct pipe_context *pipe, unsigned buffers, const struct pipe_scissor_state *scissor_state,
+nv50_clear(struct pipe_context *pipe, unsigned buffers,
+           uint32_t color_clear_mask, uint8_t stencil_clear_mask,
+           const struct pipe_scissor_state *scissor_state,
            const union pipe_color_union *color,
            double depth, unsigned stencil)
 {
@@ -815,7 +817,7 @@ nv50_blitter_make_vp(struct nv50_blitter *blit)
       0x10000811, 0x0423c789, /* mov b32 o[0x10] s[0x10] */ /* TEXC.z */
    };
 
-   blit->vp.type = PIPE_SHADER_VERTEX;
+   blit->vp.type = MESA_SHADER_VERTEX;
    blit->vp.translated = true;
    blit->vp.code = (uint32_t *)code; /* const_cast */
    blit->vp.code_size = sizeof(code);
@@ -867,7 +869,7 @@ nv50_blitter_make_fp(struct pipe_context *pipe,
 
    const int chipset = nouveau_screen(pipe->screen)->device->chipset;
    const nir_shader_compiler_options *options =
-      nv50_ir_nir_shader_compiler_options(chipset, PIPE_SHADER_FRAGMENT);
+      nv50_ir_nir_shader_compiler_options(chipset, MESA_SHADER_FRAGMENT);
 
    struct nir_builder b =
       nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
@@ -1094,26 +1096,26 @@ nv50_blit_set_dst(struct nv50_blitctx *ctx,
 {
    struct nv50_context *nv50 = ctx->nv50;
    struct pipe_context *pipe = &nv50->base.pipe;
-   struct pipe_surface templ;
 
-   /* We are going to reset this, so no point in refcounting */
-   templ.texture = res;
    if (util_format_is_depth_or_stencil(format))
-      templ.format = nv50_blit_zeta_to_colour_format(format);
-   else
-      templ.format = format;
+      format = nv50_blit_zeta_to_colour_format(format);
 
-   templ.level = level;
-   templ.first_layer = templ.last_layer = layer;
+   /* this will be overwritten (not released) at the end of the blit */
+   nv50->framebuffer.cbufs[0] = (struct pipe_surface) {
+      .texture = res,
+      .format = format,
+      .level = level,
+      .first_layer = layer,
+      .last_layer = layer,
+   };
 
    if (layer == -1) {
-      templ.first_layer = 0;
-      templ.last_layer =
+      nv50->framebuffer.cbufs[0].first_layer = 0;
+      nv50->framebuffer.cbufs[0].last_layer =
          (res->target == PIPE_TEXTURE_3D ? res->depth0 : res->array_size) - 1;
    }
 
-   nv50->fb_cbufs[0] = nv50_miptree_surface_new(pipe, res, &templ);
-   nv50->framebuffer.cbufs[0] = templ;
+   nv50->fb_cbufs[0] = nv50_miptree_surface_new(pipe, res, &nv50->framebuffer.cbufs[0]);
    nv50->framebuffer.nr_cbufs = 1;
    memset(&nv50->framebuffer.zsbuf, 0, sizeof(nv50->framebuffer.zsbuf));
    nv50->fb_zsbuf = NULL;

@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::api::types::*;
 use crate::api::util::*;
@@ -32,7 +35,6 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::mem;
-use std::mem::size_of;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::os::raw::c_void;
@@ -162,7 +164,7 @@ pub enum ResourceValidityEntity {
 
 /// Allocation with real GPU backing storage. Tracks on which device the content is valid on.
 pub struct ResourceAllocation {
-    pub res: HashMap<&'static Device, PipeResource>,
+    pub res: HashMap<&'static Device, PipeResourceOwned>,
     valid_on: Mutex<Vec<ResourceValidityEntity>>,
     // it's a bit hacky, but storing the pointer as `usize` gives us `Send` and `Sync`. The
     // application is required to ensure no data races exist on the memory anyway.
@@ -214,7 +216,7 @@ impl ResourceAllocation {
     /// migrate the data to the GPU.
     /// TODO: add a map function to return a mapping to the resource of one device the data is valid
     ///       on instead of migrating if the user would simply map the resource anyway.
-    fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
+    fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResourceOwned> {
         let dev = ctx.dev;
         let dev_entity = ResourceValidityEntity::Device(dev);
         let to_res = self.res.get(dev).ok_or(CL_OUT_OF_HOST_MEMORY)?;
@@ -443,7 +445,7 @@ pub enum Allocation {
 impl Allocation {
     /// Creates a new allocation object assuming the initial data is valid on every device.
     pub fn new(
-        res: HashMap<&'static Device, PipeResource>,
+        res: HashMap<&'static Device, PipeResourceOwned>,
         offset: usize,
         host_ptr: *mut c_void,
     ) -> Self {
@@ -509,12 +511,16 @@ impl Allocation {
     }
 
     /// Returns the resource associated with `dev` without any data migration.
-    fn get_res_of_dev(&self, dev: &Device) -> Option<&PipeResource> {
+    fn get_res_of_dev(&self, dev: &Device) -> Option<&PipeResourceOwned> {
         self.get_real_resource().res.get(dev)
     }
 
     /// Returns the resource associated with `ctx.dev` and transparently migrate the data.
-    pub fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
+    pub fn get_res_for_access(
+        &self,
+        ctx: &QueueContext,
+        rw: RWFlags,
+    ) -> CLResult<&PipeResourceOwned> {
         self.get_real_resource().get_res_for_access(ctx, rw)
     }
 
@@ -838,6 +844,8 @@ impl MemBase {
         } else {
             let res_type = if bit_check(flags, CL_MEM_ALLOC_HOST_PTR) {
                 ResourceType::Staging
+            } else if bit_check(flags, CL_MEM_IMMUTABLE_EXT) {
+                ResourceType::Immutable
             } else {
                 ResourceType::Normal
             };
@@ -961,6 +969,8 @@ impl MemBase {
 
         let res_type = if bit_check(flags, CL_MEM_ALLOC_HOST_PTR) {
             ResourceType::Staging
+        } else if bit_check(flags, CL_MEM_IMMUTABLE_EXT) {
+            ResourceType::Immutable
         } else {
             ResourceType::Normal
         };
@@ -1162,7 +1172,11 @@ impl MemBase {
             && bit_check(self.flags, CL_MEM_USE_HOST_PTR)
     }
 
-    pub fn get_res_for_access(&self, ctx: &QueueContext, rw: RWFlags) -> CLResult<&PipeResource> {
+    pub fn get_res_for_access(
+        &self,
+        ctx: &QueueContext,
+        rw: RWFlags,
+    ) -> CLResult<&PipeResourceOwned> {
         self.alloc.get_res_for_access(ctx, rw)
     }
 
@@ -2140,7 +2154,7 @@ impl Image {
         ))
     }
 
-    pub fn sampler_view<'c>(&self, ctx: &'c QueueContext) -> CLResult<PipeSamplerView<'c, '_>> {
+    pub fn sampler_view<'c>(&self, ctx: &'c QueueContext) -> CLResult<PipeSamplerView<'c>> {
         let res = self.get_res_for_access(ctx, RWFlags::RD)?;
 
         let mut template = if let Some(Mem::Buffer(parent)) = self.parent() {

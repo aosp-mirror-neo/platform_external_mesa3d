@@ -58,6 +58,12 @@ struct nak_fs_key {
    bool force_sample_shading;
    bool uses_underestimate;
 
+   uint8_t pad;
+};
+PRAGMA_DIAGNOSTIC_POP
+static_assert(sizeof(struct nak_fs_key) == 4, "This struct has no holes");
+
+struct nak_constant_offset_info {
    /**
     * The constant buffer index and offset at which the sample locations and
     * pass sample masks tables lives.
@@ -79,10 +85,27 @@ struct nak_fs_key {
     * sample in a multi-pass fragment shader invocaiton.
     */
    uint32_t sample_masks_offset;
-};
-PRAGMA_DIAGNOSTIC_POP
-static_assert(sizeof(struct nak_fs_key) == 12, "This struct has no holes");
 
+   /**
+    * The constant buffer index at which the printf buffer pointer lives.
+    */
+   uint8_t printf_cb;
+
+   /**
+    * The offset into printf_cb for the printf buffer pointer.
+    */
+   uint32_t printf_buffer_offset;
+};
+const extern struct nak_constant_offset_info nak_const_offsets_base;
+const extern struct nak_constant_offset_info nak_const_offsets_turing_graphics;
+
+#define NAK_PRINTF_BUFFER_SIZE 0x40000
+
+#ifdef NDEBUG
+#define NAK_CAN_PRINTF false
+#else
+#define NAK_CAN_PRINTF true
+#endif
 
 void nak_postprocess_nir(nir_shader *nir, const struct nak_compiler *nak,
                          nir_variable_mode robust2_modes,
@@ -100,13 +123,6 @@ enum ENUM_PACKED nak_ts_spacing {
    NAK_TS_SPACING_FRACT_EVEN = 2,
 };
 
-enum ENUM_PACKED nak_ts_prims {
-   NAK_TS_PRIMS_POINTS = 0,
-   NAK_TS_PRIMS_LINES = 1,
-   NAK_TS_PRIMS_TRIANGLES_CW = 2,
-   NAK_TS_PRIMS_TRIANGLES_CCW = 3,
-};
-
 struct nak_xfb_info {
    uint32_t stride[4];
    uint8_t stream[4];
@@ -120,7 +136,7 @@ struct nak_xfb_info {
 #pragma GCC diagnostic push
 #pragma GCC diagnostic error "-Wpadded"
 struct nak_shader_info {
-   gl_shader_stage stage;
+   mesa_shader_stage stage;
 
    /** Shader model */
    uint8_t sm;
@@ -146,7 +162,7 @@ struct nak_shader_info {
    uint32_t num_instrs;
 
    /** Number of cycles used by fixed-latency instructions */
-   uint32_t num_static_cycles;
+   uint64_t num_static_cycles;
 
    /** Number of spills from GPRs to Memory */
    uint32_t num_spills_to_mem;
@@ -190,9 +206,10 @@ struct nak_shader_info {
       struct {
          enum nak_ts_domain domain;
          enum nak_ts_spacing spacing;
-         enum nak_ts_prims prims;
+         bool ccw;
+         bool point_mode;
 
-         uint8_t _pad[9];
+         uint8_t _pad[8];
       } ts;
 
       /* Used to initialize the union for other stages */
@@ -210,6 +227,8 @@ struct nak_shader_info {
 
       struct nak_xfb_info xfb;
    } vtg;
+
+   uint8_t _pad1[4];
 
    /** Shader header for 3D stages */
    uint32_t hdr[32];
@@ -242,8 +261,7 @@ struct nak_qmd_cbuf {
 struct nak_qmd_info {
    uint64_t addr;
 
-   uint16_t smem_size;
-   uint16_t smem_max;
+   uint32_t smem_size;
 
    uint32_t global_size[3];
 

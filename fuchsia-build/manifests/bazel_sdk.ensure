@@ -1,4 +1,0 @@
-$ResolvedVersions bazel_sdk.resolved
-$VerifiedPlatform linux-amd64 mac-amd64
-fuchsia/sdk/core/fuchsia-bazel-rules/${os=linux}-${arch} version:19.20240321.1.1
-fuchsia/sdk/core/fuchsia-bazel-rules/${os=mac}-amd64 version:19.20240321.1.1

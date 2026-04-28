@@ -9,16 +9,15 @@
 #ifndef TU_UTIL_H
 #define TU_UTIL_H
 
-#include <atomic>
-
 #include "tu_common.h"
 
-#include "util/macros.h"
-#include "util/u_math.h"
+#include <atomic>
+
+#include "compiler/shader_enums.h"
 #include "util/format/u_format_pack.h"
 #include "util/format/u_format_zs.h"
-#include "compiler/shader_enums.h"
-
+#include "util/macros.h"
+#include "util/u_math.h"
 #include "vk_util.h"
 
 /*
@@ -29,12 +28,12 @@
 #define TU_DEBUG(name) unlikely(tu_env.debug.load(std::memory_order_acquire) & TU_DEBUG_##name)
 
 /*
- * Same as TU_DEBUG, but only uses the environment variable's value rather
- * than TU_DEBUG_FILE. This is useful for flags that should not be changed
+ * Same as TU_DEBUG, but only uses the initial value without any runtime changes
+ * from TU_DEBUG_FILE. This is useful for flags that should not be changed
  * at runtime or when a flag has different behavior depending on whether it
  * is set in TU_DEBUG or TU_DEBUG_FILE.
  */
-#define TU_DEBUG_ENV(name) unlikely(tu_env.env_debug & TU_DEBUG_##name)
+#define TU_DEBUG_START(name) unlikely(tu_env.start_debug & TU_DEBUG_##name)
 
 enum tu_debug_flags : uint64_t
 {
@@ -73,11 +72,13 @@ enum tu_debug_flags : uint64_t
    TU_DEBUG_CHECK_CMD_BUFFER_STATUS  = BITFIELD64_BIT(32),
    TU_DEBUG_COMM                     = BITFIELD64_BIT(33),
    TU_DEBUG_NOFDM                    = BITFIELD64_BIT(34),
+   TU_DEBUG_NO_CONCURRENT_BINNING    = BITFIELD64_BIT(35),
+   TU_DEBUG_FORCE_CONCURRENT_BINNING = BITFIELD64_BIT(36),
 };
 
 struct tu_env {
     std::atomic<uint64_t> debug;
-    uint64_t env_debug;
+    uint64_t start_debug;
 };
 
 extern struct tu_env tu_env;
@@ -134,17 +135,24 @@ __tu_finishme(const char *file, int line, const char *format, ...)
    } while (0)
 
 void
-tu_framebuffer_tiling_config(struct tu_framebuffer *fb,
-                             const struct tu_device *device,
-                             const struct tu_render_pass *pass);
+tu_framebuffer_init_tiling_config(struct tu_framebuffer *fb,
+                                  const struct tu_device *device,
+                                  const struct tu_render_pass *pass);
+
+const struct tu_tiling_config *
+tu_framebuffer_get_tiling_config(struct tu_framebuffer *fb,
+                                 const struct tu_device *device,
+                                 const struct tu_render_pass *pass,
+                                 int gmem_layout,
+                                 uint32_t divisor);
 
 #define TU_STAGE_MASK ((1 << MESA_SHADER_STAGES) - 1)
 
 #define tu_foreach_stage(stage, stage_bits)                                  \
-   for (gl_shader_stage stage,                                               \
-        __tmp = (gl_shader_stage) ((stage_bits) &TU_STAGE_MASK);             \
-        stage = (gl_shader_stage) (__builtin_ffs(__tmp) - 1), __tmp;         \
-        __tmp = (gl_shader_stage) (__tmp & ~(1 << (stage))))
+   for (mesa_shader_stage stage,                                               \
+        __tmp = (mesa_shader_stage) ((stage_bits) &TU_STAGE_MASK);             \
+        stage = (mesa_shader_stage) (__builtin_ffs(__tmp) - 1), __tmp;         \
+        __tmp = (mesa_shader_stage) (__tmp & ~(1 << (stage))))
 
 static inline enum a3xx_msaa_samples
 tu_msaa_samples(uint32_t samples)
@@ -154,7 +162,7 @@ tu_msaa_samples(uint32_t samples)
 }
 
 static inline uint32_t
-tu6_stage2opcode(gl_shader_stage stage)
+tu6_stage2opcode(mesa_shader_stage stage)
 {
    if (stage == MESA_SHADER_FRAGMENT || stage == MESA_SHADER_COMPUTE)
       return CP_LOAD_STATE6_FRAG;
@@ -162,13 +170,13 @@ tu6_stage2opcode(gl_shader_stage stage)
 }
 
 static inline enum a6xx_state_block
-tu6_stage2texsb(gl_shader_stage stage)
+tu6_stage2texsb(mesa_shader_stage stage)
 {
    return (enum a6xx_state_block) (SB6_VS_TEX + stage);
 }
 
 static inline enum a6xx_state_block
-tu6_stage2shadersb(gl_shader_stage stage)
+tu6_stage2shadersb(mesa_shader_stage stage)
 {
    return (enum a6xx_state_block) (SB6_VS_SHADER + stage);
 }

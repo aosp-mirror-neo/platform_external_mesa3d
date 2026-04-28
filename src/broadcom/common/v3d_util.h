@@ -53,7 +53,7 @@
 
 uint32_t
 v3d_csd_choose_workgroups_per_supergroup(struct v3d_device_info *devinfo,
-                                         bool has_subgroups,
+                                         bool can_use_supergroups,
                                          bool has_tsy_barrier,
                                          uint32_t threads,
                                          uint32_t num_wgs,
@@ -97,6 +97,15 @@ log2_tile_size(uint32_t size)
                 UNREACHABLE("Unsupported tile width/height");
         }
 }
+
+void
+v3d_tile_alloc_sizes(uint32_t layers,
+                     uint32_t tiles_x,
+                     uint32_t tiles_y,
+                     uint32_t draws,
+                     uint32_t page_size,
+                     uint32_t *tile_alloc_size,
+                     uint32_t *tile_state_size);
 
 uint32_t
 v3d_compute_rt_row_row_stride_128_bits(uint32_t tile_width,

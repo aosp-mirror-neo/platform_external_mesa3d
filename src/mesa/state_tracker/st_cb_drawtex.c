@@ -135,7 +135,8 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    st_flush_bitmap_cache(st);
    st_invalidate_readpix_cache(st);
 
-   st_validate_state(st, ST_PIPELINE_META_STATE_MASK);
+   ST_PIPELINE_META_STATE_MASK(mask);
+   st_validate_state(st, mask);
 
    /* determine if we need vertex color */
    if (ctx->FragmentProgram._Current->info.inputs_read & VARYING_BIT_COL0)
@@ -156,6 +157,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    numAttribs = 1 + emitColor + numTexCoords;
 
    /* load vertex buffer */
+   struct pipe_resource *releasebuf = NULL;
    {
 #define SET_ATTRIB(VERT, ATTR, X, Y, Z, W)                              \
       do {                                                              \
@@ -173,7 +175,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
 
       u_upload_alloc(pipe->stream_uploader, 0,
                      numAttribs * 4 * 4 * sizeof(GLfloat), 4,
-                     &offset, &vbuffer, (void **) &vbuf);
+                     &offset, &vbuffer, &releasebuf, (void **) &vbuf);
       if (!vbuffer) {
          return;
       }
@@ -244,13 +246,8 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
 #undef SET_ATTRIB
    }
 
-   cso_save_state(cso, (CSO_BIT_VIEWPORT |
-                        CSO_BIT_STREAM_OUTPUTS |
-                        CSO_BIT_VERTEX_SHADER |
-                        CSO_BIT_TESSCTRL_SHADER |
-                        CSO_BIT_TESSEVAL_SHADER |
-                        CSO_BIT_GEOMETRY_SHADER |
-                        CSO_BIT_VERTEX_ELEMENTS));
+   /* Save only states that have no st_atom — they can't be re-derived. */
+   cso_save_state(cso, CSO_BIT_STREAM_OUTPUTS);
 
    {
       void *vs = lookup_shader(st, numAttribs, slots);
@@ -259,6 +256,7 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    cso_set_tessctrl_shader_handle(cso, NULL);
    cso_set_tesseval_shader_handle(cso, NULL);
    cso_set_geometry_shader_handle(cso, NULL);
+   cso_set_mesh_shader_handle(cso, NULL);
 
    for (i = 0; i < numAttribs; i++) {
       velems.velems[i].src_offset = i * 4 * sizeof(float);
@@ -294,15 +292,27 @@ st_DrawTex(struct gl_context *ctx, GLfloat x, GLfloat y, GLfloat z,
    }
 
    util_draw_vertex_buffer(pipe, cso, vbuffer,
-                           offset, true,
+                           offset,
                            MESA_PRIM_TRIANGLE_FAN,
                            4,  /* verts */
                            numAttribs); /* attribs/vert */
 
-   /* restore state */
+   pipe_resource_release(pipe, releasebuf);
+
+   /* Restore atomless states via CSO. */
    cso_restore_state(cso, 0);
-   ctx->Array.NewVertexElements = true;
-   ctx->NewDriverState |= ST_NEW_VERTEX_ARRAYS;
+
+   /* Invalidate all states this meta-op modified. The atoms will
+    * re-derive them from GL state before the next draw.
+    */
+   st_context_invalidate_state(st,
+                               ST_INVALIDATE_VIEWPORT |
+                               ST_INVALIDATE_VERTEX_BUFFERS |
+                               ST_INVALIDATE_VS_STATE |
+                               ST_INVALIDATE_GS_STATE |
+                               ST_INVALIDATE_TCS_STATE |
+                               ST_INVALIDATE_TES_STATE |
+                               ST_INVALIDATE_MESH_STATE);
 }
 
 /**

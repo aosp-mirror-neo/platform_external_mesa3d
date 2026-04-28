@@ -69,7 +69,7 @@ v3d_pipe_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
                  */
                 drmSyncobjExportSyncFile(v3d->fd, v3d->out_sync, &fd);
                 if (fd == -1) {
-                        fprintf(stderr, "export failed\n");
+                        mesa_loge("Export failed");
                         *fence = NULL;
                         return;
                 }
@@ -228,7 +228,7 @@ v3d_ensure_prim_counts_allocated(struct v3d_context *ctx)
 
         /* Init all 7 counters and 1 padding to 0 */
         uint32_t zeroes[8] = { 0 };
-        u_upload_data(ctx->uploader,
+        u_upload_data_ref(ctx->uploader,
                       0, sizeof(zeroes), 32, zeroes,
                       &ctx->prim_counts_offset,
                       &ctx->prim_counts);
@@ -236,19 +236,19 @@ v3d_ensure_prim_counts_allocated(struct v3d_context *ctx)
 
 void
 v3d_flag_dirty_sampler_state(struct v3d_context *v3d,
-                             enum pipe_shader_type shader)
+                             mesa_shader_stage shader)
 {
         switch (shader) {
-        case PIPE_SHADER_VERTEX:
+        case MESA_SHADER_VERTEX:
                 v3d->dirty |= V3D_DIRTY_VERTTEX;
                 break;
-        case PIPE_SHADER_GEOMETRY:
+        case MESA_SHADER_GEOMETRY:
                 v3d->dirty |= V3D_DIRTY_GEOMTEX;
                 break;
-        case PIPE_SHADER_FRAGMENT:
+        case MESA_SHADER_FRAGMENT:
                 v3d->dirty |= V3D_DIRTY_FRAGTEX;
                 break;
-        case PIPE_SHADER_COMPUTE:
+        case MESA_SHADER_COMPUTE:
                 v3d->dirty |= V3D_DIRTY_COMPTEX;
                 break;
         default:
@@ -476,7 +476,7 @@ v3d_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
         v3d->base.stream_uploader = v3d->uploader;
         v3d->base.const_uploader = v3d->uploader;
         v3d->state_uploader = u_upload_create(&v3d->base,
-                                              4096,
+                                              devinfo->page_size,
                                               PIPE_BIND_CONSTANT_BUFFER,
                                               PIPE_USAGE_STREAM, 0);
 

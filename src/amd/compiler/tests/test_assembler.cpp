@@ -298,6 +298,10 @@ BEGIN_TEST(assembler.long_jump.constaddr)
    if (!setup_cs(NULL, (amd_gfx_level)GFX10))
       return;
 
+   //! llvm_version: #llvm_ver
+   fprintf(output, "llvm_version: %u\n", LLVM_VERSION_MAJOR);
+   //; funcs['lit'] = lambda v: 'lit(%s)' % hex(int(v)) if llvm_ver >= 22 else v
+
    //>> s_branch 16369                                              ; bf823ff1
    bld.sopp(aco_opcode::s_branch, 2);
 
@@ -309,7 +313,7 @@ BEGIN_TEST(assembler.long_jump.constaddr)
    bld.reset(program->create_and_insert_block());
 
    //>> s_getpc_b64 s[0:1]                                          ; be801f00
-   //! s_add_u32 s0, s0, 32                                         ; 8000ff00 00000020
+   //! s_add_u32 s0, s0, @lit(32)                                   ; 8000ff00 00000020
    bld.sop1(aco_opcode::p_constaddr_getpc, Definition(PhysReg(0), s2), Operand::zero());
    bld.sop2(aco_opcode::p_constaddr_addlo, Definition(PhysReg(0), s1), bld.def(s1, scc),
             Operand(PhysReg(0), s1), Operand::zero(), Operand::zero());
@@ -424,12 +428,16 @@ BEGIN_TEST(assembler.p_constaddr)
    dst0.setFixed(PhysReg(0));
    dst1.setFixed(PhysReg(2));
 
+   //! llvm_version: #llvm_ver
+   fprintf(output, "llvm_version: %u\n", LLVM_VERSION_MAJOR);
+   //; funcs['lit'] = lambda v: 'lit(%s)' % hex(int(v)) if llvm_ver >= 22 else v
+
    //>> s_getpc_b64 s[0:1] ; be801c00
-   //! s_add_u32 s0, s0, 44 ; 8000ff00 0000002c
+   //! s_add_u32 s0, s0, @lit(44) ; 8000ff00 0000002c
    bld.pseudo(aco_opcode::p_constaddr, dst0, bld.def(s1, scc), Operand::zero());
 
    //! s_getpc_b64 s[2:3] ; be821c00
-   //! s_add_u32 s2, s2, 64 ; 8002ff02 00000040
+   //! s_add_u32 s2, s2, @lit(64) ; 8002ff02 00000040
    bld.pseudo(aco_opcode::p_constaddr, dst1, bld.def(s1, scc), Operand::c32(32));
 
    aco::lower_to_hw_instr(program.get());
@@ -505,8 +513,8 @@ BEGIN_TEST(assembler.smem)
       //! s_load_b32 s4, s[16:17], s8 offset:0x2a                     ; f4000108 1000002a
       bld.smem(aco_opcode::s_load_dword, dst, op_s2, Operand::c32(42), op_s1);
 
-      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0, 0}};
+      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0}};
       if (gfx >= GFX12) {
          cache_coherent.gfx12.scope = gfx12_scope_device;
          cache_non_temporal.gfx12.temporal_hint = gfx12_load_non_temporal;
@@ -587,10 +595,10 @@ BEGIN_TEST(assembler.mubuf)
       bld.mubuf(aco_opcode::buffer_load_dword, dst, op_s4, Operand(v1), op_s1, 84, false);
 
       /* Various flags */
-      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0, 0}};
+      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0}};
       if (gfx >= GFX12) {
          cache_coherent.gfx12.scope = gfx12_scope_device;
          cache_sys_coherent.gfx12.scope = gfx12_scope_memory;
@@ -629,45 +637,6 @@ BEGIN_TEST(assembler.mubuf)
       bld.mubuf(aco_opcode::buffer_load_dword, dst, op_s4, Operand(v1), Operand::zero(), 0, false)
          ->mubuf()
          .tfe = true;
-
-      /* LDS */
-      if (gfx == GFX11) {
-         //~gfx11! buffer_load_lds_b32 off, s[32:35], 0                        ; e0c40000 80080080
-         bld.mubuf(aco_opcode::buffer_load_dword, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-
-         //~gfx11! buffer_load_lds_i8 off, s[32:35], 0                         ; e0b80000 80080080
-         bld.mubuf(aco_opcode::buffer_load_sbyte, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-
-         //~gfx11! buffer_load_lds_i16 off, s[32:35], 0                        ; e0c00000 80080080
-         bld.mubuf(aco_opcode::buffer_load_sshort, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-
-         //~gfx11! buffer_load_lds_u8 off, s[32:35], 0                         ; e0b40000 80080080
-         bld.mubuf(aco_opcode::buffer_load_ubyte, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-
-         //~gfx11! buffer_load_lds_u16 off, s[32:35], 0                        ; e0bc0000 80080080
-         bld.mubuf(aco_opcode::buffer_load_ushort, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-
-         //~gfx11! buffer_load_lds_format_x off, s[32:35], 0                   ; e0c80000 80080080
-         bld.mubuf(aco_opcode::buffer_load_format_x, op_s4, Operand(v1), Operand::zero(), op_m0, 0,
-                   false)
-            ->mubuf()
-            .lds = true;
-      }
 
       /* Stores */
       //~gfx11! buffer_store_b32 v10, off, s[32:35], s30                    ; e0680000 1e080a80
@@ -754,9 +723,9 @@ BEGIN_TEST(assembler.mtbuf)
                 false);
 
       /* Various flags */
-      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0, 0}};
+      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0}};
       if (gfx >= GFX12) {
          cache_coherent.gfx12.scope = gfx12_scope_device;
          cache_sys_coherent.gfx12.scope = gfx12_scope_memory;
@@ -862,10 +831,10 @@ BEGIN_TEST(assembler.mimg)
          0x1;
 
       /* Various flags */
-      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0, 0}};
+      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0}};
       if (gfx >= GFX12) {
          cache_coherent.gfx12.scope = gfx12_scope_device;
          cache_sys_coherent.gfx12.scope = gfx12_scope_memory;
@@ -1037,10 +1006,10 @@ BEGIN_TEST(assembler.flat)
       bld.global(aco_opcode::global_load_dword, dst_v1, op_v2, Operand(s1), 84);
 
       /* Various flags */
-      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0, 0}};
-      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0, 0}};
+      ac_hw_cache_flags cache_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_sys_coherent = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_non_temporal = {{0, 0, 0, 0}};
+      ac_hw_cache_flags cache_atomic_rtn = {{0, 0, 0, 0}};
       if (gfx >= GFX12) {
          cache_coherent.gfx12.scope = gfx12_scope_device;
          cache_sys_coherent.gfx12.scope = gfx12_scope_memory;
@@ -1095,20 +1064,23 @@ BEGIN_TEST(assembler.exp)
       Operand op_m0(bld.tmp(s1));
       op_m0.setFixed(m0);
 
-      //~gfx11>> exp mrt3 v1, v0, v3, v2                                     ; f800003f 02030001
-      //~gfx12>> export mrt3 v1, v0, v3, v2                                  ; f800003f 02030001
+      //! mrt3: @match_func(mrt3)
+      fprintf(output, "mrt3: mrt3%s\n", LLVM_VERSION_MAJOR >= 23 ? "," : "");
+
+      //~gfx11>> exp @mrt3 v1, v0, v3, v2                                   ; f800003f 02030001
+      //~gfx12>> export @mrt3 v1, v0, v3, v2                                ; f800003f 02030001
       bld.exp(aco_opcode::exp, op[1], op[0], op[3], op[2], 0xf, 3);
 
-      //~gfx11! exp mrt3 v1, off, v0, off                                   ; f8000035 80008001
-      //~gfx12! export mrt3 v1, off, v0, off                                ; f8000035 80008001
+      //~gfx11! exp @mrt3 v1, off, v0, off                                  ; f8000035 80008001
+      //~gfx12! export @mrt3 v1, off, v0, off                               ; f8000035 80008001
       bld.exp(aco_opcode::exp, op[1], Operand(v1), op[0], Operand(v1), 0x5, 3);
 
-      //~gfx11! exp mrt3 v1, v0, v3, v2 done                                ; f800083f 02030001
-      //~gfx12! export mrt3 v1, v0, v3, v2 done                             ; f800083f 02030001
+      //~gfx11! exp @mrt3 v1, v0, v3, v2 done                               ; f800083f 02030001
+      //~gfx12! export @mrt3 v1, v0, v3, v2 done                            ; f800083f 02030001
       bld.exp(aco_opcode::exp, op[1], op[0], op[3], op[2], 0xf, 3, false, true);
 
-      //~gfx11! exp mrt3 v1, v0, v3, v2 row_en                              ; f800203f 02030001
-      //~gfx12! export mrt3 v1, v0, v3, v2 row_en                           ; f800203f 02030001
+      //~gfx11! exp @mrt3 v1, v0, v3, v2 row_en                             ; f800203f 02030001
+      //~gfx12! export @mrt3 v1, v0, v3, v2 row_en                          ; f800203f 02030001
       bld.exp(aco_opcode::exp, op[1], op[0], op[3], op[2], op_m0, 0xf, 3)->exp().row_en = true;
 
       finish_assembler_test();
@@ -1587,4 +1559,179 @@ BEGIN_TEST(assembler.vintrp_high_16bits)
 
       finish_assembler_test();
    }
+END_TEST
+
+BEGIN_TEST(assembler.gfx11_7)
+   if (LLVM_VERSION_MAJOR < 23 || !setup_cs(NULL, GFX11_7))
+      return;
+
+   Definition dst_v0 = bld.def(v1);
+   dst_v0.setFixed(PhysReg(256));
+
+   Definition dst_v1 = bld.def(v1);
+   dst_v1.setFixed(PhysReg(256 + 1));
+
+   Operand op_v0(bld.tmp(v1));
+   op_v0.setFixed(PhysReg(256 + 0));
+
+   Operand op_v1(bld.tmp(v1));
+   op_v1.setFixed(PhysReg(256 + 1));
+
+   Operand op_v2(bld.tmp(v1));
+   op_v2.setFixed(PhysReg(256 + 2));
+
+   Operand op_v4(bld.tmp(v1));
+   op_v4.setFixed(PhysReg(256 + 4));
+
+   Operand op_v5(bld.tmp(v1));
+   op_v5.setFixed(PhysReg(256 + 5));
+
+   Operand op_v6(bld.tmp(v1));
+   op_v6.setFixed(PhysReg(256 + 6));
+
+   //>> BB0:
+   //! v_cvt_f32_fp8_e32 v0, v1 ; 7e00d901
+   //! v_cvt_f32_bf8_e32 v0, v1 ; 7e00db01
+   bld.vop1(aco_opcode::v_cvt_f32_fp8, dst_v0, op_v1);
+   bld.vop1(aco_opcode::v_cvt_f32_bf8, dst_v0, op_v1);
+
+   //! v_cvt_pk_f32_fp8_e32 v[0:1], v1.l ; 7e00dd01
+   //! v_cvt_pk_f32_bf8_e32 v[0:1], v1.l ; 7e00df01
+   //! v_cvt_pk_f32_fp8_e32 v[0:1], v1.h ; 7e00dd81
+   //! v_cvt_pk_f32_bf8_e32 v[0:1], v1.h ; 7e00df81
+   bld.vop1(aco_opcode::v_cvt_pk_f32_fp8, dst_v0, op_v1);
+   bld.vop1(aco_opcode::v_cvt_pk_f32_bf8, dst_v0, op_v1);
+   bld.vop1(aco_opcode::v_cvt_pk_f32_fp8, dst_v0, op_v1).instr->valu().opsel[0] = true;
+   bld.vop1(aco_opcode::v_cvt_pk_f32_bf8, dst_v0, op_v1).instr->valu().opsel[0] = true;
+
+   //! v_pk_minimum_f16 v0, v1, v2 ; cc1d0000 18020501
+   //! v_pk_maximum_f16 v0, v1, v2 ; cc1e0000 18020501
+   bld.vop3p(aco_opcode::v_pk_minimum_f16, dst_v0, op_v1, op_v2, 0x0, 0x3);
+   bld.vop3p(aco_opcode::v_pk_maximum_f16, dst_v0, op_v1, op_v2, 0x0, 0x3);
+
+   //! v_pk_min_num_f16 v0, v1, v2 ; cc120000 18020501
+   //! v_pk_max_num_f16 v0, v1, v2 ; cc110000 18020501
+   bld.vop3p(aco_opcode::v_pk_min_f16, dst_v0, op_v1, op_v2, 0x0, 0x3);
+   bld.vop3p(aco_opcode::v_pk_max_f16, dst_v0, op_v1, op_v2, 0x0, 0x3);
+
+   //! v_dot4_f32_fp8_fp8 v0, v0, v1, v2 ; cc264000 1c0a0300
+   //! v_dot4_f32_bf8_bf8 v0, v0, v1, v2 ; cc274000 1c0a0300
+   //! v_dot4_f32_fp8_bf8 v0, v0, v1, v2 ; cc244000 1c0a0300
+   //! v_dot4_f32_bf8_fp8 v0, v0, v1, v2 ; cc254000 1c0a0300
+   bld.vop3p(aco_opcode::v_dot4_f32_fp8_fp8, dst_v0, op_v0, op_v1, op_v2, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_dot4_f32_bf8_bf8, dst_v0, op_v0, op_v1, op_v2, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_dot4_f32_fp8_bf8, dst_v0, op_v0, op_v1, op_v2, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_dot4_f32_bf8_fp8, dst_v0, op_v0, op_v1, op_v2, 0x0, 0x7);
+
+   //! v_wmma_f32_16x16x16_fp8_fp8 v[0:3], v4, v5, v[0:3] ; cc464000 1c020b04
+   //! v_wmma_f32_16x16x16_fp8_bf8 v[0:3], v4, v5, v[0:3] ; cc474000 1c020b04
+   //! v_wmma_f32_16x16x16_bf8_fp8 v[0:3], v4, v5, v[0:3] ; cc484000 1c020b04
+   //! v_wmma_f32_16x16x16_bf8_bf8 v[0:3], v4, v5, v[0:3] ; cc494000 1c020b04
+   //! v_wmma_i32_16x16x32_iu4 v[0:3], v4, v5, v[0:3] ; cc4a4000 1c020b04
+   bld.vop3p(aco_opcode::v_wmma_f32_16x16x16_fp8_fp8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_wmma_f32_16x16x16_fp8_bf8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_wmma_f32_16x16x16_bf8_fp8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_wmma_f32_16x16x16_bf8_bf8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_wmma_i32_16x16x32_iu4, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+
+   //! v_swmmac_f32_16x16x32_f16 v[0:3], v[4:5], v[6:9], v0 ; cc504000 1c020d04
+   //! v_swmmac_f32_16x16x32_bf16 v[0:3], v[4:5], v[6:9], v0 ; cc514000 1c020d04
+   //! v_swmmac_f16_16x16x32_f16 v[0:1], v[4:5], v[6:9], v0 ; cc524000 1c020d04
+   //! v_swmmac_bf16_16x16x32_bf16 v[0:1], v[4:5], v[6:9], v0 ; cc534000 1c020d04
+   //! v_swmmac_i32_16x16x32_iu8 v[0:3], v4, v[5:6], v0 ; cc544000 1c020b04
+   //! v_swmmac_i32_16x16x32_iu4 v[0:3], v4, v5, v0 ; cc554000 1c020b04
+   //! v_swmmac_i32_16x16x64_iu4 v[0:3], v4, v[5:6], v0 ; cc564000 1c020b04
+   //! v_swmmac_f32_16x16x32_fp8_fp8 v[0:3], v4, v[5:6], v0 ; cc574000 1c020b04
+   //! v_swmmac_f32_16x16x32_fp8_bf8 v[0:3], v4, v[5:6], v0 ; cc584000 1c020b04
+   //! v_swmmac_f32_16x16x32_bf8_fp8 v[0:3], v4, v[5:6], v0 ; cc594000 1c020b04
+   //! v_swmmac_f32_16x16x32_bf8_bf8 v[0:3], v4, v[5:6], v0 ; cc5a4000 1c020b04
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_f16, dst_v0, op_v4, op_v6, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_bf16, dst_v0, op_v4, op_v6, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f16_16x16x32_f16, dst_v0, op_v4, op_v6, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_bf16_16x16x32_bf16, dst_v0, op_v4, op_v6, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_i32_16x16x32_iu8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_i32_16x16x32_iu4, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_i32_16x16x64_iu4, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_fp8_fp8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_fp8_bf8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_bf8_fp8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+   bld.vop3p(aco_opcode::v_swmmac_f32_16x16x32_bf8_bf8, dst_v0, op_v4, op_v5, op_v0, 0x0, 0x7);
+
+   //! v_min3_num_f32 v0, v0, v1, v2 ; d6190000 040a0300
+   //! v_max3_num_f32 v0, v0, v1, v2 ; d61c0000 040a0300
+   //! v_med3_num_f32 v0, v0, v1, v2 ; d6310000 040a0300
+   bld.vop3(aco_opcode::v_min3_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_max3_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_med3_f32, dst_v0, op_v0, op_v1, op_v2);
+
+   //! v_min3_num_f16 v0.l, v0.l, v1.l, v2.l ; d6490000 040a0300
+   //! v_max3_num_f16 v0.l, v0.l, v1.l, v2.l ; d64c0000 040a0300
+   //! v_med3_num_f16 v0.l, v0.l, v1.l, v2.l ; d6320000 040a0300
+   bld.vop3(aco_opcode::v_min3_f16, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_max3_f16, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_med3_f16, dst_v0, op_v0, op_v1, op_v2);
+
+   //! v_minimum3_f32 v0, v0, v1, v2 ; d62d0000 040a0300
+   //! v_maximum3_f32 v0, v0, v1, v2 ; d62e0000 040a0300
+   //! v_minimum3_f16 v0.l, v0.l, v1.l, v2.l ; d62f0000 040a0300
+   //! v_maximum3_f16 v0.l, v0.l, v1.l, v2.l ; d6300000 040a0300
+   bld.vop3(aco_opcode::v_minimum3_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximum3_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_minimum3_f16, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximum3_f16, dst_v0, op_v0, op_v1, op_v2);
+
+   //! v_minimummaximum_f32 v0, v0, v1, v2 ; d66c0000 040a0300
+   //! v_maximumminimum_f32 v0, v0, v1, v2 ; d66d0000 040a0300
+   //! v_minimummaximum_f16 v0.l, v0.l, v1.l, v2.l ; d66e0000 040a0300
+   //! v_maximumminimum_f16 v0.l, v0.l, v1.l, v2.l ; d66f0000 040a0300
+   bld.vop3(aco_opcode::v_minimummaximum_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximumminimum_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_minimummaximum_f16, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximumminimum_f16, dst_v0, op_v0, op_v1, op_v2);
+
+   //! v_minmax_num_f32 v0, v0, v1, v2 ; d65f0000 040a0300
+   //! v_maxmin_num_f32 v0, v0, v1, v2 ; d65e0000 040a0300
+   //! v_minmax_num_f16 v0.l, v0.l, v1.l, v2.l ; d6610000 040a0300
+   //! v_maxmin_num_f16 v0.l, v0.l, v1.l, v2.l ; d6600000 040a0300
+   bld.vop3(aco_opcode::v_minmax_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maxmin_f32, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_minmax_f16, dst_v0, op_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maxmin_f16, dst_v0, op_v0, op_v1, op_v2);
+
+   //! v_minimum_f64 v[0:1], v[2:3], v[4:5] ; d7410000 00020902
+   //! v_maximum_f64 v[0:1], v[2:3], v[4:5] ; d7420000 00020902
+   //! v_minimum_f32 v0, v1, v2 ; d7650000 00020501
+   //! v_maximum_f32 v0, v1, v2 ; d7660000 00020501
+   //! v_minimum_f16 v0.l, v1.l, v2.l ; d7670000 00020501
+   //! v_maximum_f16 v0.l, v1.l, v2.l ; d7680000 00020501
+   bld.vop3(aco_opcode::v_minimum_f64, dst_v0, op_v2, op_v4);
+   bld.vop3(aco_opcode::v_maximum_f64, dst_v0, op_v2, op_v4);
+   bld.vop3(aco_opcode::v_minimum_f32, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximum_f32, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_minimum_f16, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_maximum_f16, dst_v0, op_v1, op_v2);
+
+   //! v_max_num_f64 v[0:1], v[0:1], v[2:3] ; d72a0000 00020500
+   //! v_min_num_f64 v[0:1], v[0:1], v[2:3] ; d7290000 00020500
+   //! v_max_num_f32_e32 v0, v0, v1 ; 20000300
+   //! v_min_num_f32_e32 v0, v0, v1 ; 1e000300
+   //! v_max_num_f16_e32 v0.l, v0.l, v1.l ; 72000300
+   //! v_min_num_f16_e32 v0.l, v0.l, v1.l ; 74000300
+   bld.vop3(aco_opcode::v_max_f64_e64, dst_v0, op_v0, op_v2);
+   bld.vop3(aco_opcode::v_min_f64_e64, dst_v0, op_v0, op_v2);
+   bld.vop2(aco_opcode::v_max_f32, dst_v0, op_v0, op_v1);
+   bld.vop2(aco_opcode::v_min_f32, dst_v0, op_v0, op_v1);
+   bld.vop2(aco_opcode::v_max_f16, dst_v0, op_v0, op_v1);
+   bld.vop2(aco_opcode::v_min_f16, dst_v0, op_v0, op_v1);
+
+   //! v_cvt_pk_fp8_f32 v0.l, v1, v2 ; d7690000 00020501
+   //! v_cvt_pk_bf8_f32 v0.l, v1, v2 ; d76a0000 00020501
+   //! v_cvt_sr_fp8_f32 v0, v1, v2 ; d76b0000 00020501
+   //! v_cvt_sr_bf8_f32 v0, v1, v2 ; d76c0000 00020501
+   bld.vop3(aco_opcode::v_cvt_pk_fp8_f32, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_cvt_pk_bf8_f32, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_cvt_sr_fp8_f32, dst_v0, op_v1, op_v2);
+   bld.vop3(aco_opcode::v_cvt_sr_bf8_f32, dst_v0, op_v1, op_v2);
+
+   finish_assembler_test();
 END_TEST

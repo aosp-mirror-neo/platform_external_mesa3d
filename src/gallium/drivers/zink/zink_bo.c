@@ -255,6 +255,9 @@ bo_create_internal(struct zink_screen *screen,
    struct zink_bo *bo = NULL;
    bool init_pb_cache;
 
+   /* all non-suballocated bo can cache */
+   init_pb_cache = !pNext;
+
    alignment = get_optimal_alignment(screen, size, alignment);
 
    VkMemoryAllocateFlagsInfo ai;
@@ -287,9 +290,6 @@ bo_create_internal(struct zink_screen *screen,
       mesa_loge("zink: can't allocate %"PRIu64" bytes from heap that's only %"PRIu64" bytes!\n", mai.allocationSize, screen->info.mem_props.memoryHeaps[vk_heap_idx].size);
       return NULL;
    }
-
-   /* all non-suballocated bo can cache */
-   init_pb_cache = !pNext;
 
    if (!bo)
       bo = CALLOC(1, sizeof(struct zink_bo) + init_pb_cache * sizeof(struct pb_cache_entry));
@@ -758,7 +758,7 @@ static void
 track_freed_sparse_bo(struct zink_context *ctx, struct zink_sparse_backing *backing)
 {
    pipe_reference(NULL, &backing->bo->base.base.reference);
-   util_dynarray_append(&ctx->bs->freed_sparse_backing_bos, struct zink_bo*, backing->bo);
+   util_dynarray_append(&ctx->bs->freed_sparse_backing_bos, backing->bo);
 }
 
 static VkTimelineSemaphoreSubmitInfo
@@ -777,17 +777,17 @@ init_timeline_wait(struct zink_context *ctx, struct zink_resource *res, bool com
    if (*wait)
       return timeline;
 
-   /* commit || no usage = no wait */
-   if (commit || !zink_resource_has_usage(res) || zink_resource_usage_check_completion_fast(screen, res, ZINK_RESOURCE_ACCESS_RW))
+   /* no usage = no wait */
+   if (!zink_resource_has_usage(res) || zink_resource_usage_check_completion_fast(screen, res, ZINK_RESOURCE_ACCESS_RW))
       return timeline;
 
    if (zink_resource_usage_is_unflushed(res) && !zink_resource_usage_matches(res, ctx->bs)) {
       /* assuming this is a batch that is doing an async submit: unlock wait for that to finish */
-      simple_mtx_unlock(&screen->queue_lock);
+      simple_mtx_unlock(screen->queue_lock);
       /* note that this can deadlock if multi-context */
       zink_resource_usage_unflushed_wait(ctx, res, ZINK_RESOURCE_ACCESS_RW);
       /* make sure to lock again and take queue ownership */
-      simple_mtx_lock(&screen->queue_lock);
+      simple_mtx_lock(screen->queue_lock);
    }
    *wait = screen->sem;
    timeline.pWaitSemaphoreValues = &screen->curr_batch;
@@ -879,7 +879,7 @@ buffer_bo_commit(struct zink_context *ctx, struct zink_resource *res, uint32_t o
                                            (uint64_t)span_va_page * ZINK_SPARSE_BUFFER_PAGE_SIZE,
                                            (uint64_t)backing_size * ZINK_SPARSE_BUFFER_PAGE_SIZE, true, cur_sem);
             if (cur_sem) {
-               util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+               util_dynarray_append(&ctx->bs->tracked_semaphores, cur_sem);
             } else {
                ok = sparse_backing_free(screen, bo, backing, backing_start, backing_size);
                assert(ok && "sufficient memory should already be allocated");
@@ -916,7 +916,7 @@ buffer_bo_commit(struct zink_context *ctx, struct zink_resource *res, uint32_t o
                                            (uint64_t)base_page * ZINK_SPARSE_BUFFER_PAGE_SIZE,
                                            (uint64_t)(end_va_page - base_page) * ZINK_SPARSE_BUFFER_PAGE_SIZE, false, cur_sem);
             if (cur_sem) {
-               util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+               util_dynarray_append(&ctx->bs->tracked_semaphores, cur_sem);
             } else {
                ok = false;
                goto out;
@@ -1024,7 +1024,7 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
    struct zink_bo *bo = res->obj->bo;
    VkSemaphore cur_sem = *sem;
 
-   simple_mtx_lock(&screen->queue_lock);
+   simple_mtx_lock(screen->queue_lock);
    simple_mtx_lock(&bo->lock);
    if (res->base.b.target == PIPE_BUFFER) {
       ok = buffer_bo_commit(ctx, res, box->x, box->width, commit, &cur_sem);
@@ -1128,7 +1128,8 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
                         uint32_t offset = res->sparse.imageMipTailOffset;
                         cur_sem = texture_commit_miptail(ctx, res, backing[i]->bo, backing_start[i], offset, commit, cur_sem);
                         if (cur_sem) {
-                           util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+                           util_dynarray_append(&ctx->bs->tracked_semaphores,
+                                                cur_sem);
                            res->obj->miptail_commits++;
                         } else {
                            ok = false;
@@ -1183,8 +1184,10 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
                      res->obj->miptail_commits--;
                      if (!res->obj->miptail_commits) {
                         cur_sem = texture_commit_miptail(ctx, res, NULL, 0, offset, commit, cur_sem);
-                        if (cur_sem)
-                           util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+                        if (cur_sem) {
+                           util_dynarray_append(&ctx->bs->tracked_semaphores,
+                                                cur_sem);
+                        }
                         else
                            ok = false;
                         if (!sparse_backing_free(screen, backing[i]->bo, backing[i], backing_start[i], backing_size[i])) {
@@ -1203,7 +1206,7 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
             if (i == ARRAY_SIZE(ibind)) {
                cur_sem = texture_commit_single(ctx, res, ibind, ARRAY_SIZE(ibind), commit, cur_sem);
                if (cur_sem) {
-                  util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+                  util_dynarray_append(&ctx->bs->tracked_semaphores, cur_sem);
                } else {
                   for (unsigned s = 0; s < i; s++) {
                      ok = sparse_backing_free(screen, backing[s]->bo, backing[s], backing_start[s], backing_size[s]);
@@ -1224,7 +1227,7 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
    if (commits_pending) {
       cur_sem = texture_commit_single(ctx, res, ibind, i, commit, cur_sem);
       if (cur_sem) {
-         util_dynarray_append(&ctx->bs->tracked_semaphores, VkSemaphore, cur_sem);
+         util_dynarray_append(&ctx->bs->tracked_semaphores, cur_sem);
       } else {
          for (unsigned s = 0; s < i; s++) {
             ok = sparse_backing_free(screen, backing[s]->bo, backing[s], backing_start[s], backing_size[s]);
@@ -1239,7 +1242,7 @@ zink_bo_commit(struct zink_context *ctx, struct zink_resource *res, unsigned lev
 out:
 
    simple_mtx_unlock(&bo->lock);
-   simple_mtx_unlock(&screen->queue_lock);
+   simple_mtx_unlock(screen->queue_lock);
    *sem = cur_sem;
    return ok;
 }

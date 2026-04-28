@@ -78,7 +78,7 @@ struct agx_rodata {
 };
 
 struct agx_shader_info {
-   enum pipe_shader_type stage;
+   mesa_shader_stage stage;
    uint32_t binary_size;
 
    union agx_varyings varyings;
@@ -314,7 +314,6 @@ struct agx_shader_key {
    };
 };
 
-struct agx_interp_info agx_gather_interp_info(nir_shader *nir);
 uint64_t agx_gather_texcoords(nir_shader *nir);
 
 void agx_preprocess_nir(nir_shader *nir);
@@ -341,6 +340,12 @@ struct agx_occupancy {
 struct agx_occupancy agx_occupancy_for_register_count(unsigned halfregs);
 unsigned agx_max_registers_for_occupancy(unsigned occupancy);
 
+static inline unsigned
+agx_round_registers(unsigned halfregs)
+{
+   return agx_occupancy_for_register_count(halfregs).max_registers;
+}
+
 static const nir_shader_compiler_options agx_nir_options = {
    .lower_fdiv = true,
    .fuse_ffma16 = true,
@@ -364,7 +369,6 @@ static const nir_shader_compiler_options agx_nir_options = {
    .lower_fminmax_signed_zero = true,
    .lower_fdph = true,
    .lower_ffract = true,
-   .lower_ldexp = true,
    .lower_pack_half_2x16 = true,
    .lower_pack_unorm_2x16 = true,
    .lower_pack_snorm_2x16 = true,
@@ -395,7 +399,8 @@ static const nir_shader_compiler_options agx_nir_options = {
    .support_indirect_inputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
                               BITFIELD_BIT(MESA_SHADER_TESS_EVAL) |
                               BITFIELD_BIT(MESA_SHADER_FRAGMENT),
-   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(PIPE_SHADER_TYPES),
+   .support_indirect_outputs = (uint8_t)BITFIELD_MASK(MESA_SHADER_STAGES),
+   .max_samples = 4,
    .lower_fquantize2f16 = true,
    .compact_arrays = true,
    .discard_is_demote = true,

@@ -21,24 +21,31 @@
  * IN THE SOFTWARE.
  */
 
-#include "v3dv_private.h"
+#include "v3dv_device.h"
+#include "v3dv_cmd_buffer.h"
+#include "v3dv_image.h"
+#include "v3dv_entrypoints.h"
+#include "v3dv_version_dispatch.h"
+#include "vk_format.h"
+#include "vk_shader_module.h"
 #include "v3dv_meta_common.h"
 
 #include "compiler/nir/nir_builder.h"
 #include "util/u_pack_color.h"
 #include "vk_common_entrypoints.h"
 
+#define V3D_VERSION 42
+#include "v3dv_format_table.h"
+
 static void
 get_hw_clear_color(struct v3dv_device *device,
                    const VkClearColorValue *color,
                    VkFormat fb_format,
                    VkFormat image_format,
-                   uint32_t internal_type,
-                   uint32_t internal_bpp,
+                   const struct v3dv_format_plane *format,
+                   uint32_t internal_size,
                    uint32_t *hw_color)
 {
-   const uint32_t internal_size = 4 << internal_bpp;
-
    /* If the image format doesn't match the framebuffer format, then we are
     * trying to clear an unsupported tlb format using a compatible
     * format for the framebuffer. In this case, we want to make sure that
@@ -46,7 +53,7 @@ get_hw_clear_color(struct v3dv_device *device,
     * not the compatible format.
     */
    if (fb_format == image_format) {
-      v3d_X((&device->devinfo), get_hw_clear_color)(color, internal_type, internal_size,
+      v3d_X((&device->devinfo), get_hw_clear_color)(color, format,
                                          hw_color);
    } else {
       union util_color uc;
@@ -82,10 +89,15 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
       (fb_format, range->aspectMask,
        &internal_type, &internal_bpp);
 
+   const uint32_t internal_size = 4 << internal_bpp;
+
+   const struct v3dv_format *format =
+      v3d_X((&cmd_buffer->device->devinfo), get_format)(fb_format);
+
    union v3dv_clear_value hw_clear_value = { 0 };
    if (range->aspectMask & VK_IMAGE_ASPECT_COLOR_BIT) {
       get_hw_clear_color(cmd_buffer->device, &clear_value->color, fb_format,
-                         image->vk.format, internal_type, internal_bpp,
+                         image->vk.format, &format->planes[0], internal_size,
                          &hw_clear_value.color[0]);
    } else {
       assert((range->aspectMask & VK_IMAGE_ASPECT_DEPTH_BIT) ||
@@ -126,9 +138,8 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
       if (!job)
          return true;
 
-      v3dv_job_start_frame(job, width, height, max_layer,
-                           false, true, 1, internal_bpp,
-                           4 * v3d_internal_bpp_words(internal_bpp),
+      v3dv_job_start_frame(job, width, height, max_layer, false, 1,
+                           internal_bpp, 4 * v3d_internal_bpp_words(internal_bpp),
                            image->vk.samples > VK_SAMPLE_COUNT_1_BIT);
 
       struct v3dv_meta_framebuffer framebuffer;
@@ -137,6 +148,8 @@ clear_image_tlb(struct v3dv_cmd_buffer *cmd_buffer,
                                                  &job->frame_tiling);
 
       v3d_X((&job->device->devinfo), job_emit_binning_flush)(job);
+      if (!v3dv_job_allocate_tile_state(job))
+         return true;
 
       /* If this triggers it is an application bug: the spec requires
        * that any aspects to clear are present in the image.

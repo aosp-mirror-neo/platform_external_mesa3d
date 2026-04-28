@@ -35,7 +35,6 @@ vc4_set_blit_surface(struct pipe_surface *psurf, struct pipe_context *pctx,
                      unsigned layer)
 {
         memset(psurf, 0, sizeof(*psurf));
-        psurf->context = pctx;
         psurf->format = prsc->format;
         psurf->level = level;
         psurf->first_layer = layer;
@@ -130,13 +129,13 @@ vc4_tile_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
                 return;
 
         if (false) {
-                fprintf(stderr, "RCL blit from %d,%d to %d,%d (%d,%d)\n",
-                        info->src.box.x,
-                        info->src.box.y,
-                        info->dst.box.x,
-                        info->dst.box.y,
-                        info->dst.box.width,
-                        info->dst.box.height);
+                mesa_logd("RCL blit from %d,%d to %d,%d (%d,%d)",
+                          info->src.box.x,
+                          info->src.box.y,
+                          info->dst.box.x,
+                          info->dst.box.y,
+                          info->dst.box.width,
+                          info->dst.box.height);
         }
 
         struct pipe_surface dst_surf;
@@ -194,7 +193,7 @@ void
 vc4_blitter_save(struct vc4_context *vc4)
 {
         util_blitter_save_fragment_constant_buffer_slot(vc4->blitter,
-                                                        vc4->constbuf[PIPE_SHADER_FRAGMENT].cb);
+                                                        vc4->constbuf[MESA_SHADER_FRAGMENT].cb);
         util_blitter_save_vertex_buffers(vc4->blitter, vc4->vertexbuf.vb,
                                          vc4->vertexbuf.count);
         util_blitter_save_vertex_elements(vc4->blitter, vc4->vtx);
@@ -224,7 +223,7 @@ static void *vc4_get_yuv_vs(struct pipe_context *pctx)
            return vc4->yuv_linear_blit_vs;
 
    const struct nir_shader_compiler_options *options =
-           pscreen->nir_options[PIPE_SHADER_VERTEX];
+           pscreen->nir_options[MESA_SHADER_VERTEX];
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, options,
                                                   "linear_blit_vs");
@@ -263,7 +262,7 @@ static void *vc4_get_yuv_fs(struct pipe_context *pctx, int cpp)
            return *cached_shader;
 
    const struct nir_shader_compiler_options *options =
-           pscreen->nir_options[PIPE_SHADER_FRAGMENT];
+           pscreen->nir_options[MESA_SHADER_FRAGMENT];
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT,
                                                   options, "%s", name);
@@ -373,7 +372,7 @@ vc4_yuv_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
         vc4_set_blit_surface(&dst_surf, pctx, info->dst.resource,
                              info->dst.level, info->dst.box.z);
         dst_surf.format = PIPE_FORMAT_RGBA8888_UNORM;
-        uint16_t width, height;
+        unsigned width, height;
         pipe_surface_size(&dst_surf, &width, &height);
         width = align(width, 8) / 2;
         if (dst->cpp == 1)
@@ -385,20 +384,20 @@ vc4_yuv_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
                 .user_buffer = &stride,
                 .buffer_size = sizeof(stride),
         };
-        pctx->set_constant_buffer(pctx, PIPE_SHADER_FRAGMENT, 0, false, &cb_uniforms);
+        pctx->set_constant_buffer(pctx, MESA_SHADER_FRAGMENT, 0, &cb_uniforms);
         struct pipe_constant_buffer cb_src = {
                 .buffer = info->src.resource,
                 .buffer_offset = src->slices[info->src.level].offset,
                 .buffer_size = (src->bo->size -
                                 src->slices[info->src.level].offset),
         };
-        pctx->set_constant_buffer(pctx, PIPE_SHADER_FRAGMENT, 1, false, &cb_src);
+        pctx->set_constant_buffer(pctx, MESA_SHADER_FRAGMENT, 1, &cb_src);
 
         /* Unbind the textures, to make sure we don't try to recurse into the
          * shadow blit.
          */
-        pctx->set_sampler_views(pctx, PIPE_SHADER_FRAGMENT, 0, 0, 0, NULL);
-        pctx->bind_sampler_states(pctx, PIPE_SHADER_FRAGMENT, 0, 0, NULL);
+        pctx->set_sampler_views(pctx, MESA_SHADER_FRAGMENT, 0, 0, 0, NULL);
+        pctx->bind_sampler_states(pctx, MESA_SHADER_FRAGMENT, 0, 0, NULL);
 
         util_blitter_custom_shader(vc4->blitter, &dst_surf, width, height,
                                    vc4_get_yuv_vs(pctx),
@@ -408,7 +407,7 @@ vc4_yuv_blit(struct pipe_context *pctx, struct pipe_blit_info *info)
         util_blitter_restore_constant_buffer_state(vc4->blitter);
         /* Restore cb1 (util_blitter doesn't handle this one). */
         struct pipe_constant_buffer cb_disabled = { 0 };
-        pctx->set_constant_buffer(pctx, PIPE_SHADER_FRAGMENT, 1, false, &cb_disabled);
+        pctx->set_constant_buffer(pctx, MESA_SHADER_FRAGMENT, 1, &cb_disabled);
 
         pipe_resource_reference(&dst_surf.texture, NULL);
 
@@ -435,9 +434,9 @@ vc4_render_blit(struct pipe_context *ctx, struct pipe_blit_info *info)
                 return;
 
         if (!util_blitter_is_blit_supported(vc4->blitter, info)) {
-                fprintf(stderr, "blit unsupported %s -> %s\n",
-                    util_format_short_name(info->src.resource->format),
-                    util_format_short_name(info->dst.resource->format));
+                mesa_logw("blit unsupported %s -> %s",
+                          util_format_short_name(info->src.resource->format),
+                          util_format_short_name(info->dst.resource->format));
                 return;
         }
 
@@ -545,5 +544,5 @@ vc4_blit(struct pipe_context *pctx, const struct pipe_blit_info *blit_info)
         vc4_render_blit(pctx, &info);
 
         if (info.mask)
-                fprintf(stderr, "Unsupported blit\n");
+                mesa_loge("Unsupported blit");
 }

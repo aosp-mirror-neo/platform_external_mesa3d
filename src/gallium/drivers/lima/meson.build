@@ -35,6 +35,7 @@ files_lima = files(
   'ir/lima_nir_split_load_input.c',
   'ir/lima_nir_split_loads.c',
   'ir/lima_nir_lower_txp.c',
+  'ir/lima_nir_lower_framebuffer.c',
 
   'ir/lima_ir.h',
 
@@ -104,7 +105,7 @@ lima_disasm = executable(
     'standalone/lima_disasm.c',
   ),
   include_directories : [
-    inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_gallium_drivers, inc_mesa, inc_mapi,
+    inc_src, inc_include, inc_gallium, inc_gallium_aux, inc_gallium_drivers,
   ],
   dependencies : [
     idep_mesautil,

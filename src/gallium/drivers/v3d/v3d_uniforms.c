@@ -151,7 +151,9 @@ write_tmu_p0(struct v3d_job *job,
 
         struct v3d_resource *rsc = v3d_resource(sview->texture);
 
-        cl_aligned_reloc(&job->indirect, uniforms, sview->bo,
+        cl_aligned_reloc(&job->indirect, uniforms,
+                         v3d_resource(sview->tex_state)->bo,
+                         sview->tex_state_offset |
                          v3d_unit_data_get_offset(data));
         v3d_job_add_bo(job, rsc->bo);
 }
@@ -215,7 +217,7 @@ write_tmu_p1(struct v3d_job *job,
 struct v3d_cl_reloc
 v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                    struct v3d_compiled_shader *shader,
-                   enum pipe_shader_type stage)
+                   mesa_shader_stage stage)
 {
         struct v3d_device_info *devinfo = &v3d->screen->devinfo;
         struct v3d_constbuf_stateobj *cb = &v3d->constbuf[stage];
@@ -322,7 +324,7 @@ v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                          * the GPU.
                         */
                         if (!cb->cb[unit].buffer) {
-                                u_upload_data(v3d->uploader, 0,
+                                u_upload_data_ref(v3d->uploader, 0,
                                               cb->cb[unit].buffer_size, 16,
                                               cb->cb[unit].user_buffer,
                                               &cb->cb[unit].buffer_offset,
@@ -415,11 +417,11 @@ v3d_write_uniforms(struct v3d_context *v3d, struct v3d_job *job,
                 }
 #if 0
                 uint32_t written_val = *((uint32_t *)uniforms - 1);
-                fprintf(stderr, "shader %p[%d]: 0x%08x / 0x%08x (%f) ",
-                        shader, i, __gen_address_offset(&uniform_stream) + i * 4,
-                        written_val, uif(written_val));
-                vir_dump_uniform(uinfo->contents[i], data);
-                fprintf(stderr, "\n");
+                char *str = vir_dump_uniform(uinfo->contents[i], data);
+                mesa_logd("shader %p[%d]: 0x%08x / 0x%08x (%f) %s",
+                          shader, i, __gen_address_offset(&uniform_stream) + i * 4,
+                          written_val, uif(written_val), str);
+                ralloc_free(str);
 #endif
         }
 

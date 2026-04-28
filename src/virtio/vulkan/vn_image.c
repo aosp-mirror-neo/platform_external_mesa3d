@@ -92,20 +92,12 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
                             const VkImageCreateInfo *create_info,
                             uint8_t *key)
 {
-   struct mesa_sha1 sha1_ctx;
+   blake3_hasher blake3_ctx;
 
    if (!dev->image_reqs_cache.ht)
       return false;
 
-   /* Strip the alias bit as the memory requirements are identical. */
-   VkImageCreateInfo local_info;
-   if (create_info->flags & VK_IMAGE_CREATE_ALIAS_BIT) {
-      local_info = *create_info;
-      local_info.flags &= ~VK_IMAGE_CREATE_ALIAS_BIT;
-      create_info = &local_info;
-   }
-
-   _mesa_sha1_init(&sha1_ctx);
+   _mesa_blake3_init(&blake3_ctx);
 
    /* Hash relevant fields in the pNext chain */
    vk_foreach_struct_const(src, create_info->pNext) {
@@ -113,22 +105,22 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
       case VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO: {
          struct VkExternalMemoryImageCreateInfo *ext_mem =
             (struct VkExternalMemoryImageCreateInfo *)src;
-         _mesa_sha1_update(&sha1_ctx, &ext_mem->handleTypes,
+         _mesa_blake3_update(&blake3_ctx, &ext_mem->handleTypes,
                            sizeof(VkExternalMemoryHandleTypeFlags));
          break;
       }
       case VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO: {
          struct VkImageFormatListCreateInfo *format_list =
             (struct VkImageFormatListCreateInfo *)src;
-         _mesa_sha1_update(&sha1_ctx, format_list->pViewFormats,
+         _mesa_blake3_update(&blake3_ctx, format_list->pViewFormats,
                            sizeof(VkFormat) * format_list->viewFormatCount);
          break;
       }
       case VK_STRUCTURE_TYPE_IMAGE_DRM_FORMAT_MODIFIER_LIST_CREATE_INFO_EXT: {
          struct VkImageDrmFormatModifierListCreateInfoEXT *format_mod_list =
             (struct VkImageDrmFormatModifierListCreateInfoEXT *)src;
-         _mesa_sha1_update(
-            &sha1_ctx, format_mod_list->pDrmFormatModifiers,
+         _mesa_blake3_update(
+            &blake3_ctx, format_mod_list->pDrmFormatModifiers,
             sizeof(uint64_t) * format_mod_list->drmFormatModifierCount);
          break;
       }
@@ -136,10 +128,10 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
          struct VkImageDrmFormatModifierExplicitCreateInfoEXT
             *format_mod_explicit =
                (struct VkImageDrmFormatModifierExplicitCreateInfoEXT *)src;
-         _mesa_sha1_update(&sha1_ctx, &format_mod_explicit->drmFormatModifier,
+         _mesa_blake3_update(&blake3_ctx, &format_mod_explicit->drmFormatModifier,
                            sizeof(uint64_t));
-         _mesa_sha1_update(
-            &sha1_ctx, format_mod_explicit->pPlaneLayouts,
+         _mesa_blake3_update(
+            &blake3_ctx, format_mod_explicit->pPlaneLayouts,
             sizeof(VkSubresourceLayout) *
                format_mod_explicit->drmFormatModifierPlaneCount);
          break;
@@ -147,10 +139,11 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
       case VK_STRUCTURE_TYPE_IMAGE_STENCIL_USAGE_CREATE_INFO: {
          struct VkImageStencilUsageCreateInfo *stencil_usage =
             (struct VkImageStencilUsageCreateInfo *)src;
-         _mesa_sha1_update(&sha1_ctx, &stencil_usage->stencilUsage,
+         _mesa_blake3_update(&blake3_ctx, &stencil_usage->stencilUsage,
                            sizeof(VkImageUsageFlags));
          break;
       }
+      case VK_STRUCTURE_TYPE_OPAQUE_CAPTURE_DATA_CREATE_INFO_EXT:
       default:
          /* Skip cache for unsupported pNext */
          dev->image_reqs_cache.debug.cache_skip_count++;
@@ -168,7 +161,7 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
       offsetof(VkImageCreateInfo, queueFamilyIndexCount) -
       offsetof(VkImageCreateInfo, flags);
 
-   _mesa_sha1_update(&sha1_ctx, &create_info->flags,
+   _mesa_blake3_update(&blake3_ctx, &create_info->flags,
                      create_image_hash_block_size);
 
    /* Follow pointer and hash pQueueFamilyIndices separately.
@@ -176,14 +169,14 @@ vn_image_get_image_reqs_key(struct vn_device *dev,
     * VK_SHARING_MODE_CONCURRENT
     */
    if (create_info->sharingMode == VK_SHARING_MODE_CONCURRENT) {
-      _mesa_sha1_update(
-         &sha1_ctx, create_info->pQueueFamilyIndices,
+      _mesa_blake3_update(
+         &blake3_ctx, create_info->pQueueFamilyIndices,
          sizeof(uint32_t) * create_info->queueFamilyIndexCount);
    }
 
-   _mesa_sha1_update(&sha1_ctx, &create_info->initialLayout,
+   _mesa_blake3_update(&blake3_ctx, &create_info->initialLayout,
                      sizeof(create_info->initialLayout));
-   _mesa_sha1_final(&sha1_ctx, key);
+   _mesa_blake3_final(&blake3_ctx, key);
 
    return true;
 }
@@ -319,7 +312,7 @@ vn_image_store_reqs_in_cache(struct vn_device *dev,
    for (uint32_t i = 0; i < plane_count; i++)
       cache_entry->requirements[i] = requirements[i];
 
-   memcpy(cache_entry->key, key, SHA1_DIGEST_LENGTH);
+   memcpy(cache_entry->key, key, BLAKE3_KEY_LEN);
    cache_entry->plane_count = plane_count;
 
    _mesa_hash_table_insert(dev->image_reqs_cache.ht, cache_entry->key,
@@ -477,7 +470,7 @@ vn_image_init(struct vn_device *dev,
    VkResult result = VK_SUCCESS;
 
    /* Check if mem reqs in cache. If found, make async call */
-   uint8_t key[SHA1_DIGEST_LENGTH] = { 0 };
+   uint8_t key[BLAKE3_KEY_LEN] = { 0 };
    const bool cacheable = vn_image_get_image_reqs_key(dev, create_info, key);
 
    if (cacheable && vn_image_init_reqs_from_cache(dev, img, key)) {
@@ -618,7 +611,7 @@ vn_image_fix_create_info(
    return &local_info->create;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_CreateImage(VkDevice device,
                const VkImageCreateInfo *pCreateInfo,
                const VkAllocationCallbacks *pAllocator,
@@ -684,12 +677,12 @@ vn_CreateImage(VkDevice device,
    } else if (ahb_info) {
       result = vn_image_create_deferred(dev, pCreateInfo, alloc, &img);
    } else if (swapchain_info) {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
       result = vn_image_create_deferred(dev, pCreateInfo, alloc, &img);
 #else
       result = wsi_common_create_swapchain_image(
          &dev->physical_device->wsi_device, pCreateInfo,
-         swapchain_info->swapchain, (VkImage *)&img);
+         (VkImage *)&img);
 #endif
    } else {
       struct vn_image_create_info local_info;
@@ -709,7 +702,7 @@ vn_CreateImage(VkDevice device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_DestroyImage(VkDevice device,
                 VkImage image,
                 const VkAllocationCallbacks *pAllocator)
@@ -722,8 +715,9 @@ vn_DestroyImage(VkDevice device,
    if (!img)
       return;
 
-   if (img->wsi.memory && img->wsi.memory_owned) {
-      VkDeviceMemory mem_handle = vn_device_memory_to_handle(img->wsi.memory);
+   if (img->wsi.anb_mem) {
+      VkDeviceMemory mem_handle =
+         vn_device_memory_to_handle(img->wsi.anb_mem);
       vn_FreeMemory(device, mem_handle, pAllocator);
    }
 
@@ -736,7 +730,7 @@ vn_DestroyImage(VkDevice device,
    vk_image_destroy(&dev->base.vk, alloc, &img->base.vk);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetImageMemoryRequirements2(VkDevice device,
                                const VkImageMemoryRequirementsInfo2 *pInfo,
                                VkMemoryRequirements2 *pMemoryRequirements)
@@ -753,7 +747,7 @@ vn_GetImageMemoryRequirements2(VkDevice device,
    vn_image_fill_reqs(&img->requirements[plane], pMemoryRequirements);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetImageSparseMemoryRequirements2(
    VkDevice device,
    const VkImageSparseMemoryRequirementsInfo2 *pInfo,
@@ -788,7 +782,7 @@ vn_image_bind_wsi_memory(struct vn_device *dev,
          vn_device_memory_from_handle(info->memory);
 
       if (!mem) {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
          mem = vn_android_get_wsi_memory_from_bind_info(dev, info);
          if (!mem) {
             STACK_ARRAY_FINISH(local_infos);
@@ -817,7 +811,7 @@ vn_image_bind_wsi_memory(struct vn_device *dev,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_BindImageMemory2(VkDevice device,
                     uint32_t bindInfoCount,
                     const VkBindImageMemoryInfo *pBindInfos)
@@ -842,7 +836,7 @@ vn_BindImageMemory2(VkDevice device,
    return VK_SUCCESS;
 }
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_GetImageDrmFormatModifierPropertiesEXT(
    VkDevice device,
    VkImage image,
@@ -877,7 +871,7 @@ vn_image_get_aspect(struct vn_image *img, VkImageAspectFlags aspect)
    UNREACHABLE("unexpected aspect");
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetImageSubresourceLayout(VkDevice device,
                              VkImage image,
                              const VkImageSubresource *pSubresource,
@@ -903,7 +897,7 @@ vn_GetImageSubresourceLayout(VkDevice device,
 
 /* image view commands */
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_CreateImageView(VkDevice device,
                    const VkImageViewCreateInfo *pCreateInfo,
                    const VkAllocationCallbacks *pAllocator,
@@ -941,7 +935,7 @@ vn_CreateImageView(VkDevice device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_DestroyImageView(VkDevice device,
                     VkImageView imageView,
                     const VkAllocationCallbacks *pAllocator)
@@ -962,7 +956,7 @@ vn_DestroyImageView(VkDevice device,
 
 /* sampler commands */
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_CreateSampler(VkDevice device,
                  const VkSamplerCreateInfo *pCreateInfo,
                  const VkAllocationCallbacks *pAllocator,
@@ -989,7 +983,7 @@ vn_CreateSampler(VkDevice device,
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_DestroySampler(VkDevice device,
                   VkSampler _sampler,
                   const VkAllocationCallbacks *pAllocator)
@@ -1010,7 +1004,7 @@ vn_DestroySampler(VkDevice device,
 
 /* sampler YCbCr conversion commands */
 
-VkResult
+VKAPI_ATTR VkResult VKAPI_CALL
 vn_CreateSamplerYcbcrConversion(
    VkDevice device,
    const VkSamplerYcbcrConversionCreateInfo *pCreateInfo,
@@ -1057,7 +1051,7 @@ vn_CreateSamplerYcbcrConversion(
    return VK_SUCCESS;
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_DestroySamplerYcbcrConversion(VkDevice device,
                                  VkSamplerYcbcrConversion ycbcrConversion,
                                  const VkAllocationCallbacks *pAllocator)
@@ -1078,7 +1072,7 @@ vn_DestroySamplerYcbcrConversion(VkDevice device,
    vk_free(alloc, conv);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetDeviceImageMemoryRequirements(
    VkDevice device,
    const VkDeviceImageMemoryRequirements *pInfo,
@@ -1086,7 +1080,7 @@ vn_GetDeviceImageMemoryRequirements(
 {
    struct vn_device *dev = vn_device_from_handle(device);
 
-   uint8_t key[SHA1_DIGEST_LENGTH] = { 0 };
+   uint8_t key[BLAKE3_KEY_LEN] = { 0 };
    const bool cacheable =
       vn_image_get_image_reqs_key(dev, pInfo->pCreateInfo, key);
 
@@ -1135,7 +1129,7 @@ vn_GetDeviceImageMemoryRequirements(
    }
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetDeviceImageSparseMemoryRequirements(
    VkDevice device,
    const VkDeviceImageMemoryRequirements *pInfo,
@@ -1156,7 +1150,7 @@ vn_GetDeviceImageSparseMemoryRequirements(
       pSparseMemoryRequirements);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetDeviceImageSubresourceLayout(VkDevice device,
                                    const VkDeviceImageSubresourceInfo *pInfo,
                                    VkSubresourceLayout2 *pLayout)
@@ -1168,7 +1162,7 @@ vn_GetDeviceImageSubresourceLayout(VkDevice device,
                                              pLayout);
 }
 
-void
+VKAPI_ATTR void VKAPI_CALL
 vn_GetImageSubresourceLayout2(VkDevice device,
                               VkImage image,
                               const VkImageSubresource2 *pSubresource,

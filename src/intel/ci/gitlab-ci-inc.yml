@@ -142,6 +142,13 @@
         - src/intel/vulkan/**/*
       when: on_success
 
+.anv-restricted-rules:
+  stage: intel
+  rules:
+    - !reference [.test, rules]
+    - !reference [.restricted-rules, rules]
+    - !reference [.anv-rules, rules]
+
 .anv-manual-rules:
   stage: intel-nightly
   extends: .no-auto-retry
@@ -214,6 +221,18 @@
     HWCI_KERNEL_MODULES: xe
     RUNNER_TAG: mesa-ci-x86-64-lava-acer-cbv514-1h-34uz-brya
     LAVA_CMDLINE: "i915.force_probe=!46b3 xe.force_probe=46b3"
+    INTEL_XE_IGNORE_EXPERIMENTAL_WARNING: 1
+
+# Status: https://lava.collabora.dev/scheduler/device_type/asus-CX3402CVA-brya
+.lava-asus-CX3402CVA-brya:x86_64:
+  variables:
+    DEVICE_TYPE: asus-CX3402CVA-brya
+    FARM: collabora
+    FDO_CI_CONCURRENT: 13
+    GPU_VERSION: anv-rpl
+    HWCI_KERNEL_MODULES: xe
+    RUNNER_TAG: mesa-ci-x86-64-lava-asus-CX3402CVA-brya
+    LAVA_CMDLINE: "i915.force_probe=!a7a1 xe.force_probe=a7a1"
     INTEL_XE_IGNORE_EXPERIMENTAL_WARNING: 1
 
 # Status: https://lava.collabora.dev/scheduler/device_type/acer-chromebox-cxi5-brask
@@ -325,7 +344,7 @@
   variables:
     DEVICE_TYPE: acer-chromebox-cxi4-puff
     FARM: collabora
-    FDO_CI_CONCURRENT: 9
+    FDO_CI_CONCURRENT: 3
     GPU_VERSION: iris-cml
     HWCI_KERNEL_MODULES: i915
     RUNNER_TAG: mesa-ci-x86-64-lava-acer-chromebox-cxi4-puff
@@ -410,6 +429,8 @@
   extends:
     - .iris-test
     - .lava-acer-n20q11-r856ltn-p1s2-nissa:x86_64
+  variables:
+    DEQP_SUITE: iris-adl
 
 .iris-whl-deqp:
   extends:
