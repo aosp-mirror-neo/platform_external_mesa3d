@@ -22,11 +22,6 @@
 #include "util/disk_cache.h"
 #include "util/mesa-sha1.h"
 
-#if DETECT_OS_ANDROID
-#include <vulkan/vk_android_native_buffer.h>
-#include "util/u_gralloc/u_gralloc.h"
-#endif
-
 #include "vk_android.h"
 #include "vk_device.h"
 #include "vk_drm_syncobj.h"
@@ -57,8 +52,6 @@
 #include "clc6c0.h"
 #include "clc997.h"
 #include "clcdc0.h"
-#include "clce97.h"
-
 static uint32_t
 nvk_get_vk_version(const struct nv_device_info *info)
 {
@@ -91,12 +84,8 @@ nvk_is_conformant(const struct nv_device_info *info)
    if (info->type != NV_DEVICE_TYPE_DIS)
       return false;
 
-   /* Everything Kepler through Ada is conformant */
-   if (info->cls_eng3d >= KEPLER_A && info->cls_eng3d <= ADA_A)
-      return true;
-
-   /* And also Blackwell B */
-   if (info->cls_eng3d == BLACKWELL_B)
+   /* Everything Maxwell through Ada is conformant */
+   if (info->cls_eng3d >= MAXWELL_A && info->cls_eng3d <= ADA_A)
       return true;
 
    return false;
@@ -194,12 +183,13 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .KHR_shader_terminate_invocation = true,
       .KHR_spirv_1_4 = true,
       .KHR_storage_buffer_storage_class = true,
-      .KHR_timeline_semaphore = true,
 #ifdef NVK_USE_WSI_PLATFORM
       .KHR_swapchain = true,
       .KHR_swapchain_mutable_format = true,
 #endif
       .KHR_synchronization2 = true,
+      .KHR_timeline_semaphore = true,
+      .KHR_unified_image_layouts = true,
       .KHR_uniform_buffer_standard_layout = true,
       .KHR_variable_pointers = true,
       .KHR_vertex_attribute_divisor = true,
@@ -291,8 +281,7 @@ nvk_get_device_extensions(const struct nvk_instance *instance,
       .EXT_ycbcr_image_arrays = true,
       .EXT_zero_initialize_device_memory = true,
 #if DETECT_OS_ANDROID
-      .ANDROID_native_buffer = vk_android_get_ugralloc() &&
-         u_gralloc_get_type(vk_android_get_ugralloc()) != U_GRALLOC_TYPE_FALLBACK,
+      .ANDROID_native_buffer = vk_android_get_ugralloc() != NULL,
 #endif
       .GOOGLE_decorate_string = true,
       .GOOGLE_hlsl_functionality1 = true,
@@ -512,6 +501,10 @@ nvk_get_device_features(const struct nv_device_info *info,
 
       /* VK_KHR_shader_subgroup_uniform_control_flow */
       .shaderSubgroupUniformControlFlow = true,
+
+      /* VK_KHR_unified_image_layouts */
+      .unifiedImageLayouts = true,
+      .unifiedImageLayoutsVideo = true,
 
       /* VK_KHR_workgroup_memory_explicit_layout */
       .workgroupMemoryExplicitLayout = true,

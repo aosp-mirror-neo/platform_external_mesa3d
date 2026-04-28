@@ -830,9 +830,21 @@ radv_check_modifier_support(struct radv_physical_device *pdev, const VkPhysicalD
        !need_dcc_sign_reinterpret)
       return VK_ERROR_FORMAT_NOT_SUPPORTED;
 
+   const bool video = info->usage & (VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR | VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR);
+   if (video) {
+      if (!ac_modifier_supports_video(&pdev->info, modifier))
+         return VK_ERROR_FORMAT_NOT_SUPPORTED;
+
+      /* Decode DPB and output coincide (tier3) requires tiling. */
+      if (info->usage & VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR && modifier == DRM_FORMAT_MOD_LINEAR)
+         return VK_ERROR_FORMAT_NOT_SUPPORTED;
+   }
+
    /* We can expand this as needed and implemented but there is not much demand
-    * for more. */
-   if (ac_modifier_has_dcc(modifier)) {
+    * for more.
+    * Video can't support array layers with swizzle modes that use slice index
+    * for addressing. */
+   if (ac_modifier_has_dcc(modifier) || video) {
       props->maxMipLevels = 1;
       props->maxArrayLayers = 1;
    }
@@ -900,7 +912,7 @@ radv_get_image_format_properties(struct radv_physical_device *pdev, const VkPhys
    } else if (tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT) {
       format_feature_flags = radv_get_modifier_flags(pdev, format, mod_info->drmFormatModifier, &format_props);
    } else {
-      unreachable("bad VkImageTiling");
+      UNREACHABLE("bad VkImageTiling");
    }
 
    if (format_feature_flags == 0)
@@ -913,7 +925,7 @@ radv_get_image_format_properties(struct radv_physical_device *pdev, const VkPhys
 
    switch (info->type) {
    default:
-      unreachable("bad vkimage type\n");
+      UNREACHABLE("bad vkimage type\n");
    case VK_IMAGE_TYPE_1D:
       maxExtent.width = 16384;
       maxExtent.height = 1;

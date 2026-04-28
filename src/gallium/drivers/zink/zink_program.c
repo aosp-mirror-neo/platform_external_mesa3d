@@ -599,6 +599,7 @@ update_gfx_program(struct zink_context *ctx, struct zink_gfx_program *prog)
 void
 zink_gfx_program_update(struct zink_context *ctx)
 {
+   assert(!ctx->gfx_stages[MESA_SHADER_TESS_CTRL] || !ctx->gfx_stages[MESA_SHADER_TESS_CTRL]->non_fs.is_generated);
    if (ctx->last_vertex_stage_dirty) {
       gl_shader_stage pstage = ctx->last_vertex_stage->info.stage;
       ctx->dirty_gfx_stages |= BITFIELD_BIT(pstage);
@@ -721,6 +722,7 @@ void
 zink_gfx_program_update_optimal(struct zink_context *ctx)
 {
    struct zink_screen *screen = zink_screen(ctx->base.screen);
+   assert(!ctx->gfx_stages[MESA_SHADER_TESS_CTRL] || !ctx->gfx_stages[MESA_SHADER_TESS_CTRL]->non_fs.is_generated);
    if (ctx->gfx_dirty) {
       struct zink_gfx_program *prog = NULL;
       ctx->gfx_pipeline_state.optimal_key = zink_sanitize_optimal_key(ctx->gfx_stages, ctx->gfx_pipeline_state.shader_keys_optimal.key.val);
@@ -1426,7 +1428,7 @@ print_pipeline_stats(struct zink_screen *screen, VkPipeline pipeline, struct uti
             fprintf(f, "%g %s", stats[i].value.f64, stats[i].name);
             break;
          default:
-            unreachable("unknown statistic");
+            UNREACHABLE("unknown statistic");
          }
       }
 
@@ -1578,7 +1580,7 @@ zink_program_descriptor_is_buffer(struct zink_context *ctx, gl_shader_stage stag
       break;
    }
    default:
-      unreachable("unknown shader type");
+      UNREACHABLE("unknown shader type");
    }
    if (!zs)
       return false;
@@ -1849,7 +1851,7 @@ gs_output_to_reduced_prim_type(struct shader_info *info)
       return MESA_PRIM_TRIANGLES;
 
    default:
-      unreachable("unexpected output primitive type");
+      UNREACHABLE("unexpected output primitive type");
    }
 }
 
@@ -2057,13 +2059,6 @@ zink_bind_tes_state(struct pipe_context *pctx,
    struct zink_context *ctx = zink_context(pctx);
    if (!cso && !ctx->gfx_stages[MESA_SHADER_TESS_EVAL])
       return;
-   if (!!ctx->gfx_stages[MESA_SHADER_TESS_EVAL] != !!cso) {
-      if (!cso) {
-         /* if unsetting a TESS that uses a generated TCS, ensure the TCS is unset */
-         if (ctx->gfx_stages[MESA_SHADER_TESS_CTRL] == ctx->gfx_stages[MESA_SHADER_TESS_EVAL]->non_fs.generated_tcs)
-            ctx->gfx_stages[MESA_SHADER_TESS_CTRL] = NULL;
-      }
-   }
    struct zink_shader *prev_shader = ctx->gfx_stages[MESA_SHADER_TESS_EVAL];
    bind_gfx_stage(ctx, MESA_SHADER_TESS_EVAL, cso);
    bind_last_vertex_stage(ctx, MESA_SHADER_TESS_EVAL, prev_shader);
@@ -2177,7 +2172,7 @@ print_exe_stages(VkShaderStageFlags stages)
       return "FS";
    if (stages == VK_SHADER_STAGE_COMPUTE_BIT)
       return "CS";
-   unreachable("unhandled combination of stages!");
+   UNREACHABLE("unhandled combination of stages!");
 }
 
 static void

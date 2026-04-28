@@ -95,7 +95,7 @@ shrink_dest_to_read_mask(nir_def *def, bool shrink_start)
    nir_src *offset_src = NULL;
 
    if (def->parent_instr->type == nir_instr_type_intrinsic) {
-      intr = nir_instr_as_intrinsic(def->parent_instr);
+      intr = nir_def_as_intrinsic(def);
       offset_src = nir_get_io_offset_src(intr);
    }
 
@@ -135,7 +135,7 @@ shrink_dest_to_read_mask(nir_def *def, bool shrink_start)
 
          /* Reswizzle sources, which must be ALU since they have swizzle */
          assert(first_bit + comps <= NIR_MAX_VEC_COMPONENTS);
-         uint8_t swizzle[NIR_MAX_VEC_COMPONENTS] = { 0 };
+         uint8_t swizzle[NIR_MAX_VEC_COMPONENTS + 1] = { 0 };
          for (unsigned i = 0; i < comps; ++i) {
             swizzle[first_bit + i] = i;
          }

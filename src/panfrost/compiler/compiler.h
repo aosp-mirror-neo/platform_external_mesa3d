@@ -161,7 +161,7 @@ bi_apply_swizzle(uint32_t value, enum bi_swizzle swz)
 #undef H
 #undef B
 
-   unreachable("Invalid swizzle");
+   UNREACHABLE("Invalid swizzle");
 }
 
 enum bi_index_type {
@@ -400,6 +400,12 @@ static inline bool
 bi_is_ssa(bi_index idx)
 {
    return idx.type == BI_INDEX_NORMAL;
+}
+
+static inline bool
+bi_is_zero(const bi_index idx)
+{
+   return idx.type == BI_INDEX_CONSTANT && idx.value == 0;
 }
 
 /* Compares equivalence as references. Does not compare offsets, swizzles, or
@@ -907,7 +913,7 @@ bi_block_add_successor(bi_block *block, bi_block *successor)
       return;
    }
 
-   unreachable("Too many successors");
+   UNREACHABLE("Too many successors");
 }
 
 /* Subset of pan_shader_info needed per-variant, in order to support IDVS */
@@ -1239,7 +1245,7 @@ bi_predecessor_index(bi_block *succ, bi_block *pred)
       index++;
    }
 
-   unreachable("Invalid predecessor");
+   UNREACHABLE("Invalid predecessor");
 }
 
 static inline bi_instr *
@@ -1593,7 +1599,7 @@ bi_builder_insert(bi_cursor *cursor, bi_instr *I)
       return;
    }
 
-   unreachable("Invalid cursor option");
+   UNREACHABLE("Invalid cursor option");
 }
 
 bi_instr *bi_csel_from_mux(bi_builder *b, const bi_instr *I, bool must_sign);
@@ -1615,6 +1621,18 @@ bi_dontcare(bi_builder *b)
 #define bi_worklist_pop_head(w)         u_worklist_pop_head(w, bi_block, index)
 #define bi_worklist_peek_tail(w)        u_worklist_peek_tail(w, bi_block, index)
 #define bi_worklist_pop_tail(w)         u_worklist_pop_tail(w, bi_block, index)
+
+static inline void
+bi_record_use(bi_instr **uses, BITSET_WORD *multiple, bi_instr *I, unsigned s)
+{
+   unsigned v = I->src[s].value;
+
+   assert(I->src[s].type == BI_INDEX_NORMAL);
+   if (uses[v] && uses[v] != I)
+      BITSET_SET(multiple, v);
+   else
+      uses[v] = I;
+}
 
 /* NIR passes */
 

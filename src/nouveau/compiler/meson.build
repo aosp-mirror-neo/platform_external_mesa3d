@@ -1,15 +1,16 @@
 # Copyright © 2022 Collabora, Ltd.
 # SPDX-License-Identifier: MIT
 
+subdir('latencies')
+
 dep_paste = dependency('paste',
   version : '>= 1.0.14',
-  fallback : ['paste', 'dep_paste'],
+  fallback : ['paste-1-rs', 'dep_paste'],
   required : true,
 )
 
 dep_rustc_hash = dependency('rustc-hash',
-  version: '>= 2.0',
-  fallback: ['rustc-hash', 'dep_rustc_hash'],
+  fallback: ['rustc-hash-2-rs', 'dep_rustc_hash'],
   required: true,
 )
 
@@ -116,6 +117,7 @@ _libnak_rs = static_library(
   link_with : [
     _libnak_bindings_rs,
     _libnak_ir_proc_rs,
+    libnak_latencies_rs,
   ],
 )
 

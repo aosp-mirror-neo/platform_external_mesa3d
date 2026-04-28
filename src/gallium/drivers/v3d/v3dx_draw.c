@@ -377,7 +377,7 @@ v3d_gs_output_primitive(enum mesa_prim prim_type)
     case MESA_PRIM_TRIANGLE_STRIP:
         return GEOMETRY_SHADER_TRI_STRIP;
     default:
-        unreachable("Unsupported primitive type");
+        UNREACHABLE("Unsupported primitive type");
     }
 }
 
@@ -417,7 +417,7 @@ simd_width_to_gs_pack_mode(uint32_t width)
     case 1:
         return V3D_PACK_MODE_1_WAY;
     default:
-        unreachable("Invalid SIMD width");
+        UNREACHABLE("Invalid SIMD width");
     };
 }
 
@@ -1205,7 +1205,6 @@ v3d_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
                                                    v3d->ssbo[s].sb[i].buffer);
                         struct v3d_resource *rsc= v3d_resource(v3d->ssbo[s].sb[i].buffer);
                         rsc->graphics_written = true;
-                        job->tmu_dirty_rcl = true;
                 }
 
                 BITSET_FOREACH_SET(i, v3d->shaderimg[s].enabled_mask,
@@ -1214,7 +1213,6 @@ v3d_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
                                                    v3d->shaderimg[s].si[i].base.resource);
                         struct v3d_resource *rsc= v3d_resource(v3d->shaderimg[s].si[i].base.resource);
                         rsc->graphics_written = true;
-                        job->tmu_dirty_rcl = true;
                 }
         }
 
@@ -1858,7 +1856,7 @@ v3d_set_global_binding(struct pipe_context *pctx,
         if (old_size < first + count) {
                 /* we are screwed no matter what */
                 if (!util_dynarray_grow(&v3d->global_buffers, *resources, (first + count) - old_size))
-                        unreachable("out of memory");
+                        UNREACHABLE("out of memory");
 
                 for (unsigned i = old_size; i < first + count; i++)
                         *util_dynarray_element(&v3d->global_buffers, struct pipe_resource *, i) = NULL;

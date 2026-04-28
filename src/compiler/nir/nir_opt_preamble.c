@@ -102,18 +102,10 @@ typedef struct {
 static bool
 instr_can_speculate(nir_instr *instr)
 {
-   /* Intrinsics with an ACCESS index can only be speculated if they are
-    * explicitly CAN_SPECULATE.
-    */
-   if (instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+   if (instr->type == nir_instr_type_phi)
+      return true;
 
-      if (nir_intrinsic_has_access(intr))
-         return nir_intrinsic_access(intr) & ACCESS_CAN_SPECULATE;
-   }
-
-   /* For now, everything else can be speculated. TODO: Bindless textures. */
-   return true;
+   return nir_instr_can_speculate(instr);
 }
 
 static float
@@ -240,6 +232,7 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_const_ir3:
    case nir_intrinsic_load_constant_agx:
    case nir_intrinsic_bindless_image_agx:
+   case nir_intrinsic_bindless_sampler_agx:
       return can_move_srcs(&instr->instr, ctx);
 
    /* Image/SSBO loads can be moved if they are CAN_REORDER and their
@@ -457,7 +450,7 @@ calculate_can_move_for_cf_list(opt_preamble_ctx *ctx, struct exec_list *list)
       }
 
       default:
-         unreachable("Unexpected CF node type");
+         UNREACHABLE("Unexpected CF node type");
       }
    }
 
@@ -507,7 +500,7 @@ replace_for_block(nir_builder *b, opt_preamble_ctx *ctx,
                assert(else_def == NULL);
                else_def = phi_src->src.ssa;
             } else {
-               unreachable("Invalid predecessor for phi of if");
+               UNREACHABLE("Invalid predecessor for phi of if");
             }
          }
 
@@ -607,7 +600,7 @@ replace_for_cf_list(nir_builder *b, opt_preamble_ctx *ctx,
       }
 
       default:
-         unreachable("Unexpected CF node type");
+         UNREACHABLE("Unexpected CF node type");
       }
    }
 }

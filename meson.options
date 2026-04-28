@@ -52,6 +52,12 @@ option(
 )
 
 option(
+  'android-libperfetto',
+  type : 'feature',
+  description : 'Use Android\'s libperfetto',
+)
+
+option(
   'dri-drivers-path',
   type : 'string',
   value : '',
@@ -82,7 +88,7 @@ option(
     'all', 'auto',
     'asahi', 'crocus', 'd3d12', 'etnaviv', 'freedreno', 'i915', 'iris',
     'lima', 'llvmpipe', 'nouveau', 'panfrost', 'r300', 'r600', 'radeonsi',
-    'softpipe', 'svga', 'tegra', 'v3d', 'vc4', 'virgl', 'zink',
+    'rocket', 'softpipe', 'svga', 'tegra', 'v3d', 'vc4', 'virgl', 'zink',
   ],
   description : 'List of gallium drivers to build. If this is set to auto ' +
                 'all drivers applicable to the target OS/architecture ' +
@@ -299,7 +305,7 @@ option(
   type : 'array',
   value : [],
   choices : [
-    'device-select', 'intel-nullhw', 'overlay', 'screenshot',
+    'device-select', 'intel-nullhw', 'overlay', 'screenshot', 'anti-lag',
     'vram-report-limit',
   ],
   description : 'List of vulkan layers to build'
@@ -826,9 +832,9 @@ option(
 option(
   'allow-fallback-for',
   type : 'array',
-  value : [],
+  value : ['perfetto'],
   choices : [
-    'libdrm',
+    'libdrm', 'perfetto',
   ],
   description : 'Allows the fallback mechanism if the dependency is not available on the system, or too old.'
 )

@@ -82,7 +82,7 @@ radv_nir_cmat_length_mul(struct glsl_cmat_description desc, const lower_cmat_par
 static nir_def *
 radv_nir_load_cmat(nir_builder *b, const lower_cmat_params *params, nir_def *src)
 {
-   nir_deref_instr *deref = nir_instr_as_deref(src->parent_instr);
+   nir_deref_instr *deref = nir_def_as_deref(src);
    struct glsl_cmat_description desc = *glsl_get_cmat_description(deref->type);
    return nir_build_load_deref(b, radv_nir_cmat_length(desc, params), radv_nir_cmat_bits(desc), src, 0);
 }
@@ -506,6 +506,12 @@ radv_nir_lower_cooperative_matrix(nir_shader *shader, enum amd_gfx_level gfx_lev
                nir_def *local_idx = nir_load_subgroup_invocation(&b);
                nir_def *inner_idx = nir_iand_imm(&b, local_idx, 15);
 
+               bool load_acc_as_b = is_load && gfx_level < GFX12 && desc.use == GLSL_CMAT_USE_ACCUMULATOR &&
+                                    radv_nir_cmat_bits(desc) == 8 && wave_size == 32 &&
+                                    layout == GLSL_MATRIX_LAYOUT_COLUMN_MAJOR;
+               if (load_acc_as_b)
+                  desc.use = GLSL_CMAT_USE_B;
+
                /* A input is transposed */
                if (desc.use == GLSL_CMAT_USE_A)
                   layout = layout == GLSL_MATRIX_LAYOUT_COLUMN_MAJOR ? GLSL_MATRIX_LAYOUT_ROW_MAJOR
@@ -562,9 +568,7 @@ radv_nir_lower_cooperative_matrix(nir_shader *shader, enum amd_gfx_level gfx_lev
                   row_offset = nir_iadd_imm(&b, base_row, row_iter);
 
                   if (layout == GLSL_MATRIX_LAYOUT_ROW_MAJOR) {
-                     nir_def *tmp = col_offset;
-                     col_offset = row_offset;
-                     row_offset = tmp;
+                     SWAP(col_offset, row_offset);
                   }
 
                   col_offset = nir_imul(&b, col_offset, stride);
@@ -593,6 +597,22 @@ radv_nir_lower_cooperative_matrix(nir_shader *shader, enum amd_gfx_level gfx_lev
 
                if (is_load) {
                   nir_def *mat = nir_vec(&b, vars, length);
+
+                  if (load_acc_as_b) {
+                     /* Shift data in the high bits for the first 16 lanes (it's already there for the other 16.) */
+                     nir_def *lo = nir_ult_imm(&b, local_idx, 16);
+                     nir_def *shift = nir_bcsel(&b, lo, nir_imm_int(&b, 8), nir_imm_int(&b, 0));
+                     for (unsigned i = 0; i < mat->num_components / 4; i++) {
+                        nir_def *packed = nir_pack_32_4x8(&b, nir_channels(&b, mat, 0xfu << (4 * i)));
+                        packed = nir_ishl(&b, packed, shift);
+                        nir_def *unpacked = nir_unpack_32_4x8(&b, packed);
+                        vars[i * 2] = nir_channel(&b, unpacked, 1);
+                        vars[i * 2 + 1] = nir_channel(&b, unpacked, 3);
+                     }
+
+                     mat = nir_vec(&b, vars, length / 2);
+                  }
+
                   nir_store_deref(&b, cmat_deref, mat, nir_component_mask(mat->num_components));
                } else if (gfx_level < GFX12 && desc.use != GLSL_CMAT_USE_ACCUMULATOR) {
                   nir_pop_if(&b, NULL);
@@ -656,7 +676,7 @@ radv_nir_lower_cooperative_matrix(nir_shader *shader, enum amd_gfx_level gfx_lev
                      else if (src_use == GLSL_CMAT_USE_B)
                         src_use = GLSL_CMAT_USE_A;
                      else
-                        unreachable("unsupported transpose");
+                        UNREACHABLE("unsupported transpose");
                   }
                } else {
                   sat = nir_intrinsic_saturate(intr);

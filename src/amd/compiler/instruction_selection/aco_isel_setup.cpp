@@ -143,7 +143,7 @@ sanitize_cf_list(nir_function_impl* impl, struct exec_list* cf_list)
          }
          break;
       }
-      case nir_cf_node_function: unreachable("Invalid cf type");
+      case nir_cf_node_function: UNREACHABLE("Invalid cf type");
       }
    }
 
@@ -169,9 +169,7 @@ apply_nuw_to_ssa(isel_context* ctx, nir_def* ssa)
    nir_scalar src1 = nir_scalar_chase_alu_src(scalar, 1);
 
    if (nir_scalar_is_const(src0)) {
-      nir_scalar tmp = src0;
-      src0 = src1;
-      src1 = tmp;
+      std::swap(src0, src1);
    }
 
    uint32_t src1_ub = nir_unsigned_upper_bound(ctx->shader, ctx->range_ht, src1, &ctx->ub_config);
@@ -728,7 +726,7 @@ setup_isel_context(Program* program, unsigned shader_count, struct nir_shader* c
       case MESA_SHADER_CALLABLE:
       case MESA_SHADER_INTERSECTION:
       case MESA_SHADER_ANY_HIT: sw_stage = SWStage::RT; break;
-      default: unreachable("Shader stage not implemented");
+      default: UNREACHABLE("Shader stage not implemented");
       }
    }
 

@@ -173,7 +173,7 @@ v3dv_CmdClearColorImage(VkCommandBuffer commandBuffer,
    for (uint32_t i = 0; i < rangeCount; i++) {
       if (clear_image_tlb(cmd_buffer, image, &clear_value, &pRanges[i]))
          continue;
-      unreachable("Unsupported color clear.");
+      UNREACHABLE("Unsupported color clear.");
    }
 
    cmd_buffer->state.is_transfer = false;
@@ -199,7 +199,7 @@ v3dv_CmdClearDepthStencilImage(VkCommandBuffer commandBuffer,
    for (uint32_t i = 0; i < rangeCount; i++) {
       if (clear_image_tlb(cmd_buffer, image, &clear_value, &pRanges[i]))
          continue;
-      unreachable("Unsupported depth/stencil clear.");
+      UNREACHABLE("Unsupported depth/stencil clear.");
    }
 
    cmd_buffer->state.is_transfer = false;
@@ -282,10 +282,10 @@ v3dv_meta_clear_init(struct v3dv_device *device)
 {
    if (device->instance->meta_cache_enabled) {
       device->meta.color_clear.cache =
-         _mesa_hash_table_create(NULL, u64_hash, u64_compare);
+         _mesa_hash_table_create(NULL, _mesa_hash_u64, _mesa_key_u64_equal);
 
       device->meta.depth_clear.cache =
-         _mesa_hash_table_create(NULL, u64_hash, u64_compare);
+         _mesa_hash_table_create(NULL, _mesa_hash_u64, _mesa_key_u64_equal);
    }
 
    create_color_clear_pipeline_layout(device,

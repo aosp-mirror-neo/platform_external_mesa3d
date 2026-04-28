@@ -307,7 +307,7 @@ free_zombie_shaders(struct st_context *st)
          st->pipe->delete_compute_state(st->pipe, entry->shader);
          break;
       default:
-         unreachable("invalid shader type in free_zombie_shaders()");
+         UNREACHABLE("invalid shader type in free_zombie_shaders()");
       }
       free(entry);
    }
@@ -978,10 +978,4 @@ st_destroy_context(struct st_context *st)
       /* Restore the current context and draw/read buffers (may be NULL) */
       _mesa_make_current(save_ctx, save_drawbuffer, save_readbuffer);
    }
-}
-
-const struct nir_shader_compiler_options *
-st_get_nir_compiler_options(struct st_context *st, gl_shader_stage stage)
-{
-   return st->ctx->Const.ShaderCompilerOptions[stage].NirOptions;
 }

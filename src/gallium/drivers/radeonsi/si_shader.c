@@ -703,7 +703,7 @@ void si_shader_dump_stats_for_shader_db(struct si_screen *screen, struct si_shad
                shader->selector->stage == MESA_SHADER_TESS_EVAL)
          num_vs_outputs = shader->info.nr_param_exports;
       else
-         unreachable("invalid shader key");
+         UNREACHABLE("invalid shader key");
    } else if (shader->selector->stage == MESA_SHADER_FRAGMENT) {
       num_ps_outputs = util_bitcount(shader->selector->info.colors_written) +
                        (shader->info.writes_z ||
@@ -1192,7 +1192,7 @@ static void si_lower_ngg(struct si_shader *shader, nir_shader *nir,
 struct nir_shader *si_deserialize_shader(struct si_shader_selector *sel)
 {
    struct pipe_screen *screen = &sel->screen->b;
-   const void *options = screen->get_compiler_options(screen, sel->stage);
+   const void *options = screen->nir_options[sel->stage];
 
    struct blob_reader blob_reader;
    blob_reader_init(&blob_reader, sel->nir_binary, sel->nir_size);
@@ -1730,7 +1730,7 @@ static void run_late_optimization_and_lowering_passes(struct si_nir_shader_ctx *
    /* This helps LLVM form VMEM clauses and thus get more GPU cache hits.
     * 200 is tuned for Viewperf. It should be done last.
     */
-   NIR_PASS(_, nir, nir_group_loads, nir_group_same_resource_only, 200);
+   NIR_PASS(_, nir, nir_opt_group_loads, nir_group_same_resource_only, 200);
 }
 
 static void get_input_nir(struct si_shader *shader, struct si_nir_shader_ctx *ctx)

@@ -3579,7 +3579,7 @@ tu_CmdBindIndexBuffer2KHR(VkCommandBuffer commandBuffer,
       index_shift = 0;
       break;
    default:
-      unreachable("invalid VkIndexType");
+      UNREACHABLE("invalid VkIndexType");
    }
 
    if (buf) {
@@ -4522,15 +4522,11 @@ tu_CmdBindPipeline(VkCommandBuffer commandBuffer,
    if (pipeline->program.writes_shading_rate !=
           cmd->state.pipeline_writes_shading_rate ||
        pipeline->program.reads_shading_rate !=
-          cmd->state.pipeline_reads_shading_rate ||
-       pipeline->program.accesses_smask !=
-          cmd->state.pipeline_accesses_smask) {
+          cmd->state.pipeline_reads_shading_rate) {
       cmd->state.pipeline_writes_shading_rate =
          pipeline->program.writes_shading_rate;
       cmd->state.pipeline_reads_shading_rate =
          pipeline->program.reads_shading_rate;
-      cmd->state.pipeline_accesses_smask =
-         pipeline->program.accesses_smask;
       cmd->state.dirty |= TU_CMD_DIRTY_SHADING_RATE;
    }
 
@@ -5263,7 +5259,7 @@ tu_CmdExecuteCommands(VkCommandBuffer commandBuffer,
                   break;
                }
                case SR_AFTER_PRE_CHAIN:
-                  unreachable("resuming render pass is not preceded by suspending one");
+                  UNREACHABLE("resuming render pass is not preceded by suspending one");
                }
 
                tu_reset_render_pass(cmd);
@@ -5288,7 +5284,7 @@ tu_CmdExecuteCommands(VkCommandBuffer commandBuffer,
                   cmd->state.suspend_resume = SR_IN_CHAIN_AFTER_PRE_CHAIN;
                   break;
                default:
-                  unreachable("suspending render pass is followed by a not resuming one");
+                  UNREACHABLE("suspending render pass is followed by a not resuming one");
                }
             }
          }
@@ -5777,7 +5773,7 @@ tu_CmdBeginRendering(VkCommandBuffer commandBuffer,
       case SR_IN_PRE_CHAIN:
       case SR_IN_CHAIN:
       case SR_IN_CHAIN_AFTER_PRE_CHAIN:
-         unreachable("suspending render pass not followed by resuming pass");
+         UNREACHABLE("suspending render pass not followed by resuming pass");
          break;
       }
    }
@@ -6363,7 +6359,7 @@ tu6_build_depth_plane_z_mode(struct tu_cmd_buffer *cmd, struct tu_cs *cs)
       zmode = A6XX_EARLY_Z_LATE_Z;
 
    if (zmode == A6XX_EARLY_Z_LATE_Z &&
-       (cmd->state.stencil_written_on_depth_fail || fs->fs.per_samp ||
+       (cmd->state.stencil_written_on_depth_fail || fs->fs.sample_shading ||
         !vk_format_has_depth(depth_format) || !ds_test_enable)) {
       zmode = A6XX_LATE_Z;
    }
@@ -6456,7 +6452,7 @@ tu_emit_fdm_params(struct tu_cmd_buffer *cmd,
                    unsigned num_units)
 {
    STATIC_ASSERT(IR3_DP_FS(frag_invocation_count) == IR3_DP_FS_DYNAMIC);
-   tu_cs_emit(cs, fs->fs.per_samp ?
+   tu_cs_emit(cs, fs->fs.sample_shading ?
               cmd->vk.dynamic_graphics_state.ms.rasterization_samples : 1);
    tu_cs_emit(cs, 0);
    tu_cs_emit(cs, 0);
@@ -8091,7 +8087,7 @@ tu_CmdEndRendering2EXT(VkCommandBuffer commandBuffer,
          cmd_buffer->state.suspend_resume = SR_AFTER_PRE_CHAIN;
          break;
       default:
-         unreachable("suspending render pass not followed by resuming pass");
+         UNREACHABLE("suspending render pass not followed by resuming pass");
       }
    }
 

@@ -51,29 +51,44 @@ emit_mbcnt(isel_context* ctx, Temp dst, Operand mask = Operand(), Operand base =
       return bld.vop3(aco_opcode::v_mbcnt_hi_u32_b32_e64, Definition(dst), mask_hi, mbcnt_lo);
 }
 
+bool
+can_use_shared_vgprs(isel_context* ctx)
+{
+   /* Avoid using shared VGPRs for shuffle on GFX10 when the shader consists
+    * of multiple binaries, because the VGPR use is not known when choosing
+    * which registers to use for the shared VGPRs.
+    */
+   return ctx->options->gfx_level >= GFX10 && ctx->options->gfx_level < GFX11 &&
+          ctx->program->wave_size == 64 && !ctx->program->info.ps.has_epilog &&
+          !ctx->program->info.merged_shader_compiled_separately &&
+          !ctx->program->info.vs.has_prolog && ctx->stage != raytracing_cs;
+}
+
+void
+enable_shared_vgprs(isel_context* ctx)
+{
+   assert(can_use_shared_vgprs(ctx));
+   if (ctx->program->config->num_shared_vgprs)
+      return;
+
+   /* We need one pair of shared VGPRs:
+    * Note, that these have twice the allocation granularity of normal VGPRs
+    */
+   ctx->program->config->num_shared_vgprs = 2 * ctx->program->dev.vgpr_alloc_granule;
+}
+
 Temp
 emit_bpermute(isel_context* ctx, Builder& bld, Temp index, Temp data)
 {
    if (index.regClass() == s1)
       return bld.readlane(bld.def(s1), data, index);
 
-   /* Avoid using shared VGPRs for shuffle on GFX10 when the shader consists
-    * of multiple binaries, because the VGPR use is not known when choosing
-    * which registers to use for the shared VGPRs.
-    */
-   const bool avoid_shared_vgprs =
-      ctx->options->gfx_level >= GFX10 && ctx->options->gfx_level < GFX11 &&
-      ctx->program->wave_size == 64 &&
-      (ctx->program->info.ps.has_epilog || ctx->program->info.merged_shader_compiled_separately ||
-       ctx->program->info.vs.has_prolog || ctx->stage == raytracing_cs);
-
-   if (ctx->options->gfx_level <= GFX7 || avoid_shared_vgprs) {
-      /* GFX6-7: there is no bpermute instruction */
-      return bld.pseudo(aco_opcode::p_bpermute_readlane, bld.def(v1), bld.def(bld.lm),
-                        bld.def(bld.lm, vcc), index, data);
-   } else if (ctx->options->gfx_level >= GFX10 && ctx->options->gfx_level <= GFX11_5 &&
-              ctx->program->wave_size == 64) {
-
+   if ((ctx->options->gfx_level >= GFX8 && ctx->options->gfx_level < GFX10) ||
+       ctx->options->gfx_level >= GFX12 || ctx->program->wave_size == 32) {
+      /* wave32 or GFX8-9, GFX12+: bpermute works normally */
+      Temp index_x4 = bld.vop2(aco_opcode::v_lshlrev_b32, bld.def(v1), Operand::c32(2u), index);
+      return bld.ds(aco_opcode::ds_bpermute_b32, bld.def(v1), index_x4, data);
+   } else if (ctx->options->gfx_level >= GFX11 || can_use_shared_vgprs(ctx)) {
       /* GFX10-11.5 wave64 mode: emulate full-wave bpermute */
       Temp index_is_lo =
          bld.vopc(aco_opcode::v_cmp_ge_u32, bld.def(bld.lm), Operand::c32(31u), index);
@@ -86,10 +101,7 @@ emit_bpermute(isel_context* ctx, Builder& bld, Temp index, Temp data)
       Operand index_x4 = bld.vop2(aco_opcode::v_lshlrev_b32, bld.def(v1), Operand::c32(2u), index);
 
       if (ctx->options->gfx_level <= GFX10_3) {
-         /* We need one pair of shared VGPRs:
-          * Note, that these have twice the allocation granularity of normal VGPRs
-          */
-         ctx->program->config->num_shared_vgprs = 2 * ctx->program->dev.vgpr_alloc_granule;
+         enable_shared_vgprs(ctx);
 
          return bld.pseudo(aco_opcode::p_bpermute_shared_vgpr, bld.def(v1), bld.def(s2),
                            bld.def(s1, scc), index_x4, data, same_half);
@@ -98,9 +110,9 @@ emit_bpermute(isel_context* ctx, Builder& bld, Temp index, Temp data)
                            bld.def(s1, scc), Operand(v1.as_linear()), index_x4, data, same_half);
       }
    } else {
-      /* wave32 or GFX8-9, GFX12+: bpermute works normally */
-      Temp index_x4 = bld.vop2(aco_opcode::v_lshlrev_b32, bld.def(v1), Operand::c32(2u), index);
-      return bld.ds(aco_opcode::ds_bpermute_b32, bld.def(v1), index_x4, data);
+      /* GFX6-7: there is no bpermute instruction */
+      return bld.pseudo(aco_opcode::p_bpermute_readlane, bld.def(v1), bld.def(bld.lm),
+                        bld.def(bld.lm, vcc), index, data);
    }
 }
 
@@ -739,7 +751,7 @@ mubuf_load_format_callback(Builder& bld, const LoadEmitInfo& info, unsigned byte
       case 4: op = aco_opcode::buffer_load_format_d16_xy; break;
       case 6: op = aco_opcode::buffer_load_format_d16_xyz; break;
       case 8: op = aco_opcode::buffer_load_format_d16_xyzw; break;
-      default: unreachable("invalid buffer load format size"); break;
+      default: UNREACHABLE("invalid buffer load format size"); break;
       }
    } else {
       assert(info.component_size == 4);
@@ -748,7 +760,7 @@ mubuf_load_format_callback(Builder& bld, const LoadEmitInfo& info, unsigned byte
       case 8: op = aco_opcode::buffer_load_format_xy; break;
       case 12: op = aco_opcode::buffer_load_format_xyz; break;
       case 16: op = aco_opcode::buffer_load_format_xyzw; break;
-      default: unreachable("invalid buffer load format size"); break;
+      default: UNREACHABLE("invalid buffer load format size"); break;
       }
    }
 
@@ -1285,7 +1297,7 @@ get_buffer_store_op(unsigned bytes)
    case 12: return aco_opcode::buffer_store_dwordx3;
    case 16: return aco_opcode::buffer_store_dwordx4;
    }
-   unreachable("Unexpected store size");
+   UNREACHABLE("Unexpected store size");
    return aco_opcode::num_opcodes;
 }
 
@@ -1362,7 +1374,7 @@ resolve_excess_vmem_const_offset(Builder& bld, Temp& voffset, unsigned const_off
       else if (likely(voffset.regClass() == v1))
          voffset = bld.vadd32(bld.def(v1), Operand(voffset), Operand::c32(excess_const_offset));
       else
-         unreachable("Unsupported register class of voffset");
+         UNREACHABLE("Unsupported register class of voffset");
    }
 
    return const_offset;
@@ -1472,7 +1484,7 @@ visit_store_output(isel_context* ctx, nir_intrinsic_instr* instr)
          abort();
       }
    } else {
-      unreachable("Shader stage not implemented");
+      UNREACHABLE("Shader stage not implemented");
    }
 }
 
@@ -1656,7 +1668,7 @@ visit_load_tcs_per_vertex_input(isel_context* ctx, nir_intrinsic_instr* instr)
    if (load_input_from_temps(ctx, instr, dst))
       return;
 
-   unreachable("LDS-based TCS input should have been lowered in NIR.");
+   UNREACHABLE("LDS-based TCS input should have been lowered in NIR.");
 }
 
 void
@@ -1664,7 +1676,7 @@ visit_load_per_vertex_input(isel_context* ctx, nir_intrinsic_instr* instr)
 {
    switch (ctx->shader->info.stage) {
    case MESA_SHADER_TESS_CTRL: visit_load_tcs_per_vertex_input(ctx, instr); break;
-   default: unreachable("Unimplemented shader stage");
+   default: UNREACHABLE("Unimplemented shader stage");
    }
 }
 
@@ -2048,7 +2060,7 @@ visit_image_load(isel_context* ctx, nir_intrinsic_instr* instr)
          case 2: opcode = aco_opcode::buffer_load_format_xy; break;
          case 3: opcode = aco_opcode::buffer_load_format_xyz; break;
          case 4: opcode = aco_opcode::buffer_load_format_xyzw; break;
-         default: unreachable(">4 channel buffer image load");
+         default: UNREACHABLE(">4 channel buffer image load");
          }
       } else {
          switch (util_bitcount(dmask)) {
@@ -2056,7 +2068,7 @@ visit_image_load(isel_context* ctx, nir_intrinsic_instr* instr)
          case 2: opcode = aco_opcode::buffer_load_format_d16_xy; break;
          case 3: opcode = aco_opcode::buffer_load_format_d16_xyz; break;
          case 4: opcode = aco_opcode::buffer_load_format_d16_xyzw; break;
-         default: unreachable(">4 channel buffer image load");
+         default: UNREACHABLE(">4 channel buffer image load");
          }
       }
       aco_ptr<Instruction> load{create_instruction(opcode, Format::MUBUF, 3 + is_sparse, 1)};
@@ -2191,7 +2203,7 @@ visit_image_store(isel_context* ctx, nir_intrinsic_instr* instr)
          case 0x3: opcode = aco_opcode::buffer_store_format_xy; break;
          case 0x7: opcode = aco_opcode::buffer_store_format_xyz; break;
          case 0xf: opcode = aco_opcode::buffer_store_format_xyzw; break;
-         default: unreachable(">4 channel buffer image store");
+         default: UNREACHABLE(">4 channel buffer image store");
          }
       } else {
          switch (dmask) {
@@ -2199,7 +2211,7 @@ visit_image_store(isel_context* ctx, nir_intrinsic_instr* instr)
          case 0x3: opcode = aco_opcode::buffer_store_format_d16_xy; break;
          case 0x7: opcode = aco_opcode::buffer_store_format_d16_xyz; break;
          case 0xf: opcode = aco_opcode::buffer_store_format_d16_xyzw; break;
-         default: unreachable(">4 channel buffer image store");
+         default: UNREACHABLE(">4 channel buffer image store");
          }
       }
       aco_ptr<Instruction> store{create_instruction(opcode, Format::MUBUF, 4, 0)};
@@ -2319,7 +2331,7 @@ translate_buffer_image_atomic_op(const nir_atomic_op op, aco_opcode* buf_op, aco
       *buf_op64 = aco_opcode::buffer_atomic_fmax_x2;
       *image_op = aco_opcode::image_atomic_fmax;
       break;
-   default: unreachable("unsupported atomic operation");
+   default: UNREACHABLE("unsupported atomic operation");
    }
 }
 
@@ -2607,7 +2619,7 @@ visit_store_global(isel_context* ctx, nir_intrinsic_instr* instr)
          case 16:
             op = global ? aco_opcode::global_store_dwordx4 : aco_opcode::flat_store_dwordx4;
             break;
-         default: unreachable("store_global not implemented for this size.");
+         default: UNREACHABLE("store_global not implemented for this size.");
          }
 
          aco_ptr<Instruction> flat{create_instruction(op, format, 3, 0)};
@@ -2741,7 +2753,7 @@ visit_global_atomic(isel_context* ctx, nir_intrinsic_instr* instr)
          op32 = aco_opcode::num_opcodes;
          op64 = aco_opcode::global_atomic_ordered_add_b64;
          break;
-      default: unreachable("unsupported atomic operation");
+      default: UNREACHABLE("unsupported atomic operation");
       }
 
       aco_opcode op = instr->def.bit_size == 32 ? op32 : op64;
@@ -3016,7 +3028,7 @@ translate_nir_scope(mesa_scope scope)
    case SCOPE_DEVICE: return scope_device;
    case SCOPE_SHADER_CALL: return scope_invocation;
    }
-   unreachable("invalid scope");
+   UNREACHABLE("invalid scope");
 }
 
 void
@@ -3195,7 +3207,7 @@ visit_shared_atomic(isel_context* ctx, nir_intrinsic_instr* instr)
       op64 = aco_opcode::ds_max_f64;
       op64_rtn = aco_opcode::ds_max_rtn_f64;
       break;
-   default: unreachable("Unhandled shared atomic intrinsic");
+   default: UNREACHABLE("Unhandled shared atomic intrinsic");
    }
 
    bool return_previous = !nir_def_is_unused(&instr->def);
@@ -3247,7 +3259,7 @@ visit_shared_append(isel_context* ctx, nir_intrinsic_instr* instr)
    switch (instr->intrinsic) {
    case nir_intrinsic_shared_append_amd: op = aco_opcode::ds_append; break;
    case nir_intrinsic_shared_consume_amd: op = aco_opcode::ds_consume; break;
-   default: unreachable("not shared_append/consume");
+   default: UNREACHABLE("not shared_append/consume");
    }
 
    Temp tmp = bld.tmp(v1);
@@ -3426,7 +3438,7 @@ visit_store_scratch(isel_context* ctx, nir_intrinsic_instr* instr)
          case 8: op = aco_opcode::scratch_store_dwordx2; break;
          case 12: op = aco_opcode::scratch_store_dwordx3; break;
          case 16: op = aco_opcode::scratch_store_dwordx4; break;
-         default: unreachable("Unexpected store size");
+         default: UNREACHABLE("Unexpected store size");
          }
 
          uint32_t const_offset = base_const_offset + offsets[i];
@@ -3486,7 +3498,7 @@ get_reduce_op(nir_op op, unsigned bit_size)
       CASEF(fmul)
       CASEF(fmin)
       CASEF(fmax)
-   default: unreachable("unknown reduction op");
+   default: UNREACHABLE("unknown reduction op");
 #undef CASEI
 #undef CASEF
    }
@@ -3744,7 +3756,7 @@ inclusive_scan_to_exclusive(isel_context* ctx, ReduceOp op, Definition dst, Temp
    case ixor8:
    case ixor16:
    case ixor32: return bld.vop2(aco_opcode::v_xor_b32, dst, scan, src);
-   default: unreachable("Unsupported op");
+   default: UNREACHABLE("Unsupported op");
    }
 }
 
@@ -3784,6 +3796,9 @@ emit_rotate_by_constant(isel_context* ctx, Temp& dst, Temp src, unsigned cluster
       bool has_wf_dpp = ctx->program->gfx_level >= GFX8 && ctx->program->gfx_level < GFX10;
       if (delta == 32 && ctx->program->gfx_level >= GFX11) {
          dst = bld.vop1(aco_opcode::v_permlane64_b32, bld.def(rc), src);
+      } else if (delta == 32 && can_use_shared_vgprs(ctx)) {
+         enable_shared_vgprs(ctx);
+         dst = bld.pseudo(aco_opcode::p_permlane64_shared_vgpr, bld.def(rc), src);
       } else if (delta == 1 && has_wf_dpp) {
          dst = bld.vop1_dpp(aco_opcode::v_mov_b32, bld.def(rc), src, dpp_wf_rl1);
       } else if (delta == 63 && has_wf_dpp) {
@@ -3862,22 +3877,22 @@ visit_cmat_muladd(isel_context* ctx, nir_intrinsic_instr* instr)
       switch (type_b) {
       case GLSL_TYPE_FLOAT_E4M3FN: opcode = aco_opcode::v_wmma_f32_16x16x16_fp8_fp8; break;
       case GLSL_TYPE_FLOAT_E5M2: opcode = aco_opcode::v_wmma_f32_16x16x16_fp8_bf8; break;
-      default: unreachable("invalid cmat_muladd_amd type");
+      default: UNREACHABLE("invalid cmat_muladd_amd type");
       }
       break;
    case GLSL_TYPE_FLOAT_E5M2:
       switch (type_b) {
       case GLSL_TYPE_FLOAT_E4M3FN: opcode = aco_opcode::v_wmma_f32_16x16x16_bf8_fp8; break;
       case GLSL_TYPE_FLOAT_E5M2: opcode = aco_opcode::v_wmma_f32_16x16x16_bf8_bf8; break;
-      default: unreachable("invalid cmat_muladd_amd type");
+      default: UNREACHABLE("invalid cmat_muladd_amd type");
       }
       break;
    }
-   default: unreachable("invalid cmat_muladd_amd type");
+   default: UNREACHABLE("invalid cmat_muladd_amd type");
    }
 
    if (opcode == aco_opcode::num_opcodes)
-      unreachable("visit_cmat_muladd: invalid bit size combination");
+      UNREACHABLE("visit_cmat_muladd: invalid bit size combination");
 
    Builder bld(ctx->program, ctx->block);
 
@@ -4041,7 +4056,7 @@ ds_bvh_stack_offset1_gfx11(unsigned stack_size)
    case 16: return 0x10;
    case 32: return 0x20;
    case 64: return 0x30;
-   default: unreachable("invalid stack size");
+   default: UNREACHABLE("invalid stack size");
    }
 }
 
@@ -4468,6 +4483,11 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       assert(src.regClass() == bld.lm);
       assert(dst.regClass() == bld.lm);
 
+      if (!nir_src_is_divergent(&instr->src[0])) {
+         bld.copy(Definition(dst), src);
+         break;
+      }
+
       Temp tmp = bld.sop1(Builder::s_not, bld.def(bld.lm), bld.def(s1, scc), src);
       tmp = bld.sop2(Builder::s_and, bld.def(bld.lm), bld.def(s1, scc), tmp, Operand(exec, bld.lm))
                .def(1)
@@ -4483,6 +4503,11 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       assert(src.regClass() == bld.lm);
       assert(dst.regClass() == bld.lm);
 
+      if (!nir_src_is_divergent(&instr->src[0])) {
+         bld.copy(Definition(dst), src);
+         break;
+      }
+
       Temp tmp = bool_to_scalar_condition(ctx, src);
       bool_to_vector_condition(ctx, tmp, dst);
       set_wqm(ctx);
@@ -4490,6 +4515,11 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
    }
    case nir_intrinsic_quad_vote_any: {
       Temp src = get_ssa_temp(ctx, instr->src[0].ssa);
+      if (!nir_src_is_divergent(&instr->src[0])) {
+         bld.copy(Definition(get_ssa_temp(ctx, &instr->def)), src);
+         break;
+      }
+
       src = bld.sop2(Builder::s_and, bld.def(bld.lm), bld.def(s1, scc), src, Operand(exec, bld.lm));
       bld.sop1(Builder::s_wqm, Definition(get_ssa_temp(ctx, &instr->def)), bld.def(s1, scc), src);
       set_wqm(ctx);
@@ -4497,6 +4527,11 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
    }
    case nir_intrinsic_quad_vote_all: {
       Temp src = get_ssa_temp(ctx, instr->src[0].ssa);
+      if (!nir_src_is_divergent(&instr->src[0])) {
+         bld.copy(Definition(get_ssa_temp(ctx, &instr->def)), src);
+         break;
+      }
+
       src = bld.sop1(Builder::s_not, bld.def(bld.lm), bld.def(s1, scc), src);
       src = bld.sop2(Builder::s_and, bld.def(bld.lm), bld.def(s1, scc), src, Operand(exec, bld.lm));
       src = bld.sop1(Builder::s_wqm, bld.def(bld.lm), bld.def(s1, scc), src);
@@ -4543,7 +4578,7 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       case nir_intrinsic_reduce: aco_op = aco_opcode::p_reduce; break;
       case nir_intrinsic_inclusive_scan: aco_op = aco_opcode::p_inclusive_scan; break;
       case nir_intrinsic_exclusive_scan: aco_op = aco_opcode::p_exclusive_scan; break;
-      default: unreachable("unknown reduce intrinsic");
+      default: UNREACHABLE("unknown reduce intrinsic");
       }
 
       /* Avoid whole wave shift. */
@@ -5136,7 +5171,7 @@ visit_intrinsic(isel_context* ctx, nir_intrinsic_instr* instr)
       switch (instr->num_components) {
       case 4: emit_ds_bvh_stack_push4_pop1_rtn(ctx, instr, bld); break;
       case 8: emit_ds_bvh_stack_push8_pop1_rtn(ctx, instr, bld); break;
-      default: unreachable("Invalid BVH stack component count!");
+      default: UNREACHABLE("Invalid BVH stack component count!");
       }
       break;
    }

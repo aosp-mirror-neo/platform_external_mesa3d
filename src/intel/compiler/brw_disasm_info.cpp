@@ -87,20 +87,24 @@ dump_assembly(void *assembly, int start_offset, int end_offset,
    const struct brw_label *root_label =
       brw_label_assembly(isa, assembly, start_offset, end_offset, mem_ctx);
 
-   foreach_list_typed(struct inst_group, group, link, &disasm->group_list) {
-      struct exec_node *next_node = exec_node_get_next(&group->link);
-      if (exec_node_is_tail_sentinel(next_node))
+   brw_foreach_list_typed(struct inst_group, group, link, &disasm->group_list) {
+      struct brw_exec_node *next_node = brw_exec_node_get_next(&group->link);
+      if (brw_exec_node_is_tail_sentinel(next_node))
          break;
 
       struct inst_group *next =
-         exec_node_data(struct inst_group, next_node, link);
+         brw_exec_node_data(struct inst_group, next_node, link);
 
       int start_offset = group->offset;
       int end_offset = next->offset;
 
       if (group->block_start) {
          fprintf(stderr, "   START B%d", group->block_start->num);
-         print_predecessors_for_disasm(group->block_start);
+         brw_foreach_list_typed(struct bblock_link, predecessor_link, link,
+                            &group->block_start->parents) {
+            struct bblock_t *predecessor_block = predecessor_link->block;
+            fprintf(stderr, " <-B%d", predecessor_block->num);
+         }
          if (block_latency)
             fprintf(stderr, " (%u cycles)",
                     block_latency[group->block_start->num]);
@@ -122,7 +126,11 @@ dump_assembly(void *assembly, int start_offset, int end_offset,
 
       if (group->block_end) {
          fprintf(stderr, "   END B%d", group->block_end->num);
-         print_successors_for_disasm(group->block_end);
+         brw_foreach_list_typed(struct bblock_link, successor_link, link,
+                            &group->block_end->children) {
+            struct bblock_t *successor_block = successor_link->block;
+            fprintf(stderr, " ->B%d", successor_block->num);
+         }
          fprintf(stderr, "\n");
       }
    }
@@ -136,7 +144,7 @@ disasm_initialize(const struct brw_isa_info *isa,
                   const struct cfg_t *cfg)
 {
    struct disasm_info *disasm = ralloc(NULL, struct disasm_info);
-   exec_list_make_empty(&disasm->group_list);
+   brw_exec_list_make_empty(&disasm->group_list);
    disasm->isa = isa;
    disasm->cfg = cfg;
    disasm->cur_block = 0;
@@ -150,7 +158,7 @@ disasm_new_inst_group(struct disasm_info *disasm, int next_inst_offset)
    assert(next_inst_offset >= 0);
    struct inst_group *tail = rzalloc(disasm, struct inst_group);
    tail->offset = next_inst_offset;
-   exec_list_push_tail(&disasm->group_list, &tail->link);
+   brw_exec_list_push_tail(&disasm->group_list, &tail->link);
    return tail;
 }
 
@@ -165,8 +173,8 @@ disasm_annotate(struct disasm_info *disasm,
       group = disasm_new_inst_group(disasm, offset);
    } else {
       disasm->use_tail = false;
-      group = exec_node_data(struct inst_group,
-                             exec_list_get_tail_raw(&disasm->group_list), link);
+      group = brw_exec_node_data(struct inst_group,
+                             brw_exec_list_get_tail_raw(&disasm->group_list), link);
    }
 
 #ifndef NDEBUG
@@ -196,13 +204,13 @@ void
 disasm_insert_error(struct disasm_info *disasm, int offset,
                     int inst_size, const char *error)
 {
-   foreach_list_typed(struct inst_group, cur, link, &disasm->group_list) {
-      struct exec_node *next_node = exec_node_get_next(&cur->link);
-      if (exec_node_is_tail_sentinel(next_node))
+   brw_foreach_list_typed(struct inst_group, cur, link, &disasm->group_list) {
+      struct brw_exec_node *next_node = brw_exec_node_get_next(&cur->link);
+      if (brw_exec_node_is_tail_sentinel(next_node))
          break;
 
       struct inst_group *next =
-         exec_node_data(struct inst_group, next_node, link);
+         brw_exec_node_data(struct inst_group, next_node, link);
 
       if (next->offset <= offset)
          continue;
@@ -218,7 +226,7 @@ disasm_insert_error(struct disasm_info *disasm, int offset,
          new_group->offset = offset + inst_size;
          new_group->block_start = NULL;
 
-         exec_node_insert_after(&cur->link, &new_group->link);
+         brw_exec_node_insert_after(&cur->link, &new_group->link);
       }
 
       if (cur->error)

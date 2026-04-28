@@ -312,6 +312,9 @@ st_get_sampler_views(struct st_context *st,
          break;
       }
 
+      if (extra)
+         (*extra_sampler_views) |= 1 << extra;
+
       num_textures = MAX2(num_textures, extra + 1);
    }
 

@@ -2563,7 +2563,7 @@ VkResult pvr_GetEventStatus(VkDevice _device, VkEvent _event)
       break;
 
    default:
-      unreachable("Event object in unknown state");
+      UNREACHABLE("Event object in unknown state");
    }
 
    return result;
@@ -2672,7 +2672,7 @@ VkResult pvr_gpu_upload(struct pvr_device *device,
    else if (heap == device->heaps.usc_heap)
       allocator = &device->suballoc_usc;
    else
-      unreachable("Unknown heap type");
+      UNREACHABLE("Unknown heap type");
 
    result = pvr_bo_suballoc(allocator, size, alignment, false, &suballoc_bo);
    if (result != VK_SUCCESS)
@@ -3058,7 +3058,7 @@ pvr_sampler_get_hw_filter_from_vk(const struct pvr_device_info *dev_info,
    case VK_FILTER_LINEAR:
       return ROGUE_TEXSTATE_FILTER_LINEAR;
    default:
-      unreachable("Unknown filter type.");
+      UNREACHABLE("Unknown filter type.");
    }
 }
 
@@ -3077,7 +3077,7 @@ pvr_sampler_get_hw_addr_mode_from_vk(VkSamplerAddressMode addr_mode)
    case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER:
       return ROGUE_TEXSTATE_ADDRMODE_CLAMP_TO_BORDER;
    default:
-      unreachable("Invalid sampler address mode.");
+      UNREACHABLE("Invalid sampler address mode.");
    }
 }
 

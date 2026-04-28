@@ -694,7 +694,7 @@ crocus_setup_uniforms(ASSERTED const struct intel_device_info *devinfo,
     */
    if (temp_const_ubo_name != NULL) {
       nir_load_const_instr *const_ubo_index =
-         nir_instr_as_load_const(temp_const_ubo_name->parent_instr);
+         nir_def_as_load_const(temp_const_ubo_name);
       assert(const_ubo_index->def.bit_size == 32);
       const_ubo_index->value[0].u32 = num_cbufs;
    }
@@ -985,7 +985,7 @@ crocus_setup_binding_table(const struct intel_device_info *devinfo,
                   val = nir_ishl_imm(&b, val, 32 - width);
                   val = nir_ishr_imm(&b, val, 32 - width);
                }
-               nir_def_rewrite_uses_after(&tex->def, val, val->parent_instr);
+               nir_def_rewrite_uses_after(&tex->def, val);
             }
 
             tex->texture_index =
@@ -1231,7 +1231,7 @@ crocus_compile_vs(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile vertex shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish->compiled_once) {
@@ -1428,7 +1428,7 @@ crocus_compile_tcs(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile control shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish) {
@@ -1573,7 +1573,7 @@ crocus_compile_tes(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile evaluation shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish->compiled_once) {
@@ -1719,7 +1719,7 @@ crocus_compile_gs(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile geometry shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish->compiled_once) {
@@ -1859,7 +1859,7 @@ crocus_compile_fs(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile fragment shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish->compiled_once) {
@@ -2040,7 +2040,7 @@ crocus_compile_clip(struct crocus_context *ice, struct elk_clip_prog_key *key)
    if (program == NULL) {
       dbg_printf("failed to compile clip shader\n");
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
    struct crocus_binding_table bt;
    memset(&bt, 0, sizeof(bt));
@@ -2194,7 +2194,7 @@ crocus_compile_sf(struct crocus_context *ice, struct elk_sf_prog_key *key)
    if (program == NULL) {
       dbg_printf("failed to compile sf shader\n");
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    struct crocus_binding_table bt;
@@ -2287,7 +2287,7 @@ crocus_compile_ff_gs(struct crocus_context *ice, struct elk_ff_gs_prog_key *key)
    if (program == NULL) {
       dbg_printf("failed to compile sf shader\n");
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    struct crocus_binding_table bt;
@@ -2537,7 +2537,7 @@ crocus_compile_cs(struct crocus_context *ice,
    if (program == NULL) {
       dbg_printf("Failed to compile compute shader: %s\n", params.base.error_str);
       ralloc_free(mem_ctx);
-      return false;
+      return NULL;
    }
 
    if (ish->compiled_once) {

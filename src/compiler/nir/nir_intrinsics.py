@@ -530,7 +530,7 @@ intrinsic("read_getlast_ir3", src_comp=[0], dest_comp=0, bit_sizes=src0, flags=S
 intrinsic("elect", dest_comp=1, flags=SUBGROUP_FLAGS)
 intrinsic("first_invocation", dest_comp=1, bit_sizes=[32], flags=SUBGROUP_FLAGS)
 intrinsic("last_invocation", dest_comp=1, bit_sizes=[32], flags=SUBGROUP_FLAGS)
-intrinsic("inverse_ballot", src_comp=[0], dest_comp=1, flags=[CAN_ELIMINATE])
+intrinsic("inverse_ballot", src_comp=[0], dest_comp=1, flags=[CAN_ELIMINATE, CAN_REORDER])
 
 barrier("begin_invocation_interlock")
 barrier("end_invocation_interlock")
@@ -925,9 +925,6 @@ system_value("instance_id", 1)
 system_value("base_instance", 1)
 system_value("draw_id", 1)
 system_value("sample_id", 1)
-# sample_id_no_per_sample is like sample_id but does not imply per-
-# sample shading.  See the lower_helper_invocation option.
-system_value("sample_id_no_per_sample", 1)
 system_value("sample_pos", 2)
 # sample_pos_or_center is like sample_pos but does not imply per-sample
 # shading.  When per-sample dispatch is not enabled, it returns (0.5, 0.5).
@@ -1781,7 +1778,8 @@ system_value("streamout_offset_amd", 1, indices=[BASE])
 
 # Whether the current invocation index in the subgroup is less than the source. The source must be
 # subgroup uniform and the 8 bits starting at the base bit must be less than or equal to the wave size.
-intrinsic("is_subgroup_invocation_lt_amd", src_comp=[1], dest_comp=1, bit_sizes=[1], indices=[BASE], flags=[CAN_ELIMINATE])
+intrinsic("is_subgroup_invocation_lt_amd", src_comp=[1], dest_comp=1, bit_sizes=[1], indices=[BASE],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # AMD NGG intrinsics
 
@@ -1897,11 +1895,12 @@ system_value("cull_mask_and_flags_amd", 1)
 
 #   0. SBT Index
 #   1. Ray Tmax
-#   2. Primitive Id
-#   3. Instance Addr
-#   4. Geometry Id and Flags
-#   5. Hit Kind
-intrinsic("execute_closest_hit_amd", src_comp=[1, 1, 1, 1, 1, 1])
+#   2. Primitive Addr
+#   3. Primitive Id
+#   4. Instance Addr
+#   5. Geometry Id and Flags
+#   6. Hit Kind
+intrinsic("execute_closest_hit_amd", src_comp=[1, 1, 1, 1, 1, 1, 1])
 
 #   0. Ray Tmax
 intrinsic("execute_miss_amd", src_comp=[1])
@@ -1929,7 +1928,7 @@ store("vector_arg_amd", [], [BASE])
 # restriction justifies the CAN_REORDER flag. Additionally, the base/offset must
 # be subgroup uniform.
 intrinsic("load_smem_amd", src_comp=[1, 1], dest_comp=0, bit_sizes=[32],
-                           indices=[ALIGN_MUL, ALIGN_OFFSET],
+                           indices=[ALIGN_MUL, ALIGN_OFFSET, ACCESS],
                            flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # src[] = { offset }.
@@ -2122,6 +2121,11 @@ intrinsic("load_texture_handle_agx", [1], 1, [],
           flags=[CAN_ELIMINATE, CAN_REORDER],
           bit_sizes=[32])
 
+# Load descriptor set address
+intrinsic("load_descriptor_set_agx", [], 1, [DESC_SET],
+          flags=[CAN_ELIMINATE, CAN_REORDER],
+          bit_sizes=[64])
+
 # Given a bindless texture handle, load the address of the texture descriptor
 # described by that. This allows inspecting the descriptor from the shader. This
 # does not actually load the content of the descriptor, only the content of the
@@ -2219,8 +2223,10 @@ store("agx", [1, 1], [ACCESS, BASE, FORMAT, SIGN_EXTEND])
 # Logical complement of load_front_face, mapping to an AGX system value
 system_value("back_face_agx", 1, bit_sizes=[1, 32])
 
-# Load the base address of an indexed vertex attribute (for lowering).
+# Load the base address/stride of an indexed vertex attribute (for lowering).
 intrinsic("load_vbo_base_agx", src_comp=[1], dest_comp=1, bit_sizes=[64],
+          flags=[CAN_ELIMINATE, CAN_REORDER])
+intrinsic("load_vbo_stride_agx", src_comp=[1], dest_comp=1, bit_sizes=[32],
           flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # When vertex robustness is enabled, loads the maximum valid attribute index for
@@ -2338,6 +2344,12 @@ load("exported_agx", [], [BASE], [CAN_ELIMINATE])
 # vulkan_resource_index. The "descriptor set" here is the heap uniform. The
 # source is the offset in bytes into the heap.
 intrinsic("bindless_image_agx", [1], dest_comp=1, bit_sizes=[32],
+          indices=[DESC_SET], flags=[CAN_ELIMINATE, CAN_REORDER])
+
+# AGX-specific bindless sampler handle specifier. Takes both a byte offset into the
+# descriptor set (first source) and an index into the global heap (second
+# source) to allow optimal pushing heuristics.
+intrinsic("bindless_sampler_agx", [1, 1], dest_comp=1, bit_sizes=[16],
           indices=[DESC_SET], flags=[CAN_ELIMINATE, CAN_REORDER])
 
 # Intel-specific query for loading from the isl_image_param struct passed

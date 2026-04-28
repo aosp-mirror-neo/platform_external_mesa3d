@@ -49,7 +49,7 @@ brw_inst::init(enum opcode opcode, uint8_t exec_size, const brw_reg &dst,
       break;
    case IMM:
    case UNIFORM:
-      unreachable("Invalid destination register file");
+      UNREACHABLE("Invalid destination register file");
    }
 
    this->writes_accumulator = false;
@@ -509,7 +509,7 @@ brw_inst::components_read(unsigned i) const
          return 1;
 
    case BRW_OPCODE_DPAS:
-      unreachable("Do not use components_read() for DPAS.");
+      UNREACHABLE("Do not use components_read() for DPAS.");
 
    default:
       return 1;
@@ -583,7 +583,7 @@ brw_inst::size_read(const struct intel_device_info *devinfo, int arg) const
           */
          return rcount * sdepth * 4;
       default:
-         unreachable("Invalid source number.");
+         UNREACHABLE("Invalid source number.");
       }
       break;
    }
@@ -634,7 +634,7 @@ namespace {
          case BRW_PREDICATE_ALIGN1_ALL16H:   return 16;
          case BRW_PREDICATE_ALIGN1_ANY32H:   return 32;
          case BRW_PREDICATE_ALIGN1_ALL32H:   return 32;
-         default: unreachable("Unsupported predicate");
+         default: UNREACHABLE("Unsupported predicate");
          }
       }
    }
@@ -957,49 +957,26 @@ brw_inst::has_side_effects() const
 bool
 brw_inst::is_volatile() const
 {
-   return opcode == SHADER_OPCODE_MEMORY_LOAD_LOGICAL ||
-          opcode == SHADER_OPCODE_LOAD_REG ||
-          ((opcode == SHADER_OPCODE_SEND ||
-            opcode == SHADER_OPCODE_SEND_GATHER) && send_is_volatile);
-}
-
-void
-brw_inst::insert_before(bblock_t *block, brw_inst *inst)
-{
-   assert(this != inst);
-
-   assert(!inst->block || inst->block == block);
-
-   exec_node::insert_before(inst);
-
-   inst->block = block;
-   inst->block->num_instructions++;
-   inst->block->cfg->total_instructions++;
+   switch (opcode) {
+   case SHADER_OPCODE_MEMORY_LOAD_LOGICAL:
+   case SHADER_OPCODE_LOAD_REG:
+      return true;
+   case SHADER_OPCODE_MEMORY_STORE_LOGICAL:
+      assert(sources > MEMORY_LOGICAL_FLAGS);
+      return src[MEMORY_LOGICAL_FLAGS].ud & MEMORY_FLAG_VOLATILE_ACCESS;
+   case SHADER_OPCODE_SEND:
+   case SHADER_OPCODE_SEND_GATHER:
+      return send_is_volatile;
+   default:
+      return false;
+   }
 }
 
 void
 brw_inst::remove()
 {
    assert(block);
-
-   if (exec_list_is_singular(&block->instructions)) {
-      this->opcode = BRW_OPCODE_NOP;
-      this->resize_sources(0);
-      this->dst = brw_reg();
-      this->size_written = 0;
-      return;
-   }
-
-   assert(block->num_instructions > 0);
-   assert(block->cfg->total_instructions > 0);
-   block->num_instructions--;
-   block->cfg->total_instructions--;
-
-   if (block->num_instructions == 0)
-      block->cfg->remove_block(block);
-
-   exec_node::remove();
-   block = NULL;
+   block->remove(this);
 }
 
 enum brw_reg_type

@@ -50,6 +50,7 @@ struct ir3_info {
    int8_t max_reg; /* highest GPR # used by shader */
    int8_t max_half_reg;
    int16_t max_const;
+   unsigned constlen;
    /* This is the maximum # of waves that can executed at once in one core,
     * assuming that they are all executing this shader.
     */
@@ -185,6 +186,11 @@ typedef enum ir3_register_flags {
     * IR3_REG_FIRST_ALIAS set.
     */
    IR3_REG_FIRST_ALIAS = BIT(22),
+
+   /* Set for registers that should be ignored by all passes. For example, the
+    * dummy src and dst of prefetch sam/ldc/resinfo.
+    */
+   IR3_REG_DUMMY = BIT(23),
 } ir3_register_flags;
 
 struct ir3_register {
@@ -1216,6 +1222,12 @@ is_shared(struct ir3_instruction *instr)
 }
 
 static inline bool
+has_dummy_dst(struct ir3_instruction *instr)
+{
+   return !!(instr->dsts[0]->flags & IR3_REG_DUMMY);
+}
+
+static inline bool
 is_store(struct ir3_instruction *instr)
 {
    /* these instructions, the "destination" register is
@@ -1254,7 +1266,7 @@ is_load(struct ir3_instruction *instr)
       /* probably some others too.. */
       return true;
    case OPC_LDC:
-      return instr->dsts_count > 0;
+      return !has_dummy_dst(instr);
    default:
       return false;
    }
@@ -1302,7 +1314,7 @@ uses_helpers(struct ir3_instruction *instr)
 
    /* sam requires helper invocations except for dummy prefetch instructions */
    case OPC_SAM:
-      return instr->dsts_count != 0;
+      return !has_dummy_dst(instr);
 
    /* Subgroup operations don't require helper invocations to be present, but
     * will use helper invocations if they are present.
@@ -2271,7 +2283,7 @@ soft_sy_delay(struct ir3_instruction *instr, struct ir3 *shader)
          case 2: return 60 / 2;
          case 3: return 77 / 2;
          case 4: return 79 / 2;
-         default: unreachable("bad number of components");
+         default: UNREACHABLE("bad number of components");
          }
       } else {
          switch (components) {
@@ -2279,7 +2291,7 @@ soft_sy_delay(struct ir3_instruction *instr, struct ir3 *shader)
          case 2: return 53;
          case 3: return 62;
          case 4: return 64;
-         default: unreachable("bad number of components");
+         default: UNREACHABLE("bad number of components");
          }
       }
    } else {
@@ -2415,7 +2427,7 @@ ir3_cursor_current_block(struct ir3_cursor cursor)
       return cursor.instr->block;
    }
 
-   unreachable("illegal cursor option");
+   UNREACHABLE("illegal cursor option");
 }
 
 static inline struct ir3_cursor
@@ -3138,7 +3150,7 @@ ir3_SAM(struct ir3_builder *build, opc_t opc, type_t type, unsigned wrmask,
        * case. It needs to be shared so that we don't accidentally disable early
        * preamble, and this is what the blob does.
        */
-      ir3_src_create(sam, regid(48, 0), IR3_REG_SHARED);
+      ir3_src_create(sam, regid(48, 0), IR3_REG_SHARED | IR3_REG_DUMMY);
    }
    if (src1) {
       __ssa_src(sam, src1, 0);
@@ -3287,7 +3299,7 @@ __regmask_file(regmask_t *regmask, enum ir3_reg_file file)
    case IR3_FILE_NONGPR:
       return regmask->nongpr;
    }
-   unreachable("bad file");
+   UNREACHABLE("bad file");
 }
 
 static inline bool

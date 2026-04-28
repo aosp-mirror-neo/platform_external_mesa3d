@@ -726,7 +726,7 @@ nvk_cmd_dirty_cbufs_for_descriptors(struct nvk_cmd_buffer *cmd,
             break;
 
          default:
-            unreachable("Invalid cbuf type");
+            UNREACHABLE("Invalid cbuf type");
          }
       }
    }
@@ -1101,7 +1101,7 @@ nvk_cmd_buffer_get_cbuf_addr(struct nvk_cmd_buffer *cmd,
       return true;
 
    case NVK_CBUF_TYPE_ROOT_DESC:
-      unreachable("The caller should handle root descriptors");
+      UNREACHABLE("The caller should handle root descriptors");
       return false;
 
    case NVK_CBUF_TYPE_SHADER_DATA:
@@ -1142,7 +1142,7 @@ nvk_cmd_buffer_get_cbuf_addr(struct nvk_cmd_buffer *cmd,
    }
 
    default:
-      unreachable("Invalid cbuf type");
+      UNREACHABLE("Invalid cbuf type");
    }
 }
 
@@ -1163,7 +1163,7 @@ nvk_cmd_buffer_get_cbuf_descriptor_addr(struct nvk_cmd_buffer *cmd,
    }
 
    default:
-      unreachable("Unknown descriptor set type");
+      UNREACHABLE("Unknown descriptor set type");
    }
 }
 

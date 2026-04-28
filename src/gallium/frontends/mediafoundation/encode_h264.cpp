@@ -63,7 +63,7 @@ ComputeCroppingRect( const UINT32 textureWidth,
             break;
          default:
          {
-            unreachable( "Unsupported chroma format idc" );
+            UNREACHABLE( "Unsupported chroma format idc" );
          }
          break;
       }
@@ -205,9 +205,6 @@ CDX12EncHMFT::PrepareForEncodeHelper( LPDX12EncodeContext pDX12EncodeContext, bo
    uint32_t rate_ctrl_active_layer_index = 0;
 
    pPicInfo->requested_metadata = m_EncoderCapabilities.m_HWSupportedMetadataFlags;
-
-   pPicInfo->base.in_fence = m_pPipeFenceHandle;
-   pPicInfo->base.in_fence_value = m_CurrentSyncFenceValue;
    pPicInfo->base.input_format = pDX12EncodeContext->pPipeVideoBuffer->buffer_format;
 
    UpdateH264EncPictureDesc( pPicInfo,
@@ -1057,7 +1054,7 @@ GetMaxDPBSize( int width, int height, eAVEncH264VLevel level_idc )
          maxDpbMbs = 696320;
          break;
       default:
-         unreachable( "unexpected level_idc" );
+         UNREACHABLE( "unexpected level_idc" );
          break;
    }
    int maxDpbSize = ( maxDpbMbs / numMbs );

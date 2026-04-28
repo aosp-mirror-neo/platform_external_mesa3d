@@ -111,7 +111,7 @@ unsigned ac_pipe_config_to_num_pipes(unsigned pipe_config)
    case V_009910_ADDR_SURF_P16_32x32_16x16:
       return 16;
    default:
-      unreachable("invalid pipe_config");
+      UNREACHABLE("invalid pipe_config");
    }
 }
 
@@ -148,6 +148,31 @@ bool ac_modifier_supports_dcc_image_stores(enum amd_gfx_level gfx_level, uint64_
 
 }
 
+bool ac_modifier_supports_video(const struct radeon_info *info, uint64_t modifier)
+{
+   if (ac_modifier_has_dcc(modifier)) {
+      /* DCC not supported */
+      if (info->gfx_level < GFX12)
+         return false;
+
+      if (info->drm_minor < 63 &&
+          AMD_FMT_MOD_GET(DCC_MAX_COMPRESSED_BLOCK, modifier) == AMD_FMT_MOD_DCC_BLOCK_256B)
+         return false;
+   }
+
+   if (modifier != DRM_FORMAT_MOD_LINEAR) {
+      /* Linear only for UVD/VCE and VCN 1.0 */
+      if (info->vcn_ip_version < VCN_2_0_0)
+         return false;
+
+      /* Only "S" swizzle modes supported */
+      if (info->vcn_ip_version < VCN_2_2_0 &&
+          AMD_FMT_MOD_GET(TILE, modifier) != AMD_FMT_MOD_TILE_GFX9_64K_S)
+         return false;
+   }
+
+   return true;
+}
 
 bool ac_surface_supports_dcc_image_stores(enum amd_gfx_level gfx_level,
                                           const struct radeon_surf *surf)
@@ -749,7 +774,7 @@ static unsigned bpe_to_format(const struct radeon_surf *surf)
              */
             return ADDR_FMT_BC3;
          default:
-            unreachable("invalid compressed bpe");
+            UNREACHABLE("invalid compressed bpe");
          }
       } else if (surf->blk_w == 5 && surf->blk_h == 4)
          return ADDR_FMT_ASTC_5x4;
@@ -798,7 +823,7 @@ static unsigned bpe_to_format(const struct radeon_surf *surf)
          assert(!(surf->flags & RADEON_SURF_Z_OR_SBUFFER));
          return ADDR_FMT_32_32_32_32;
       default:
-         unreachable("invalid bpe");
+         UNREACHABLE("invalid bpe");
       }
    }
    return ADDR_FMT_INVALID;
@@ -1919,7 +1944,7 @@ static bool is_dcc_supported_by_CB(const struct radeon_info *info, unsigned sw_m
              sw_mode == ADDR_SW_256KB_Z_X || sw_mode == ADDR_SW_256KB_R_X;
 
    default:
-      unreachable("invalid gfx_level");
+      UNREACHABLE("invalid gfx_level");
    }
 }
 
@@ -2028,7 +2053,7 @@ static bool gfx9_is_dcc_supported_by_DCN(const struct radeon_info *info,
               (surf->u.gfx9.color.dcc.independent_64B_blocks &&
                surf->u.gfx9.color.dcc.max_compressed_block_size == V_028C78_MAX_BLOCK_SIZE_64B));
    default:
-      unreachable("unhandled chip");
+      UNREACHABLE("unhandled chip");
       return false;
    }
 }
@@ -3398,6 +3423,11 @@ static bool gfx12_compute_surface(struct ac_addrlib *addrlib, const struct radeo
       AddrSurfInfoIn.swizzleMode = ac_get_modifier_swizzle_mode(info->gfx_level, surf->modifier);
    } else if (surf->flags & (RADEON_SURF_IMPORTED | RADEON_SURF_FORCE_SWIZZLE_MODE)) {
       AddrSurfInfoIn.swizzleMode = surf->u.gfx9.swizzle_mode;
+   } else if (surf->flags & RADEON_SURF_PRT) {
+      if (config->is_3d && !AddrSurfInfoIn.flags.view3dAs2dArray)
+         AddrSurfInfoIn.swizzleMode = ADDR3_64KB_3D;
+      else
+         AddrSurfInfoIn.swizzleMode = ADDR3_64KB_2D;
    } else if (mode == RADEON_SURF_MODE_LINEAR_ALIGNED) {
       assert(config->info.samples <= 1 && !(surf->flags & RADEON_SURF_Z_OR_SBUFFER));
       AddrSurfInfoIn.swizzleMode = ADDR3_LINEAR;
@@ -4001,7 +4031,7 @@ static uint32_t ac_surface_get_pitch_align(const struct radeon_info *info,
          block_size_log2 = 18;
          break;
       default:
-         unreachable("unhandled swizzle mode");
+         UNREACHABLE("unhandled swizzle mode");
       }
 
       return 1 << ((block_size_log2 >> 1) - (bpe_log2 >> 1));
@@ -4029,7 +4059,7 @@ static uint32_t ac_surface_get_pitch_align(const struct radeon_info *info,
          block_size_log2 = 18;
          break;
       default:
-         unreachable("unhandled swizzle mode");
+         UNREACHABLE("unhandled swizzle mode");
       }
 
       if (info->gfx_level >= GFX10) {
@@ -4056,7 +4086,7 @@ static uint32_t ac_surface_get_pitch_align(const struct radeon_info *info,
          return 8 * surf->u.legacy.bankw * surf->u.legacy.mtilea *
                 ac_pipe_config_to_num_pipes(surf->u.legacy.pipe_config);
       default:
-         unreachable("unhandled surf mode");
+         UNREACHABLE("unhandled surf mode");
       }
    }
 }
@@ -4162,7 +4192,7 @@ uint64_t ac_surface_get_plane_offset(enum amd_gfx_level gfx_level,
       assert(!layer);
       return surf->meta_offset;
    default:
-      unreachable("Invalid plane index");
+      UNREACHABLE("Invalid plane index");
    }
 }
 
@@ -4183,7 +4213,7 @@ uint64_t ac_surface_get_plane_stride(enum amd_gfx_level gfx_level,
    case 2:
       return surf->u.gfx9.color.dcc_pitch_max + 1;
    default:
-      unreachable("Invalid plane index");
+      UNREACHABLE("Invalid plane index");
    }
 }
 
@@ -4199,14 +4229,14 @@ uint64_t ac_surface_get_plane_size(const struct radeon_surf *surf,
    case 2:
       return surf->meta_size;
    default:
-      unreachable("Invalid plane index");
+      UNREACHABLE("Invalid plane index");
    }
 }
 
-uint64_t
-ac_surface_addr_from_coord(struct ac_addrlib *addrlib, const struct radeon_info *info,
-                           const struct radeon_surf *surf, const struct ac_surf_info *surf_info,
-                           unsigned level, unsigned x, unsigned y, unsigned layer, bool is_3d)
+static uint64_t
+gfx9_surface_addr_from_coord(struct ac_addrlib *addrlib, const struct radeon_info *info,
+                             const struct radeon_surf *surf, const struct ac_surf_info *surf_info,
+                             unsigned level, unsigned x, unsigned y, unsigned layer, bool is_3d)
 {
    /* Only implemented for GFX9+ */
    assert(info->gfx_level >= GFX9);
@@ -4232,6 +4262,46 @@ ac_surface_addr_from_coord(struct ac_addrlib *addrlib, const struct radeon_info 
    output.size = sizeof(ADDR2_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT);
    Addr2ComputeSurfaceAddrFromCoord(addrlib->handle, &input, &output);
    return output.addr;
+}
+
+static uint64_t
+gfx12_surface_addr_from_coord(struct ac_addrlib *addrlib, const struct radeon_info *info,
+                              const struct radeon_surf *surf, const struct ac_surf_info *surf_info,
+                              unsigned level, unsigned x, unsigned y, unsigned layer, bool is_3d)
+{
+   ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT input = {0};
+   input.size = sizeof(ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_INPUT);
+   input.slice = layer;
+   input.mipId = level;
+   input.pitchInElement = surf->u.gfx9.pitch[level];
+   input.unAlignedDims.width = DIV_ROUND_UP(surf_info->width, surf->blk_w);
+   input.unAlignedDims.height = DIV_ROUND_UP(surf_info->height, surf->blk_h);
+   input.unAlignedDims.depth = is_3d ? surf_info->depth : surf_info->array_size;
+   input.numMipLevels = surf_info->levels;
+   input.numSamples = surf_info->samples;
+   input.swizzleMode = surf->u.gfx9.swizzle_mode;
+   input.resourceType = (AddrResourceType)surf->u.gfx9.resource_type;
+   input.bpp = surf->bpe * 8;
+   input.x = x;
+   input.y = y;
+
+   ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT output = {0};
+   output.size = sizeof(ADDR3_COMPUTE_SURFACE_ADDRFROMCOORD_OUTPUT);
+   Addr3ComputeSurfaceAddrFromCoord(addrlib->handle, &input, &output);
+   return output.addr;
+}
+
+uint64_t
+ac_surface_addr_from_coord(struct ac_addrlib *addrlib, const struct radeon_info *info,
+                           const struct radeon_surf *surf, const struct ac_surf_info *surf_info,
+                           unsigned level, unsigned x, unsigned y, unsigned layer, bool is_3d)
+{
+   if (info->gfx_level >= GFX12)
+      return gfx12_surface_addr_from_coord(addrlib, info, surf, surf_info, level, x, y, layer, is_3d);
+   else if (info->gfx_level >= GFX9)
+      return gfx9_surface_addr_from_coord(addrlib, info, surf, surf_info, level, x, y, layer, is_3d);
+   else
+      UNREACHABLE("invalid gfx_level");
 }
 
 static void

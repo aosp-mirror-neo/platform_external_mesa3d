@@ -952,7 +952,7 @@ emit_reduction(lower_context* ctx, aco_opcode op, ReduceOp reduce_op, unsigned c
                      false, identity);
       }
       break;
-   default: unreachable("Invalid reduction mode");
+   default: UNREACHABLE("Invalid reduction mode");
    }
 
    if (op == aco_opcode::p_reduce) {
@@ -1119,6 +1119,35 @@ emit_bpermute_shared_vgpr(Builder& bld, aco_ptr<Instruction>& instr)
    bld.sop1(aco_opcode::s_mov_b64, Definition(exec, s2), Operand(tmp_exec.physReg(), s2));
 
    adjust_bpermute_dst(bld, dst, input_data);
+}
+
+void
+emit_permlane64_shared_vgpr(Builder& bld, aco_ptr<Instruction>& instr)
+{
+   /* Manually swap the data between the two halves using two shared VGPRs. */
+   Operand input_data = instr->operands[0];
+   Definition dst = instr->definitions[0];
+   assert(input_data.size() == 1 && input_data.physReg().byte() == 0);
+   assert(dst.size() == 1 && dst.physReg().byte() == 0);
+
+   assert(bld.program->gfx_level >= GFX10 && bld.program->gfx_level <= GFX10_3);
+   assert(bld.program->wave_size == 64);
+
+   unsigned shared_vgpr_reg_0 = align(bld.program->config->num_vgprs, 4) + 256;
+   PhysReg shared_vgpr_lo(shared_vgpr_reg_0);
+   PhysReg shared_vgpr_hi(shared_vgpr_reg_0 + 1);
+
+   /* Copy low and high parts to separate shared vgprs. */
+   bld.vop1_dpp(aco_opcode::v_mov_b32, Definition(shared_vgpr_lo, v1), input_data,
+                dpp_quad_perm(0, 1, 2, 3), 0x3, 0xf, false);
+   bld.vop1_dpp(aco_opcode::v_mov_b32, Definition(shared_vgpr_hi, v1), input_data,
+                dpp_quad_perm(0, 1, 2, 3), 0xc, 0xf, false);
+
+   /* Copy data back to the opposite half. */
+   bld.vop1_dpp(aco_opcode::v_mov_b32, dst, Operand(shared_vgpr_lo, v1), dpp_quad_perm(0, 1, 2, 3),
+                0xc, 0xf, false);
+   bld.vop1_dpp(aco_opcode::v_mov_b32, dst, Operand(shared_vgpr_hi, v1), dpp_quad_perm(0, 1, 2, 3),
+                0x3, 0xf, false);
 }
 
 void
@@ -1389,7 +1418,7 @@ do_copy(lower_context* ctx, Builder& bld, const copy_operation& copy, bool* pres
       } else if (def.regClass().is_subdword()) {
          bld.vop1_sdwa(aco_opcode::v_mov_b32, def, op);
       } else {
-         unreachable("unsupported copy");
+         UNREACHABLE("unsupported copy");
       }
 
       did_copy = true;
@@ -2494,6 +2523,10 @@ lower_to_hw_instr(Program* program)
                emit_bpermute_permlane(bld, instr);
                break;
             }
+            case aco_opcode::p_permlane64_shared_vgpr: {
+               emit_permlane64_shared_vgpr(bld, instr);
+               break;
+            };
             case aco_opcode::p_constaddr: {
                unsigned id = instr->definitions[0].tempId();
                PhysReg reg = instr->definitions[0].physReg();

@@ -3471,7 +3471,7 @@ static struct pipe_video_codec *
 tc_create_video_codec(UNUSED struct pipe_context *_pipe,
                       UNUSED const struct pipe_video_codec *templ)
 {
-   unreachable("Threaded context should not be enabled for video APIs");
+   UNREACHABLE("Threaded context should not be enabled for video APIs");
    return NULL;
 }
 
@@ -3479,7 +3479,7 @@ static struct pipe_video_buffer *
 tc_create_video_buffer(UNUSED struct pipe_context *_pipe,
                        UNUSED const struct pipe_video_buffer *templ)
 {
-   unreachable("Threaded context should not be enabled for video APIs");
+   UNREACHABLE("Threaded context should not be enabled for video APIs");
    return NULL;
 }
 

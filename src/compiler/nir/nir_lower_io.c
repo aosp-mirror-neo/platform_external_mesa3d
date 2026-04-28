@@ -192,7 +192,7 @@ get_io_offset(nir_builder *b, nir_deref_instr *deref,
          }
          offset = nir_iadd_imm(b, offset, field_offset);
       } else {
-         unreachable("Unsupported deref type");
+         UNREACHABLE("Unsupported deref type");
       }
    }
 
@@ -294,7 +294,7 @@ emit_load(struct lower_io_state *state,
       op = nir_intrinsic_load_uniform;
       break;
    default:
-      unreachable("Unknown variable mode");
+      UNREACHABLE("Unknown variable mode");
    }
 
    nir_intrinsic_instr *load =
@@ -307,8 +307,12 @@ emit_load(struct lower_io_state *state,
       const struct glsl_type *type = var->type;
       if (array_index)
          type = glsl_get_array_element(type);
+
       unsigned var_size = state->type_size(type, var->data.bindless);
-      nir_intrinsic_set_range(load, var_size);
+      if (var_size)
+         nir_intrinsic_set_range(load, var_size);
+      else
+         nir_intrinsic_set_range(load, ~0);
    }
 
    if (mode == nir_var_shader_in || mode == nir_var_shader_out)
@@ -603,7 +607,7 @@ lower_interpolate_at(nir_intrinsic_instr *intrin, struct lower_io_state *state,
       bary_op = nir_intrinsic_load_barycentric_at_offset;
       break;
    default:
-      unreachable("Bogus interpolateAt() intrinsic.");
+      UNREACHABLE("Bogus interpolateAt() intrinsic.");
    }
 
    nir_intrinsic_instr *bary_setup =

@@ -172,7 +172,7 @@ translate_stencil_op(enum pipe_stencil_op op)
         case PIPE_STENCIL_OP_DECR_WRAP: return V3D_STENCIL_OP_DECWRAP;
         case PIPE_STENCIL_OP_INVERT:    return V3D_STENCIL_OP_INVERT;
         }
-        unreachable("bad stencil op");
+        UNREACHABLE("bad stencil op");
 }
 
 static void *
@@ -328,6 +328,11 @@ static void
 v3d_rasterizer_state_bind(struct pipe_context *pctx, void *hwcso)
 {
         struct v3d_context *v3d = v3d_context(pctx);
+        struct v3d_rasterizer_state *rasterizer = hwcso;
+        if (v3d->rasterizer == NULL || rasterizer == NULL ||
+            v3d->rasterizer->base.scissor != rasterizer->base.scissor) {
+                v3d->dirty |= V3D_DIRTY_RASTERIZER_SCISSOR;
+        }
         v3d->rasterizer = hwcso;
         v3d->dirty |= V3D_DIRTY_RASTERIZER;
 }
@@ -546,7 +551,7 @@ translate_wrap(uint32_t pipe_wrap)
         case PIPE_TEX_WRAP_MIRROR_CLAMP_TO_EDGE:
                 return V3D_WRAP_MODE_MIRROR_ONCE;
         default:
-                unreachable("Unknown wrap mode");
+                UNREACHABLE("Unknown wrap mode");
         }
 }
 

@@ -84,7 +84,7 @@ _agxdecode_grab_mapped(struct agxdecode_ctx *ctx, uint64_t gpu_va, void **buf,
                        int line, const char *filename)
 {
    if (lib_config.read_gpu_mem)
-      unreachable("you'll have to figure it out.");
+      UNREACHABLE("you'll have to figure it out.");
 
    const struct agx_bo *mem =
       agxdecode_find_mapped_gpu_mem_containing(ctx, gpu_va);
@@ -792,32 +792,6 @@ agxdecode_sampler_heap(struct agxdecode_ctx *ctx, uint64_t heap, unsigned count)
    }
 }
 
-void
-agxdecode_image_heap(struct agxdecode_ctx *ctx, uint64_t heap,
-                     unsigned nr_entries)
-{
-   agxdecode_dump_file_open();
-
-   fprintf(agxdecode_dump_stream, "Image heap:\n");
-   struct agx_texture_packed *map = calloc(nr_entries, AGX_TEXTURE_LENGTH);
-   agxdecode_fetch_gpu_mem(ctx, heap, AGX_TEXTURE_LENGTH * nr_entries, map);
-
-   for (unsigned i = 0; i < nr_entries; ++i) {
-      bool nonzero = false;
-      for (unsigned j = 0; j < ARRAY_SIZE(map[i].opaque); ++j) {
-         nonzero |= map[i].opaque[j] != 0;
-      }
-
-      if (nonzero) {
-         fprintf(agxdecode_dump_stream, "%u: \n", i);
-         agxdecode_texture_pbe(ctx, map + i);
-         fprintf(agxdecode_dump_stream, "\n");
-      }
-   }
-
-   free(map);
-}
-
 static void
 agxdecode_helper(struct agxdecode_ctx *ctx, const char *prefix, uint64_t helper)
 {
@@ -938,7 +912,7 @@ agxdecode_drm_cmdbuf(struct agxdecode_ctx *ctx,
       } else if (header->cmd_type == DRM_ASAHI_SET_COMPUTE_ATTACHMENTS) {
          agxdecode_drm_attachments("Compute", data, header->size);
       } else {
-         unreachable("Invalid command type");
+         UNREACHABLE("Invalid command type");
       }
 
       offs += header->size;
@@ -1111,7 +1085,7 @@ libagxdecode_init(struct libagxdecode_config *config)
    chip_id_to_params(&lib_params, config->chip_id);
 #else
    /* fopencookie is a glibc extension */
-   unreachable("libagxdecode only available with glibc");
+   UNREACHABLE("libagxdecode only available with glibc");
 #endif
 }
 

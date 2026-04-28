@@ -25,7 +25,7 @@
 
 #include "compiler/nir/nir.h"
 #include "compiler/nir/nir_builder.h"
-#include "compiler/glsl/list.h"
+#include "compiler/list.h"
 
 #include "main/mtypes.h"
 #include "main/shader_types.h"
@@ -102,7 +102,7 @@ ptn_get_src(struct ptn_compile *c, const struct prog_src_register *prog_src)
          nir_def *baryc = nir_load_barycentric_pixel(b, 32);
 
          if (slot != VARYING_SLOT_COL0 && slot != VARYING_SLOT_COL1) {
-            nir_intrinsic_set_interp_mode(nir_instr_as_intrinsic(baryc->parent_instr),
+            nir_intrinsic_set_interp_mode(nir_def_as_intrinsic(baryc),
                                           INTERP_MODE_SMOOTH);
          }
 
@@ -374,7 +374,7 @@ _mesa_texture_index_to_sampler_dim(gl_texture_index index, bool *is_array)
    case NUM_TEXTURE_TARGETS:
       break;
    }
-   unreachable("unknown texture target");
+   UNREACHABLE("unknown texture target");
 }
 
 static nir_def *
@@ -422,6 +422,7 @@ ptn_tex(struct ptn_compile *c, nir_def **src,
    instr->op = op;
    instr->dest_type = nir_type_float32;
    instr->is_shadow = prog_inst->TexShadow;
+   instr->can_speculate = true;
 
    bool is_array;
    instr->sampler_dim = _mesa_texture_index_to_sampler_dim(prog_inst->TexSrcTarget, &is_array);
@@ -803,7 +804,7 @@ struct nir_shader *
 prog_to_nir(const struct gl_context *ctx, const struct gl_program *prog)
 {
    const struct nir_shader_compiler_options *options =
-      st_get_nir_compiler_options(ctx->st, prog->info.stage);
+      ctx->screen->nir_options[prog->info.stage];
    struct ptn_compile *c;
    struct nir_shader *s;
    gl_shader_stage stage = prog->info.stage;

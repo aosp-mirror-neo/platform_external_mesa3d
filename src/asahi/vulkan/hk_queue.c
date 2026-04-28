@@ -86,12 +86,14 @@ asahi_fill_cdm_command(struct hk_device *dev, struct hk_cs *cs,
       .cdm_ctrl_stream_base = cs->addr,
       .cdm_ctrl_stream_end = cs->addr + len,
 
-      .sampler_heap = dev->samplers.table.bo->va->addr,
-      .sampler_count = dev->samplers.table.alloc,
-
       .ts.end.handle = cs->timestamp.end.handle,
       .ts.end.offset = cs->timestamp.end.offset_B,
    };
+
+   if (cs->uses_sampler_heap) {
+      cmd->sampler_heap = dev->samplers.table.bo->va->addr;
+      cmd->sampler_count = dev->samplers.table.alloc;
+   }
 
    if (cs->scratch.cs.main || cs->scratch.cs.preamble) {
       cmd->helper.data = dev->scratch.cs.buf->va->addr;
@@ -199,8 +201,10 @@ asahi_fill_vdm_command(struct hk_device *dev, struct hk_cs *cs,
    c->isp_scissor_base = cs->uploaded_scissor;
    c->isp_dbias_base = cs->uploaded_zbias;
 
-   c->sampler_heap = dev->samplers.table.bo->va->addr;
-   c->sampler_count = dev->samplers.table.alloc;
+   if (cs->uses_sampler_heap) {
+      c->sampler_heap = dev->samplers.table.bo->va->addr;
+      c->sampler_count = dev->samplers.table.alloc;
+   }
 
    c->isp_oclqry_base = dev->occlusion_queries.bo->va->addr;
 
@@ -231,7 +235,7 @@ asahi_fill_sync(struct drm_asahi_sync *sync, struct vk_sync *vk_sync,
                 uint64_t value)
 {
    if (unlikely(!vk_sync_type_is_drm_syncobj(vk_sync->type))) {
-      unreachable("Unsupported sync type");
+      UNREACHABLE("Unsupported sync type");
       return;
    }
 
@@ -869,9 +873,6 @@ queue_submit(struct hk_device *dev, struct hk_queue *queue,
       agxdecode_drm_cmdbuf(dev->dev.agxdecode, &dev->dev.params, &payload,
                            true);
 
-      agxdecode_image_heap(dev->dev.agxdecode, dev->images.bo->va->addr,
-                           dev->images.alloc);
-
       agxdecode_next_frame();
    }
 
@@ -946,7 +947,7 @@ translate_priority(VkQueueGlobalPriorityKHR prio)
       return DRM_ASAHI_PRIORITY_LOW;
 
    default:
-      unreachable("Invalid VkQueueGlobalPriorityKHR");
+      UNREACHABLE("Invalid VkQueueGlobalPriorityKHR");
    }
 }
 

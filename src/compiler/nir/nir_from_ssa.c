@@ -68,12 +68,11 @@ def_after(nir_def *a, nir_def *b)
    /* If they're in the same block, we can rely on whichever instruction
     * comes first in the block.
     */
-   if (a->parent_instr->block == b->parent_instr->block)
+   if (nir_def_block(a) == nir_def_block(b))
       return a->parent_instr->index > b->parent_instr->index;
 
    /* Otherwise, if blocks are distinct, we sort them in DFS pre-order */
-   return a->parent_instr->block->dom_pre_index >
-          b->parent_instr->block->dom_pre_index;
+   return nir_def_block(a)->dom_pre_index > nir_def_block(b)->dom_pre_index;
 }
 
 /* Returns true if a dominates b */
@@ -86,11 +85,10 @@ ssa_def_dominates(nir_def *a, nir_def *b)
    }
    if (def_after(a, b)) {
       return false;
-   } else if (a->parent_instr->block == b->parent_instr->block) {
+   } else if (nir_def_block(a) == nir_def_block(b)) {
       return def_after(b, a);
    } else {
-      return nir_block_dominates(a->parent_instr->block,
-                                 b->parent_instr->block);
+      return nir_block_dominates(nir_def_block(a), nir_def_block(b));
    }
 }
 
@@ -593,7 +591,7 @@ def_replace_with_reg(nir_def *def, nir_function_impl *impl)
    nir_rewrite_uses_to_load_reg(&b, def, reg);
 
    if (def->parent_instr->type == nir_instr_type_phi)
-      b.cursor = nir_before_block_after_phis(def->parent_instr->block);
+      b.cursor = nir_before_block_after_phis(nir_def_block(def));
    else
       b.cursor = nir_after_instr(def->parent_instr);
 
@@ -1188,14 +1186,10 @@ nir_lower_phis_to_regs_block(nir_block *block, bool place_writes_in_imm_preds)
       nir_def_rewrite_uses(&phi->def, nir_load_reg(&b, reg));
 
       nir_foreach_phi_src(src, phi) {
-         if (place_writes_in_imm_preds) {
-            b.cursor = nir_after_block_before_jump(src->pred);
-            nir_store_reg(&b, src->src.ssa, reg);
-         } else {
-            _mesa_set_add(visited_blocks, src->src.ssa->parent_instr->block);
-            place_phi_read(&b, reg, src->src.ssa, src->pred, visited_blocks);
-            _mesa_set_clear(visited_blocks, NULL);
-         }
+
+         _mesa_set_add(visited_blocks, nir_def_block(src->src.ssa));
+         place_phi_read(&b, reg, src->src.ssa, src->pred, visited_blocks);
+         _mesa_set_clear(visited_blocks, NULL);
       }
 
       nir_instr_remove(&phi->instr);
@@ -1225,7 +1219,7 @@ def_replace_with_reg_state(nir_def *def, void *void_state)
 static bool
 ssa_def_is_local_to_block(nir_def *def, UNUSED void *state)
 {
-   nir_block *block = def->parent_instr->block;
+   nir_block *block = nir_def_block(def);
    nir_foreach_use_including_if(use_src, def) {
       if (nir_src_is_if(use_src) ||
           nir_src_parent_instr(use_src)->block != block ||

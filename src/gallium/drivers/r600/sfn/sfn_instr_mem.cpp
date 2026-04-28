@@ -520,7 +520,7 @@ get_rat_opcode(const nir_atomic_op opcode)
    case nir_atomic_op_dec_wrap:
       return RatInstr::WRAP_DEC_RTN;
    default:
-      unreachable("Unsupported atomic");
+      UNREACHABLE("Unsupported atomic");
    }
 }
 
@@ -549,7 +549,7 @@ get_rat_opcode_wo(const nir_atomic_op opcode)
    case nir_atomic_op_xchg:
       return RatInstr::XCHG_RTN;
    default:
-      unreachable("Unsupported atomic");
+      UNREACHABLE("Unsupported atomic");
    }
 }
 

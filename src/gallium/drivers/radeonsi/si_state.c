@@ -222,8 +222,30 @@ static void si_emit_cb_render_state(struct si_context *sctx, unsigned index)
             break;
 
          case V_028C70_COLOR_5_9_9_9:
-            if (spi_format == V_028714_SPI_SHADER_FP16_ABGR)
-               sx_ps_downconvert |= V_028754_SX_RT_EXPORT_9_9_9_E5 << (i * 4);
+            /* This only executes on GFX10.3+. */
+            if (spi_format == V_028714_SPI_SHADER_FP16_ABGR) {
+               if (sctx->gfx_level >= GFX12) {
+                  sx_ps_downconvert |= V_028754_SX_RT_EXPORT_9_9_9_E5 << (i * 4);
+               } else {
+                  /* GFX10.3-11 have a bug where R9G9B9E5 is broken with RB+ when the color mask is not
+                   * full or empty.
+                   *
+                   * If A is missing in the color mask, add it. If it's the only bit set, remove it.
+                   */
+                  if (colormask == BITFIELD_MASK(3))
+                     cb_target_mask |= BITFIELD_BIT(3) << (i * 4);
+                  else if (colormask == BITFIELD_BIT(3))
+                     cb_target_mask &= ~(BITFIELD_BIT(3) << (i * 4));
+
+                  colormask = (cb_target_mask >> (i * 4)) & 0xf;
+
+                  /* Don't enable RB+ if the color mask is not full or empty, which is done by not
+                   * setting SX_PS_DOWNCONVERT for that MRT.
+                   */
+                  if (colormask == 0xf || colormask == 0)
+                     sx_ps_downconvert |= V_028754_SX_RT_EXPORT_9_9_9_E5 << (i * 4);
+               }
+            }
             break;
          }
       }
@@ -2573,7 +2595,7 @@ static void si_set_framebuffer_state(struct pipe_context *ctx,
     * We could implement the full workaround here, but it's a useless case.
     */
    if ((!state->width || !state->height) && (state->nr_cbufs || state->zsbuf.texture)) {
-      unreachable("the framebuffer shouldn't have zero area");
+      UNREACHABLE("the framebuffer shouldn't have zero area");
       return;
    }
 
@@ -3748,7 +3770,7 @@ static void cdna_emu_make_image_descriptor(struct si_screen *screen, struct si_t
       break;
 
    default:
-      unreachable("invalid texture target");
+      UNREACHABLE("invalid texture target");
    }
 
    unsigned stride = desc->block.bits / 8;
@@ -4513,7 +4535,7 @@ static void *si_create_vertex_elements(struct pipe_context *ctx, unsigned count,
             break;
          }
          default:
-            unreachable("bad format type");
+            UNREACHABLE("bad format type");
          }
       } else {
          switch (elements[i].src_format) {
@@ -4521,7 +4543,7 @@ static void *si_create_vertex_elements(struct pipe_context *ctx, unsigned count,
             fix_fetch.u.format = AC_FETCH_FORMAT_FLOAT;
             break;
          default:
-            unreachable("bad other format");
+            UNREACHABLE("bad other format");
          }
       }
 

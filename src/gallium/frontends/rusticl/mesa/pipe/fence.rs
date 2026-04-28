@@ -22,6 +22,8 @@ pub struct PipeFence {
     screen: Arc<PipeScreen>,
 }
 
+unsafe impl Send for PipeFence {}
+
 impl PipeFence {
     pub fn new(fence: *mut pipe_fence_handle, screen: &Arc<PipeScreen>) -> Self {
         Self {
@@ -30,22 +32,11 @@ impl PipeFence {
         }
     }
 
-    pub fn gpu_signal(&self, ctx: &PipeContext) {
-        debug_assert!(ctx.has_fence_server());
-        unsafe {
-            ctx.pipe().as_ref().fence_server_signal.unwrap()(ctx.pipe().as_ptr(), self.fence, 0);
-        }
-    }
-
-    pub fn gpu_wait(&self, ctx: &PipeContext) {
-        debug_assert!(ctx.has_fence_server());
-        unsafe {
-            ctx.pipe().as_ref().fence_server_sync.unwrap()(ctx.pipe().as_ptr(), self.fence, 0);
-        }
-    }
-
-    pub fn wait(&self) {
-        self.screen.fence_finish(self.fence);
+    /// Returns false on errors.
+    ///
+    /// TODO: should be a Result.
+    pub fn wait(&self) -> bool {
+        self.screen.fence_finish(self.fence)
     }
 }
 

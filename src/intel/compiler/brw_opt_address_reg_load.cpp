@@ -37,7 +37,7 @@ opt_address_reg_load_local(brw_shader &s, bblock_t *block, const brw_def_analysi
           src_inst->sources > 2)
          continue;
 
-      brw_builder ubld = brw_builder(&s).at(block, inst).uniform();
+      brw_builder ubld = brw_builder(&s).before(inst).uniform();
       brw_reg sources[3];
       for (unsigned i = 0; i < src_inst->sources; i++) {
          const brw_reg src = src_inst->src[i];

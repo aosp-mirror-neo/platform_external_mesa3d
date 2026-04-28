@@ -181,7 +181,7 @@ agx_resource_from_handle(struct pipe_screen *pscreen,
     */
    if (rsc->modifier == DRM_FORMAT_MOD_LINEAR && (whandle->stride % 16) != 0) {
       FREE(rsc);
-      return false;
+      return NULL;
    }
 
    prsc = &rsc->base;
@@ -2301,13 +2301,6 @@ agx_destroy_screen(struct pipe_screen *pscreen)
    ralloc_free(screen);
 }
 
-static const struct nir_shader_compiler_options *
-agx_get_compiler_options(struct pipe_screen *pscreen,
-                         enum pipe_shader_type shader)
-{
-   return &agx_nir_options;
-}
-
 static void
 agx_resource_set_stencil(struct pipe_resource *prsrc,
                          struct pipe_resource *stencil)
@@ -2440,9 +2433,11 @@ agx_screen_create(int fd, struct renderonly *ro,
    screen->fence_reference = agx_fence_reference;
    screen->fence_finish = agx_fence_finish;
    screen->fence_get_fd = agx_fence_get_fd;
-   screen->get_compiler_options = agx_get_compiler_options;
    screen->get_disk_shader_cache = agx_get_disk_shader_cache;
    screen->get_cl_cts_version = agx_get_cl_cts_version;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      screen->nir_options[i] = &agx_nir_options;
 
    screen->resource_create = u_transfer_helper_resource_create;
    screen->resource_destroy = u_transfer_helper_resource_destroy;
