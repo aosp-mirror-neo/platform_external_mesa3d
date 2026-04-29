@@ -132,7 +132,6 @@ cc_defaults {
         "-DHAVE___BUILTIN_TYPES_COMPATIBLE_P",
         "-DHAVE___BUILTIN_UNREACHABLE",
         "-DLLVM_IS_SHARED=1",
-        "-DLVP_USE_WSI_PLATFORM",
         "-DMAJOR_IN_SYSMACROS",
         "-DMESA_DEBUG=0",
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
