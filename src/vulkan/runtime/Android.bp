@@ -374,6 +374,7 @@ cc_defaults {
         "-DVK_LITE_RUNTIME_INSTANCE=0",
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -384,6 +385,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -395,6 +397,7 @@ cc_defaults {
         "-DVK_LITE_RUNTIME_INSTANCE=1",
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -405,6 +408,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -416,6 +420,7 @@ cc_defaults {
         "-DMESA_VK_LOG=1",
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -426,6 +431,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -436,6 +442,7 @@ cc_defaults {
     cflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -446,6 +453,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 

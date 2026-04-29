@@ -194,8 +194,11 @@ emit_system_values_block(nir_to_brw_state &ntb, nir_block *block)
                 */
                const struct brw_reg reg = s.devinfo->ver >= 20 ?
                   xe2_vec1_grf(i, 15) : brw_vec1_grf(i + 1, 7);
+               brw_reg mask_uw = hbld.vgrf(BRW_TYPE_UW);
+               hbld.MOV(mask_uw, stride(retype(reg, BRW_TYPE_UB), 1, 8, 0));
+
                hbld.SHR(offset(shifted, hbld, i),
-                        stride(retype(reg, BRW_TYPE_UB), 1, 8, 0),
+                        mask_uw,
                         brw_imm_v(0x76543210));
             }
 
@@ -3528,8 +3531,11 @@ emit_sampleid_setup(nir_to_brw_state &ntb)
        */
       const struct brw_reg id_reg = devinfo->ver >= 20 ? xe2_vec1_grf(i, 8) :
                                     brw_vec1_grf(i + 1, 0);
+      brw_reg mask_uw = hbld.vgrf(BRW_TYPE_UW);
+      hbld.MOV(mask_uw, stride(retype(id_reg, BRW_TYPE_UB), 1, 8, 0));
+
       hbld.SHR(offset(tmp, hbld, i),
-               stride(retype(id_reg, BRW_TYPE_UB), 1, 8, 0),
+               mask_uw,
                brw_imm_v(0x44440000));
    }
 
@@ -5842,15 +5848,13 @@ brw_from_nir_emit_intrinsic(nir_to_brw_state &ntb,
       srcs[RT_LOGICAL_SRC_TRACE_RAY_CONTROL] = get_nir_src(ntb, instr->src[2], 0);
       srcs[RT_LOGICAL_SRC_SYNCHRONOUS] = brw_imm_ud(synchronous);
 
-      /* Bspec 57508: Structure_SIMD16TraceRayMessage:: RayQuery Enable
+      /* Bspec 57508, 47937: Structure_SIMD16TraceRayMessage:: RayQuery Enable
        *
        *    "When this bit is set in the header, Trace Ray Message behaves like
        *    a Ray Query. This message requires a write-back message indicating
        *    RayQuery for all valid Rays (SIMD lanes) have completed."
        */
-      brw_reg dst = (devinfo->ver >= 20 && synchronous) ?
-                    bld.vgrf(BRW_TYPE_UD) :
-                    bld.null_reg_ud();
+      brw_reg dst = synchronous ? bld.vgrf(BRW_TYPE_UD) : bld.null_reg_ud();
 
       bld.emit(RT_OPCODE_TRACE_RAY_LOGICAL, dst, srcs, RT_LOGICAL_NUM_SRCS);
 

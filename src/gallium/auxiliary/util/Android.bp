@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_12",
+    name: "files_libgallium_11",
     srcs: [
         "u_async_debug.c",
         "u_bitmask.c",

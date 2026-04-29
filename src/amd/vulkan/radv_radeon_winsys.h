@@ -17,8 +17,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "util/u_math.h"
-#include "util/u_memory.h"
 #include <vulkan/vulkan.h>
 #include "ac_cmdbuf.h"
 #include "amd_family.h"
@@ -54,6 +52,7 @@ enum radeon_bo_flag { /* bitfield */
                       RADEON_FLAG_GFX12_ALLOW_DCC = (1 << 13),
                       RADEON_FLAG_VM_UPDATE_WAIT = (1 << 14),
                       RADEON_FLAG_VM_PAD_1PAGE = (1 << 15),
+                      RADEON_FLAG_ENCRYPTED = (1 << 16),
 };
 
 enum radeon_ctx_priority {
@@ -187,6 +186,7 @@ struct radv_winsys_submit_info {
    struct ac_cmdbuf **continue_preamble_cs;
    struct ac_cmdbuf **postamble_cs;
    bool uses_shadow_regs;
+   bool secure;
 };
 
 /* Kernel effectively allows 0-31. This sets some priorities for fixed

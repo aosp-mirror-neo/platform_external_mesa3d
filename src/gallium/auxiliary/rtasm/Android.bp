@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_9",
+    name: "files_libgallium_8",
     srcs: [
         "rtasm_execmem.c",
         "rtasm_x86sse.c",

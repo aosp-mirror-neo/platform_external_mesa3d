@@ -1379,18 +1379,18 @@ static void print_vcn_reconstructed_picture(FILE *f, struct ac_ib_parser *ib, bo
 
    if (ib->vcn_version >= VCN_5_0_0) {
       if (valid) {
-         print_vcn_addr(f, ib, "%s luma", prefix);
+         print_vcn_addr(f, ib, true, "%s luma", prefix);
          uint32_t luma_pitch = ac_ib_get(ib);
          fprintf(f, "%s luma pitch = %u\n", prefix, luma_pitch);
-         print_vcn_addr(f, ib, "%s chroma", prefix);
+         print_vcn_addr(f, ib, true, "%s chroma", prefix);
          uint32_t chroma_pitch = ac_ib_get(ib);
          fprintf(f, "%s chroma pitch = %u\n", prefix, chroma_pitch);
-         print_vcn_addr(f, ib, "%s chroma V", prefix);
+         print_vcn_addr(f, ib, true, "%s chroma V", prefix);
          uint32_t chroma_v_pitch = ac_ib_get(ib);
          fprintf(f, "%s chroma V pitch = %u\n", prefix, chroma_v_pitch);
          uint32_t swizzle = ac_ib_get(ib);
          fprintf(f, "%s swizzle mode = %u\n", prefix, swizzle);
-         print_vcn_addr(f, ib, "%s frame context buffer", prefix);
+         print_vcn_addr(f, ib, true, "%s frame context buffer", prefix);
          uint32_t frame_context_offset = ac_ib_get(ib);
          fprintf(f, "%s AV1 cdf frame context offset / colloc buffer offset = %u\n", prefix, frame_context_offset);
          uint32_t cdef_offset = ac_ib_get(ib);
@@ -1868,8 +1868,8 @@ static void parse_vcn_enc_ib(FILE *f, struct ac_ib_parser *ib, uint32_t num_dw)
             uint32_t swizzle = ac_ib_get(ib);
             fprintf(f, "    swizzle mode = %s\n",
                     swizzle == RENCODE_REC_SWIZZLE_MODE_LINEAR ? "LINEAR" :
-                    (ib->vcn_version < VCN_5_0_0 && swizzle == RENCODE_REC_SWIZZLE_MODE_256B_D) ||
-                    (ib->vcn_version >= VCN_5_0_0 && swizzle == RENCODE_REC_SWIZZLE_MODE_256B_D_VCN5) ? "256B D" :
+                    (ib->gfx_level < GFX12 && swizzle == RENCODE_REC_SWIZZLE_MODE_256B_D) ||
+                    (ib->gfx_level >= GFX12 && swizzle == RENCODE_REC_SWIZZLE_MODE_256B_D_GFX12) ? "256B D" :
                     swizzle == RENCODE_REC_SWIZZLE_MODE_256B_S ? "256B S" :
                     swizzle == RENCODE_REC_SWIZZLE_MODE_8x8_1D_THIN_12_24BPP ? "8x8 1D THIN 12 24BPP" :
                     "???");

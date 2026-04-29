@@ -51,6 +51,7 @@ static const struct spirv_capabilities implemented_capabilities = {
    .ClipDistance = true,
    .ComputeDerivativeGroupLinearKHR = true,
    .ComputeDerivativeGroupQuadsKHR = true,
+   .ConstantDataKHR = true,
    .CooperativeMatrixKHR = true,
    .CooperativeMatrixConversionsNV = true,
    .CooperativeMatrixReductionsNV = true,
@@ -1856,6 +1857,10 @@ type_decoration_cb(struct vtn_builder *b,
       /* User semantic decorations can safely be ignored by the driver. */
       break;
 
+   case SpvDecorationUTFEncodedKHR:
+      /* Ignored. */
+      break;
+
    default:
       vtn_fail_with_decoration("Unhandled decoration", dec->decoration);
    }
@@ -1934,9 +1939,14 @@ validate_image_type_for_sampled_image(struct vtn_builder *b,
                dim == GLSL_SAMPLER_DIM_SUBPASS_MS,
                "%s must not have a Dim of SubpassData.", operand);
 
-   vtn_fail_if(dim == GLSL_SAMPLER_DIM_BUF && b->version >= 0x10600,
-               "Starting with SPIR-V 1.6, %s must not have a Dim of Buffer.",
+   /* While this is invalid, the glslang used by hangover's arm64 DXVK build
+    * (used in our CI) does hit this path for the builtin YUV conversion
+    * shaders.
+    */
+   if (dim == GLSL_SAMPLER_DIM_BUF && b->version >= 0x10600) {
+      vtn_warn("Starting with SPIR-V 1.6, %s must not have a Dim of Buffer.",
                operand);
+   }
 }
 
 static void
@@ -2546,12 +2556,56 @@ spec_constant_decoration_cb(struct vtn_builder *b, UNUSED struct vtn_value *val,
    if (dec->decoration != SpvDecorationSpecId)
       return;
 
-   nir_const_value *value = data;
-   for (unsigned i = 0; i < b->num_specializations; i++) {
-      if (b->specializations[i].id == dec->operands[0]) {
-         *value = b->specializations[i].value;
+   if (!b->specialization)
+      return;
+
+   for (unsigned i = 0; i < b->specialization->num_entries; i++) {
+      const struct nir_spirv_specialization_entry *entry =
+         &b->specialization->entries[i];
+
+      if (entry->id == dec->operands[0] && entry->size > 0) {
+         memcpy(data, entry->data, entry->size);
          return;
       }
+   }
+}
+
+struct spec_constant_data_cb_data {
+   nir_constant **elems;
+   unsigned num_elems;
+   unsigned elem_byte_size;
+};
+
+static void
+spec_constant_data_decoration_cb(struct vtn_builder *b, UNUSED struct vtn_value *val,
+                                 ASSERTED int member,
+                                 const struct vtn_decoration *dec, void *data)
+{
+   vtn_assert(member == -1);
+   if (dec->decoration != SpvDecorationSpecId)
+      return;
+
+   if (!b->specialization)
+      return;
+
+   const struct spec_constant_data_cb_data *ctx = data;
+
+   for (unsigned i = 0; i < b->specialization->num_entries; i++) {
+      const struct nir_spirv_specialization_entry *entry =
+         &b->specialization->entries[i];
+
+      if (entry->id != dec->operands[0])
+         continue;
+
+      if (entry->size == 0)
+         continue;
+
+      for (unsigned e = 0; e < ctx->num_elems; e++) {
+         unsigned offset = e * ctx->elem_byte_size;
+         assert(offset + ctx->elem_byte_size <= entry->size);
+         memcpy(&ctx->elems[e]->values[0], entry->data + offset, ctx->elem_byte_size);
+      }
+      return;
    }
 }
 
@@ -3059,6 +3113,40 @@ vtn_handle_constant(struct vtn_builder *b, SpvOp opcode,
                   "OpTypeAccelerationStructureKHR, OpTypeTensorARM, or "
                   "OpTypeSampler instruction.");
       }
+      break;
+   }
+
+   case SpvOpConstantDataKHR:
+   case SpvOpSpecConstantDataKHR: {
+      struct vtn_type *elem_type = val->type->array_element;
+
+      vtn_fail_if(val->type->base_type != vtn_base_type_array,
+                  "Result type must be an array");
+      vtn_fail_if(!glsl_type_is_integer(elem_type->type),
+                  "Element type must be a scalar integer");
+
+      unsigned num_elems = val->type->length;
+      unsigned bit_size  = glsl_get_bit_size(elem_type->type);
+      unsigned byte_size = bit_size / 8;
+
+      const uint8_t *data = (const uint8_t *)&w[3];
+
+      nir_constant **elems = ralloc_array(b, nir_constant *, num_elems);
+      for (unsigned i = 0; i < num_elems; i++) {
+         nir_constant *c = rzalloc(b, nir_constant);
+         memcpy(&c->values[0], data + i * byte_size, byte_size);
+         elems[i] = c;
+      }
+
+      if (opcode == SpvOpSpecConstantDataKHR) {
+         struct spec_constant_data_cb_data ctx = { elems, num_elems, byte_size };
+         vtn_foreach_decoration(b, val, spec_constant_data_decoration_cb, &ctx);
+      }
+
+      ralloc_steal(val->constant, elems);
+      val->constant->num_elements = num_elems;
+      val->constant->elements = elems;
+      val->is_undef_constant = false;
       break;
    }
 
@@ -6176,6 +6264,8 @@ vtn_handle_variable_or_type_instruction(struct vtn_builder *b, SpvOp opcode,
    case SpvOpConstantComposite:
    case SpvOpConstantCompositeReplicateEXT:
    case SpvOpConstantNull:
+   case SpvOpConstantDataKHR:
+   case SpvOpSpecConstantDataKHR:
    case SpvOpSpecConstantTrue:
    case SpvOpSpecConstantFalse:
    case SpvOpSpecConstant:
@@ -7481,7 +7571,7 @@ can_remove(nir_variable *var, void *data)
 
 nir_shader *
 spirv_to_nir(const uint32_t *words, size_t word_count,
-             struct nir_spirv_specialization *spec, unsigned num_spec,
+             struct nir_spirv_specialization *spec,
              mesa_shader_stage stage, const char *entry_point_name,
              const struct spirv_to_nir_options *options,
              const nir_shader_compiler_options *nir_options)
@@ -7574,8 +7664,7 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       ralloc_free(b->shader);
       ralloc_free(b);
       nir_shader* result = spirv_to_nir(replacement_words, replacement_size / sizeof(uint32_t),
-                                        spec, num_spec,
-                                        stage, entry_point_name, options,
+                                        spec, stage, entry_point_name, options,
                                         nir_options);
 
       free((void *)replacement_words);
@@ -7636,8 +7725,7 @@ spirv_to_nir(const uint32_t *words, size_t word_count,
       vtn_foreach_execution_mode(b, b->entry_point,
                                  vtn_handle_execution_mode, NULL);
 
-   b->specializations = spec;
-   b->num_specializations = num_spec;
+   b->specialization = spec;
 
    /* Handle all variable, type, and constant instructions */
    words = vtn_foreach_instruction(b, words, word_end,
@@ -7908,4 +7996,62 @@ vtn_dump_values(struct vtn_builder *b, FILE *f)
       vtn_print_value(b, val, f);
    }
    fprintf(f, "===\n");
+}
+
+struct nir_spirv_specialization *
+vtn_alloc_specialization(uint32_t num_entries)
+{
+   struct nir_spirv_specialization *spec;
+
+   spec = calloc(1, sizeof(*spec));
+   if (!spec)
+      return NULL;
+
+   spec->entries = calloc(num_entries, sizeof(*spec->entries));
+   if (!spec->entries) {
+      free(spec);
+      return NULL;
+   }
+
+   spec->num_entries = num_entries;
+   return spec;
+}
+
+bool
+vtn_add_specialization_entry(struct nir_spirv_specialization *spec, uint32_t slot,
+                             uint32_t entry_id, uint32_t entry_size,
+                             const void *entry_data, bool defined_on_module)
+{
+   struct nir_spirv_specialization_entry *entry = &spec->entries[slot];
+
+   assert(!entry->data);
+
+   entry->id = entry_id;
+   entry->size = entry_size;
+   entry->defined_on_module = defined_on_module;
+
+   if (entry_size > 0) {
+      entry->data = malloc(entry_size);
+      if (!entry->data)
+         return false;
+
+      memcpy(entry->data, entry_data, entry_size);
+   }
+
+   return true;
+}
+
+void
+vtn_free_specialization(struct nir_spirv_specialization *spec)
+{
+   if (!spec)
+      return;
+
+   for (uint32_t i = 0; i < spec->num_entries; i++) {
+      struct nir_spirv_specialization_entry *entry = &spec->entries[i];
+      free(entry->data);
+   }
+
+   free(spec->entries);
+   free(spec);
 }

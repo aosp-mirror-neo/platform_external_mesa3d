@@ -214,7 +214,8 @@ validate_inst(struct validate_state *validate, jay_inst *I)
       CHECK(num_srcs >= I->predication);
 
       if (jay_inst_has_default(I)) {
-         CHECK(jay_inst_get_default(I)->file == I->dst.file);
+         jay_def dst = jay_is_null(I->dst) ? I->cond_flag : I->dst;
+         CHECK(jay_inst_get_default(I)->file == dst.file);
       }
 
       CHECK(jay_is_flag(*jay_inst_get_predicate(I)));
@@ -247,15 +248,8 @@ validate_inst(struct validate_state *validate, jay_inst *I)
       CHECK(!I->src[s].negate || jay_has_src_mods(I, s));
    }
 
-   switch (I->op) {
-   case JAY_OPCODE_SEL:
+   if (I->op == JAY_OPCODE_SEL) {
       CHECK(jay_is_flag(I->src[2]) && "SEL src[2] (selector) must be a flag");
-      break;
-   case JAY_OPCODE_SWAP:
-      CHECK(I->src[0].file == I->src[1].file && "SWAP files must match");
-      break;
-   default:
-      break;
    }
 }
 

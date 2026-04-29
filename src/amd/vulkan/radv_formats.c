@@ -513,9 +513,7 @@ radv_physical_device_get_format_properties(struct radv_physical_device *pdev, Vk
       buffer = 0;
    }
 
-   /* No depth and stencil support yet. */
-   if (radv_host_image_copy_enabled(pdev) &&
-       (format != VK_FORMAT_D32_SFLOAT_S8_UINT && format != VK_FORMAT_D16_UNORM_S8_UINT)) {
+   if (radv_host_image_copy_enabled(pdev)) {
       if (linear & VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT)
          linear |= VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT;
 
@@ -617,7 +615,7 @@ radv_format_pack_clear_color(VkFormat format, uint32_t clear_vals[2], VkClearCol
             else
                f -= 0.5f;
 
-            v = (uint64_t)f;
+            v = (uint64_t)(int64_t)f;
          }
       } else if (channel->type == UTIL_FORMAT_TYPE_FLOAT) {
          if (channel->size == 32) {
