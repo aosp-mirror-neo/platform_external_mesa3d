@@ -5,7 +5,7 @@
 | Build Method | Linux (x64) | Windows (x64) | macOS (ARM/x64) |
 | :--- | :--- | :--- | :--- |
 | **Meson + AMC (Shims)** | ✅ Functional | 🚧 Planned | 🚧 Planned |
-| **Native Bazel (Generated)** | 🚧 In Progress | ❌ Not Started | ❌ Not Started |
+| **Native Bazel (Generated)** | 🚧 Files Generated | ❌ Not Started | ❌ Not Started |
 
 ## 1. Overview
 This document describes the build architecture for `libvulkan_lvp` (Mesa's Lavapipe Vulkan software rasterizer) within the Android Emulator codebase. The system uses **AMC (Android Meson Configurator)** to bridge the gap between Mesa's native **Meson** build system and the Emulator's **Bazel** build environment.
@@ -51,7 +51,7 @@ For convenience, a `mise.toml` file is provided in this directory. If you have [
 *   **Build**: `mise run build-lavapipe-amc-meson` — Performs the complete build and installs results to the local prebuilts directory.
 *   **Validation**: `mise run run-vulkaninfo-lavapipe` — Runs `vulkaninfo` against the freshly built library to ensure the ICD is valid.
 *   **Maintenance**: `mise run copy-lavapipe-deps-prebuilts` — Manually co-locates required shared libraries (like `libxcb-aemu.so`) and fixes their `RUNPATH`.
-*   **Experimental**: Tasks like `gen-bazel-amc-lavapipe-amc` for testing the native Bazel file generation path.
+*   **Experimental**: Tasks like `gen-bazel-files-lavapipe` for generating the native Bazel build files.
 *   **General Bazel**: `mise run bazel-clean` — Wipes the workspace cache.
 
 ## 5. Packaging and Portability (Post-Build)
@@ -199,9 +199,9 @@ Mesa requires certain tools during the build (like `llvm-config` and `glslangVal
 *   **Missing Headers:** Ensure the `bazel_target` includes the necessary header files.
 *   **Linker Errors:** Verify the `Libs` string in the `shim` section matches the actual library name produced by Bazel.
 
-## 8. Future Goal: Native Bazel Build (`generate_bazel_files.sh`)
+## 8. Future Goal: Native Bazel Build
 
-Currently, we use Meson as an intermediate step to build Lavapipe. However, there is a second script in the directory: `generate_bazel_files.sh`.
+Currently, we use Meson as an intermediate step to build Lavapipe. However, we have integrated Bazel file generation into `amc_meson_build.py` via the `--gen-bazel` flag.
 
 ### What is it?
 This script represents our "North Star" for the build system. It uses `amc.py` in `bazel` mode to **generate** Bazel `BUILD` files directly from the Mesa source tree. It takes the upstream Meson logic and "transpiles" it into Bazel rules.
@@ -211,7 +211,7 @@ This script represents our "North Star" for the build system. It uses `amc.py` i
 *   **Caching**: Native Bazel rules allow for fine-grained action caching, making incremental builds much faster across the team.
 *   **No Build-time Dependencies**: Once the `BUILD` files are generated, we no longer need Meson or Ninja installed on the build machine.
 
-### Current Status: 🚧 Under Construction
-**This path is not yet fully functional.** It is included in the repository as a development target.
+### Current Status: 🚧 Files Generated
+This path is now functional for file generation on Linux, but full verification of the Bazel build is still pending.
 
 For now, when extending support to Windows or macOS, you should focus on the **Meson-based workflow** (`amc_meson_build.py`) described in the sections above. Once the generated Bazel files are stable for Linux, we will begin the transition for other platforms.

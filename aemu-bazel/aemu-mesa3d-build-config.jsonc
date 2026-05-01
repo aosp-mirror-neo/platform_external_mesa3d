@@ -50,8 +50,8 @@
         "python3": "@lavapipe_bazel_deps//:python3",
         "wayland-scanner": "@wayland//:wayland-scanner",
         // TODO(joshuaduong): These lavapipe deps should be built from source.
-        "glslangValidator": "//prebuilts/android-emulator-build/common/vulkan/linux-x86_64/lavapipe-bazel-deps:py_glslangValidator",
-        "llvm-config": "//prebuilts/android-emulator-build/common/vulkan/linux-x86_64/lavapipe-bazel-deps:py_llvm_config"
+        "glslangValidator": "@lavapipe_bazel_deps//:py_glslangValidator",
+        "llvm-config": "@lavapipe_bazel_deps//:py_llvm_config"
       },
       "dependencies": {
         "zlib": {
