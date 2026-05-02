@@ -49,7 +49,10 @@ cc_binary(
         "src/util/u_endian.h",
         "src/util/xmlconfig.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-fno-rtti",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -143,10 +146,7 @@ cc_binary(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -170,20 +170,30 @@ cc_binary(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src",
         "include",
-        "src/gallium/include",
+        "platform/linux-x86_64",
+        "src",
         "src/gallium/auxiliary",
         "src/gallium/drivers",
+        "src/gallium/include",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
+    ],
+    linkopts = [
+        "-Wl,-rpath,$$ORIGIN",
+        "-Wl,-rpath,$$ORIGIN/lib64",
+        "-Wl,-rpath,$$ORIGIN/../lib64",
+        "-Wl,-rpath,$$ORIGIN/../../lib64",
+        "-Wl,-rpath,$$ORIGIN/../../../lib64",
     ],
     linkshared = True,
+    visibility = ["//visibility:public"],
     deps = [
         ":libblake3",
         ":libcompiler",
@@ -209,7 +219,7 @@ cc_binary(
         ":libxmlconfig",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -230,7 +240,9 @@ cc_library(
         "src/util/blake3/blake3_impl.h",
         "src/util/blake3/mesa_blake3_visibility.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -323,10 +335,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -348,11 +357,13 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
-        "src/util/blake3",
         "platform/linux-x86_64",
+        "src/util/blake3",
     ],
 )
 
@@ -409,7 +420,9 @@ cc_library(
         "src/util/u_math.h",
         "src/util/u_string.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -502,10 +515,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -527,14 +537,16 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/compiler",
         "include",
-        "src",
         "platform/linux-x86_64",
+        "src",
+        "src/compiler",
     ],
 )
 
@@ -976,6 +988,7 @@ cc_library(
         "src/util/glheader.h",
         "src/util/half_float.h",
         "src/util/hash_table.h",
+        "src/util/libsync.h",
         "src/util/list.h",
         "src/util/log.h",
         "src/util/macros.h",
@@ -1027,7 +1040,10 @@ cc_library(
         "src/util/u_worklist.h",
         "src/util/xmlconfig.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-fno-rtti",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -1120,10 +1136,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -1148,20 +1161,22 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/auxiliary",
-        "src/gallium/include",
-        "src",
         "include",
-        "src/gallium/auxiliary/util",
-        "src/compiler/nir",
+        "platform/linux-x86_64",
+        "src",
         "src/compiler",
+        "src/compiler/nir",
+        "src/gallium/auxiliary",
+        "src/gallium/auxiliary/util",
+        "src/gallium/include",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -1172,9 +1187,10 @@ cc_library(
         ":libmesa_util_clflushopt",
         ":libmesa_util_simd",
         ":libnir",
+        "@lavapipe_bazel_deps//llvm-prebuilt/clang-14054515:llvm",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -1416,7 +1432,9 @@ cc_library(
         "src/vulkan/util/vk_util.h",
         "src/vulkan/wsi/wsi_common.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -1509,10 +1527,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -1541,26 +1556,28 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/frontends/lavapipe",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/gallium/include",
+        "src/compiler",
+        "src/compiler/nir",
+        "src/compiler/spirv",
         "src/gallium/auxiliary",
         "src/gallium/drivers/llvmpipe",
-        "src/compiler/nir",
-        "src/compiler",
-        "src/vulkan/util",
-        "src/vulkan/wsi",
-        "src/vulkan/runtime",
-        "src/vulkan/runtime/bvh",
+        "src/gallium/frontends/lavapipe",
+        "src/gallium/include",
         "src/util",
         "src/util/format",
-        "src/compiler/spirv",
-        "platform/linux-x86_64",
+        "src/vulkan/runtime",
+        "src/vulkan/runtime/bvh",
+        "src/vulkan/util",
+        "src/vulkan/wsi",
     ],
     deps = [
         ":libblake3",
@@ -1580,9 +1597,10 @@ cc_library(
         ":libvulkan_util",
         ":libvulkan_wsi",
         ":libxmlconfig",
+        "@lavapipe_bazel_deps//llvm-prebuilt/clang-14054515:llvm",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
@@ -1847,7 +1865,10 @@ cc_library(
         "src/util/u_thread.h",
         "src/util/vma.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-fno-rtti",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -1940,10 +1961,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -1967,20 +1985,22 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
+        "include",
+        "platform/linux-x86_64",
+        "src",
+        "src/compiler",
+        "src/compiler/nir",
+        "src/gallium/auxiliary",
         "src/gallium/drivers/llvmpipe",
         "src/gallium/include",
-        "src/gallium/auxiliary",
-        "include",
-        "src",
-        "src/compiler/nir",
-        "src/compiler",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -1989,9 +2009,10 @@ cc_library(
         ":libmesa_util_clflush",
         ":libmesa_util_clflushopt",
         ":libmesa_util_simd",
+        "@lavapipe_bazel_deps//llvm-prebuilt/clang-14054515:llvm",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -2044,7 +2065,9 @@ cc_library(
         "src/util/u_endian.h",
         "src/util/xmlconfig.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -2137,10 +2160,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_DRICONF",
         "USE_GCC_ATOMIC_BUILTINS",
@@ -2165,17 +2185,19 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/loader",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/gallium/include",
+        "src/loader",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -2186,7 +2208,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -2213,7 +2235,9 @@ cc_library(
         "src/util/timespec.h",
         "src/util/u_atomic.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -2306,10 +2330,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -2333,15 +2354,17 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/loader",
         "include",
-        "src",
-        "src/util",
         "platform/linux-x86_64",
+        "src",
+        "src/loader",
+        "src/util",
     ],
     deps = [
         ":libblake3",
@@ -2352,7 +2375,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@wayland//:wayland-client",
         "@zlib",
     ],
@@ -2370,7 +2393,9 @@ cc_library(
         "src/x11/x11_display.h",
         "src/x11/x11_dri3.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -2463,10 +2488,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -2490,14 +2512,16 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/x11",
+        "platform/linux-x86_64",
         "src",
         "src/util",
-        "platform/linux-x86_64",
+        "src/x11",
     ],
     deps = [
         ":libblake3",
@@ -2508,7 +2532,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxshmfence//:xshmfence",
         "@zlib",
     ],
@@ -2753,7 +2777,9 @@ cc_library(
         "src/util/vma.h",
         "src/util/xxhash.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -2846,10 +2872,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -2872,15 +2895,17 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/util",
         "include",
-        "src",
-        "src/util/format",
         "platform/linux-x86_64",
+        "src",
+        "src/util",
+        "src/util/format",
     ],
     deps = [
         ":libblake3",
@@ -2890,7 +2915,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -2905,7 +2930,9 @@ cc_library(
         "src/c11/threads.h",
         "src/c11/time.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -2998,10 +3025,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -3023,304 +3047,21 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
-    ],
-    # buildifier: leave-alone
-    includes = [
-        "src",
-        "platform/linux-x86_64",
-    ],
-)
-
-cc_library(
-    name = "libmesa_util_clflush",
-    srcs = ["src/util/cache_ops_x86.c"],
-    hdrs = [
-        "include/no_extern_c.h",
-        "src/c11/threads.h",
-        "src/c11/time.h",
-        "src/util/cache_ops.h",
-        "src/util/detect_arch.h",
-        "src/util/detect_cc.h",
-        "src/util/detect_os.h",
-        "src/util/macros.h",
-        "src/util/u_atomic.h",
-        "src/util/u_cpu_detect.h",
-        "src/util/u_thread.h",
-    ],
-    copts = ["-Wno-implicit-function-declaration"],
-    defines = [
-        "ALLOW_KCMP",
-        "AMD_LLVM_AVAILABLE=1",
-        "DRAW_LLVM_AVAILABLE=1",
-        "ENABLE_SHADER_CACHE",
-        "GALLIVM_USE_ORCJIT=0",
-        "GLAPI_EXPORT_PROTO_ENTRY_POINTS=0",
-        "GLX_INDIRECT_RENDERING",
-        "GLX_USE_DRM",
-        "HAS_SCHED_GETAFFINITY",
-        "HAS_SCHED_H",
-        "HAVE_CET_H",
-        "HAVE_COMPRESSION",
-        "HAVE_DIRENT_D_TYPE",
-        "HAVE_DLADDR",
-        "HAVE_DLFCN_H",
-        "HAVE_DL_ITERATE_PHDR",
-        "HAVE_DRI",
-        "HAVE_DRI2",
-        "HAVE_DRI3_EXPLICIT_SYNC",
-        "HAVE_DRISW_KMS",
-        "HAVE_DRM_PLATFORM",
-        "HAVE_ENDIAN_H",
-        "HAVE_FLOCK",
-        "HAVE_FMEMOPEN",
-        "HAVE_FUNC_ATTRIBUTE_ALIAS",
-        "HAVE_FUNC_ATTRIBUTE_COLD",
-        "HAVE_FUNC_ATTRIBUTE_CONST",
-        "HAVE_FUNC_ATTRIBUTE_FLATTEN",
-        "HAVE_FUNC_ATTRIBUTE_FORMAT",
-        "HAVE_FUNC_ATTRIBUTE_MALLOC",
-        "HAVE_FUNC_ATTRIBUTE_NORETURN",
-        "HAVE_FUNC_ATTRIBUTE_PACKED",
-        "HAVE_FUNC_ATTRIBUTE_PURE",
-        "HAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
-        "HAVE_FUNC_ATTRIBUTE_UNUSED",
-        "HAVE_FUNC_ATTRIBUTE_VISIBILITY",
-        "HAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
-        "HAVE_FUNC_ATTRIBUTE_WEAK",
-        "HAVE_GFX_COMPUTE",
-        "HAVE_GNU_QSORT_R",
-        "HAVE_LIBDRM",
-        "HAVE_LIBGBM",
-        "HAVE_LINUX_FUTEX_H",
-        "HAVE_LLVMPIPE",
-        "HAVE_MEMFD_CREATE",
-        "HAVE_MKOSTEMP",
-        "HAVE_OPENGL=1",
-        "HAVE_OPENGL_ES_1=1",
-        "HAVE_OPENGL_ES_2=1",
-        "HAVE_POLL_H",
-        "HAVE_POSIX_FALLOCATE",
-        "HAVE_POSIX_MEMALIGN",
-        "HAVE_PROGRAM_INVOCATION_NAME",
-        "HAVE_PTHREAD",
-        "HAVE_PTHREAD_SETAFFINITY",
-        "HAVE_RANDOM_R",
-        "HAVE_RENDERDOC_INTEGRATION=true",
-        "HAVE_SECURE_GETENV",
-        "HAVE_STRTOD_L",
-        "HAVE_STRTOF",
-        "HAVE_STRTOK_R",
-        "HAVE_STRUCT_TIMESPEC",
-        "HAVE_SURFACELESS_PLATFORM",
-        "HAVE_SWRAST",
-        "HAVE_SYSCONF",
-        "HAVE_SYS_INOTIFY_H",
-        "HAVE_SYS_SHM_H",
-        "HAVE_UINT128",
-        "HAVE_WAYLAND_PLATFORM",
-        "HAVE_X11_DRM",
-        "HAVE_X11_PLATFORM",
-        "HAVE_XCB_PLATFORM",
-        "HAVE_XLOCALE_H",
-        "HAVE_ZLIB",
-        "HAVE___BUILTIN_ADD_OVERFLOW",
-        "HAVE___BUILTIN_BSWAP32",
-        "HAVE___BUILTIN_BSWAP64",
-        "HAVE___BUILTIN_CLZ",
-        "HAVE___BUILTIN_CLZLL",
-        "HAVE___BUILTIN_CTZ",
-        "HAVE___BUILTIN_EXPECT",
-        "HAVE___BUILTIN_FFS",
-        "HAVE___BUILTIN_FFSLL",
-        "HAVE___BUILTIN_IA32_CLFLUSHOPT",
-        "HAVE___BUILTIN_POPCOUNT",
-        "HAVE___BUILTIN_POPCOUNTLL",
-        "HAVE___BUILTIN_TYPES_COMPATIBLE_P",
-        "HAVE___BUILTIN_UNREACHABLE",
-        "LLVM_IS_SHARED=1",
-        "MAJOR_IN_SYSMACROS",
-        "MESA_DEBUG=0",
         'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
-        "MESA_SYSTEM_HAS_KMS_DRM=1",
         'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
         'PACKAGE_VERSION=\\"26.2.0-devel\\"',
-        "THREAD_SANITIZER=0",
-        "USE_GCC_ATOMIC_BUILTINS",
-        "USE_LIBGLVND=0",
-        "USE_SSE41",
-        "USE_UNW_DYNAMIC_FDE",
-        "VIDEO_CODEC_AV1DEC=0",
-        "VIDEO_CODEC_AV1ENC=0",
-        "VIDEO_CODEC_H264DEC=0",
-        "VIDEO_CODEC_H264ENC=0",
-        "VIDEO_CODEC_H265DEC=0",
-        "VIDEO_CODEC_H265ENC=0",
-        "VIDEO_CODEC_JPEGDEC=0",
-        "VIDEO_CODEC_MPEG12DEC=0",
-        "VIDEO_CODEC_VC1DEC=0",
-        "VIDEO_CODEC_VP9DEC=0",
-        "WL_HIDE_DEPRECATED",
-        "_FILE_OFFSET_BITS=64",
-        "_GNU_SOURCE",
-        "__STDC_CONSTANT_MACROS",
-        "__STDC_FORMAT_MACROS",
-        "__STDC_LIMIT_MACROS",
     ],
-    # buildifier: leave-alone
     includes = [
-        ".",
-        "src/util",
-        "include",
-        "src",
         "platform/linux-x86_64",
-    ],
-)
-
-cc_library(
-    name = "libmesa_util_clflushopt",
-    srcs = ["src/util/cache_ops_x86_clflushopt.c"],
-    hdrs = [
-        "include/no_extern_c.h",
-        "src/c11/threads.h",
-        "src/c11/time.h",
-        "src/util/detect_os.h",
-        "src/util/macros.h",
-        "src/util/u_atomic.h",
-        "src/util/u_cpu_detect.h",
-        "src/util/u_thread.h",
-    ],
-    copts = ["-Wno-implicit-function-declaration"],
-    defines = [
-        "ALLOW_KCMP",
-        "AMD_LLVM_AVAILABLE=1",
-        "DRAW_LLVM_AVAILABLE=1",
-        "ENABLE_SHADER_CACHE",
-        "GALLIVM_USE_ORCJIT=0",
-        "GLAPI_EXPORT_PROTO_ENTRY_POINTS=0",
-        "GLX_INDIRECT_RENDERING",
-        "GLX_USE_DRM",
-        "HAS_SCHED_GETAFFINITY",
-        "HAS_SCHED_H",
-        "HAVE_CET_H",
-        "HAVE_COMPRESSION",
-        "HAVE_DIRENT_D_TYPE",
-        "HAVE_DLADDR",
-        "HAVE_DLFCN_H",
-        "HAVE_DL_ITERATE_PHDR",
-        "HAVE_DRI",
-        "HAVE_DRI2",
-        "HAVE_DRI3_EXPLICIT_SYNC",
-        "HAVE_DRISW_KMS",
-        "HAVE_DRM_PLATFORM",
-        "HAVE_ENDIAN_H",
-        "HAVE_FLOCK",
-        "HAVE_FMEMOPEN",
-        "HAVE_FUNC_ATTRIBUTE_ALIAS",
-        "HAVE_FUNC_ATTRIBUTE_COLD",
-        "HAVE_FUNC_ATTRIBUTE_CONST",
-        "HAVE_FUNC_ATTRIBUTE_FLATTEN",
-        "HAVE_FUNC_ATTRIBUTE_FORMAT",
-        "HAVE_FUNC_ATTRIBUTE_MALLOC",
-        "HAVE_FUNC_ATTRIBUTE_NORETURN",
-        "HAVE_FUNC_ATTRIBUTE_PACKED",
-        "HAVE_FUNC_ATTRIBUTE_PURE",
-        "HAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
-        "HAVE_FUNC_ATTRIBUTE_UNUSED",
-        "HAVE_FUNC_ATTRIBUTE_VISIBILITY",
-        "HAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
-        "HAVE_FUNC_ATTRIBUTE_WEAK",
-        "HAVE_GFX_COMPUTE",
-        "HAVE_GNU_QSORT_R",
-        "HAVE_LIBDRM",
-        "HAVE_LIBGBM",
-        "HAVE_LINUX_FUTEX_H",
-        "HAVE_LLVMPIPE",
-        "HAVE_MEMFD_CREATE",
-        "HAVE_MKOSTEMP",
-        "HAVE_OPENGL=1",
-        "HAVE_OPENGL_ES_1=1",
-        "HAVE_OPENGL_ES_2=1",
-        "HAVE_POLL_H",
-        "HAVE_POSIX_FALLOCATE",
-        "HAVE_POSIX_MEMALIGN",
-        "HAVE_PROGRAM_INVOCATION_NAME",
-        "HAVE_PTHREAD",
-        "HAVE_PTHREAD_SETAFFINITY",
-        "HAVE_RANDOM_R",
-        "HAVE_RENDERDOC_INTEGRATION=true",
-        "HAVE_SECURE_GETENV",
-        "HAVE_STRTOD_L",
-        "HAVE_STRTOF",
-        "HAVE_STRTOK_R",
-        "HAVE_STRUCT_TIMESPEC",
-        "HAVE_SURFACELESS_PLATFORM",
-        "HAVE_SWRAST",
-        "HAVE_SYSCONF",
-        "HAVE_SYS_INOTIFY_H",
-        "HAVE_SYS_SHM_H",
-        "HAVE_UINT128",
-        "HAVE_WAYLAND_PLATFORM",
-        "HAVE_X11_DRM",
-        "HAVE_X11_PLATFORM",
-        "HAVE_XCB_PLATFORM",
-        "HAVE_XLOCALE_H",
-        "HAVE_ZLIB",
-        "HAVE___BUILTIN_ADD_OVERFLOW",
-        "HAVE___BUILTIN_BSWAP32",
-        "HAVE___BUILTIN_BSWAP64",
-        "HAVE___BUILTIN_CLZ",
-        "HAVE___BUILTIN_CLZLL",
-        "HAVE___BUILTIN_CTZ",
-        "HAVE___BUILTIN_EXPECT",
-        "HAVE___BUILTIN_FFS",
-        "HAVE___BUILTIN_FFSLL",
-        "HAVE___BUILTIN_IA32_CLFLUSHOPT",
-        "HAVE___BUILTIN_POPCOUNT",
-        "HAVE___BUILTIN_POPCOUNTLL",
-        "HAVE___BUILTIN_TYPES_COMPATIBLE_P",
-        "HAVE___BUILTIN_UNREACHABLE",
-        "LLVM_IS_SHARED=1",
-        "MAJOR_IN_SYSMACROS",
-        "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
-        "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
-        "THREAD_SANITIZER=0",
-        "USE_GCC_ATOMIC_BUILTINS",
-        "USE_LIBGLVND=0",
-        "USE_SSE41",
-        "USE_UNW_DYNAMIC_FDE",
-        "VIDEO_CODEC_AV1DEC=0",
-        "VIDEO_CODEC_AV1ENC=0",
-        "VIDEO_CODEC_H264DEC=0",
-        "VIDEO_CODEC_H264ENC=0",
-        "VIDEO_CODEC_H265DEC=0",
-        "VIDEO_CODEC_H265ENC=0",
-        "VIDEO_CODEC_JPEGDEC=0",
-        "VIDEO_CODEC_MPEG12DEC=0",
-        "VIDEO_CODEC_VC1DEC=0",
-        "VIDEO_CODEC_VP9DEC=0",
-        "WL_HIDE_DEPRECATED",
-        "_FILE_OFFSET_BITS=64",
-        "_GNU_SOURCE",
-        "__STDC_CONSTANT_MACROS",
-        "__STDC_FORMAT_MACROS",
-        "__STDC_LIMIT_MACROS",
-    ],
-    # buildifier: leave-alone
-    includes = [
-        ".",
-        "src/util",
-        "include",
         "src",
-        "platform/linux-x86_64",
     ],
 )
 
 cc_library(
     name = "libmesa_util_simd",
-    srcs = ["src/util/streaming-load-memcpy.c"],
+    srcs = [
+        "src/util/streaming-load-memcpy.c",
+    ],
     hdrs = [
         "include/c99_compat.h",
         "include/no_extern_c.h",
@@ -3434,10 +3175,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -3459,14 +3197,16 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/util",
         "include",
-        "src",
         "platform/linux-x86_64",
+        "src",
+        "src/util",
     ],
 )
 
@@ -3813,7 +3553,9 @@ cc_library(
         "src/util/u_ycbcr.h",
         "src/util/xxhash.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -3906,10 +3648,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -3933,19 +3672,25 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/compiler/nir",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/compiler",
+        "src/compiler/nir",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
+        ":generate_nir_builder_opcodes_h",
+        ":generate_nir_intrinsics_h",
+        ":generate_nir_intrinsics_indices_h",
+        ":generate_nir_opcodes_h",
         ":libblake3",
         ":libcompiler",
         ":libmesa_util",
@@ -3955,7 +3700,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -4041,7 +3786,9 @@ cc_library(
         "src/util/xmlconfig.h",
         "src/virtio/virtio-gpu/drm_hw.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -4134,10 +3881,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -4161,20 +3905,22 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/auxiliary/pipe-loader",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/loader",
-        "src/gallium/include",
         "src/gallium/auxiliary",
+        "src/gallium/auxiliary/pipe-loader",
+        "src/gallium/include",
         "src/gallium/winsys",
+        "src/loader",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -4186,16 +3932,18 @@ cc_library(
         ":libmesa_util_simd",
         ":libxmlconfig",
         "@libdrm//:drm",
-        "@libexpat//:expat",
+        "@libexpat",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
 
 cc_library(
     name = "libswdri",
-    srcs = ["src/gallium/winsys/sw/dri/dri_sw_winsys.c"],
+    srcs = [
+        "src/gallium/winsys/sw/dri/dri_sw_winsys.c",
+    ],
     hdrs = [
         "include/c99_compat.h",
         "include/no_extern_c.h",
@@ -4239,7 +3987,9 @@ cc_library(
         "src/util/u_memory.h",
         "src/util/u_overflow.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -4332,10 +4082,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -4359,18 +4106,20 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/winsys/sw/dri",
-        "src/gallium/include",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/gallium/auxiliary",
+        "src/gallium/include",
+        "src/gallium/winsys/sw/dri",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -4381,14 +4130,16 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
 
 cc_library(
     name = "libswkmsdri",
-    srcs = ["src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c"],
+    srcs = [
+        "src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c",
+    ],
     hdrs = [
         "include/c99_compat.h",
         "include/drm-uapi/drm.h",
@@ -4439,7 +4190,9 @@ cc_library(
         "src/util/u_memory.h",
         "src/util/u_overflow.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -4532,10 +4285,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -4559,18 +4309,20 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/winsys/sw/kms-dri",
-        "src/gallium/include",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/gallium/auxiliary",
+        "src/gallium/include",
+        "src/gallium/winsys/sw/kms-dri",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -4581,7 +4333,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -4696,7 +4448,9 @@ cc_library(
         "src/util/u_string.h",
         "src/util/u_thread.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -4789,10 +4543,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -4816,18 +4567,20 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/compiler/spirv",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/compiler/nir",
         "src/compiler",
+        "src/compiler/nir",
+        "src/compiler/spirv",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -4840,14 +4593,16 @@ cc_library(
         ":libnir",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
 
 cc_library(
     name = "libvulkan_instance",
-    srcs = ["src/vulkan/runtime/vk_instance.c"],
+    srcs = [
+        "src/vulkan/runtime/vk_instance.c",
+    ],
     hdrs = [
         "include/c99_compat.h",
         "include/no_extern_c.h",
@@ -4934,7 +4689,9 @@ cc_library(
         "src/vulkan/util/vk_struct_type_cast.h",
         "src/vulkan/util/vk_util.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -5027,10 +4784,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -5060,19 +4814,21 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/vulkan/runtime",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/compiler",
-        "src/vulkan/util",
+        "src/compiler/spirv",
         "src/util",
         "src/util/format",
-        "src/compiler/spirv",
-        "platform/linux-x86_64",
+        "src/vulkan/runtime",
+        "src/vulkan/util",
     ],
     deps = [
         ":libblake3",
@@ -5087,13 +4843,12 @@ cc_library(
         ":libvulkan_util",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
         "@zlib",
     ],
-    alwayslink = True,
 )
 
 cc_library(
@@ -5297,7 +5052,9 @@ cc_library(
         "src/vulkan/wsi/wsi_common.h",
         "src/vulkan/wsi/wsi_common_private.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -5390,11 +5147,8 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
         "MESA_VK_LOG=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -5423,20 +5177,22 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/vulkan/runtime",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/compiler/nir",
         "src/compiler",
-        "src/vulkan/util",
+        "src/compiler/nir",
+        "src/compiler/spirv",
         "src/util",
         "src/util/format",
-        "src/compiler/spirv",
-        "platform/linux-x86_64",
+        "src/vulkan/runtime",
+        "src/vulkan/util",
     ],
     deps = [
         ":libblake3",
@@ -5448,7 +5204,7 @@ cc_library(
         ":libvulkan_util",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
@@ -5645,7 +5401,9 @@ cc_library(
         "src/vulkan/util/vk_struct_type_cast.h",
         "src/vulkan/util/vk_util.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -5738,10 +5496,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -5770,22 +5525,24 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/vulkan/runtime",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/compiler/nir",
         "src/compiler",
-        "src/vulkan/util",
-        "src/vulkan/runtime/radix_sort/shaders",
-        "src/vulkan/runtime/bvh",
+        "src/compiler/nir",
+        "src/compiler/spirv",
         "src/util",
         "src/util/format",
-        "src/compiler/spirv",
-        "platform/linux-x86_64",
+        "src/vulkan/runtime",
+        "src/vulkan/runtime/bvh",
+        "src/vulkan/runtime/radix_sort/shaders",
+        "src/vulkan/util",
     ],
     deps = [
         ":libblake3",
@@ -5800,7 +5557,7 @@ cc_library(
         ":libvulkan_util",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
@@ -5886,7 +5643,9 @@ cc_library(
         "src/vulkan/util/vk_struct_type_cast.h",
         "src/vulkan/util/vk_util.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -5979,10 +5738,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -6011,18 +5767,20 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/vulkan/util",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/compiler/nir",
         "src/compiler",
+        "src/compiler/nir",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
+        "src/vulkan/util",
     ],
     deps = [
         ":libblake3",
@@ -6033,7 +5791,7 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
@@ -6177,7 +5935,9 @@ cc_library(
         "src/vulkan/wsi/wsi_common_queue.h",
         "src/x11/x11_display.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -6270,10 +6030,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -6302,20 +6059,22 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/vulkan/wsi",
         "include",
+        "platform/linux-x86_64",
         "src",
-        "src/vulkan/util",
-        "src/vulkan/runtime",
-        "src/loader",
         "src/compiler/spirv",
+        "src/loader",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
+        "src/vulkan/runtime",
+        "src/vulkan/util",
+        "src/vulkan/wsi",
     ],
     deps = [
         ":libblake3",
@@ -6328,20 +6087,21 @@ cc_library(
         ":libmesa_util_simd",
         ":libxmlconfig",
         "@libdrm//:drm",
-        "@libexpat//:expat",
+        "@libexpat",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@libxrandr",
         "@libxshmfence//:xshmfence",
         "@wayland//:wayland-client",
         "@zlib",
     ],
-    alwayslink = True,
 )
 
 cc_library(
     name = "libws_null",
-    srcs = ["src/gallium/winsys/sw/null/null_sw_winsys.c"],
+    srcs = [
+        "src/gallium/winsys/sw/null/null_sw_winsys.c",
+    ],
     hdrs = [
         "include/no_extern_c.h",
         "src/gallium/include/frontend/sw_winsys.h",
@@ -6365,7 +6125,9 @@ cc_library(
         "src/util/u_memory.h",
         "src/util/u_overflow.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -6458,10 +6220,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -6485,17 +6244,19 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/winsys/sw/null",
-        "src/gallium/include",
-        "src",
         "include",
+        "platform/linux-x86_64",
+        "src",
+        "src/gallium/include",
+        "src/gallium/winsys/sw/null",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -6506,14 +6267,16 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
 
 cc_library(
     name = "libwsw",
-    srcs = ["src/gallium/winsys/sw/wrapper/wrapper_sw_winsys.c"],
+    srcs = [
+        "src/gallium/winsys/sw/wrapper/wrapper_sw_winsys.c",
+    ],
     hdrs = [
         "include/c99_compat.h",
         "include/no_extern_c.h",
@@ -6555,7 +6318,9 @@ cc_library(
         "src/util/u_memory.h",
         "src/util/u_overflow.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
@@ -6648,10 +6413,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -6675,18 +6437,20 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/gallium/winsys/sw/wrapper",
-        "src/gallium/include",
         "include",
+        "platform/linux-x86_64",
         "src",
         "src/gallium/auxiliary",
+        "src/gallium/include",
+        "src/gallium/winsys/sw/wrapper",
         "src/util",
         "src/util/format",
-        "platform/linux-x86_64",
     ],
     deps = [
         ":libblake3",
@@ -6697,14 +6461,16 @@ cc_library(
         ":libmesa_util_simd",
         "@libdrm//:drm",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
 
 cc_library(
     name = "libxmlconfig",
-    srcs = ["src/util/xmlconfig.c"],
+    srcs = [
+        "src/util/xmlconfig.c",
+    ],
     hdrs = [
         "src/util/blake3/blake3.h",
         "src/util/detect.h",
@@ -6721,11 +6487,12 @@ cc_library(
         "src/util/u_process.h",
         "src/util/xmlconfig.h",
     ],
-    copts = ["-Wno-implicit-function-declaration"],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
     defines = [
         "ALLOW_KCMP",
         "AMD_LLVM_AVAILABLE=1",
-        'DATADIR=\\"/tmp/bazelaj_3eue5/build/release/share\\"',
         "DRAW_LLVM_AVAILABLE=1",
         "ENABLE_SHADER_CACHE",
         "GALLIVM_USE_ORCJIT=0",
@@ -6815,11 +6582,7 @@ cc_library(
         "LLVM_IS_SHARED=1",
         "MAJOR_IN_SYSMACROS",
         "MESA_DEBUG=0",
-        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
         "MESA_SYSTEM_HAS_KMS_DRM=1",
-        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
-        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
-        'SYSCONFDIR=\\"/tmp/bazelaj_3eue5/build/release/etc\\"',
         "THREAD_SANITIZER=0",
         "USE_GCC_ATOMIC_BUILTINS",
         "USE_LIBGLVND=0",
@@ -6844,13 +6607,17 @@ cc_library(
         "__STDC_CONSTANT_MACROS",
         "__STDC_FORMAT_MACROS",
         "__STDC_LIMIT_MACROS",
+        'DATADIR=\\"/tmp/bazelaj_3eue5/build/release/share\\"',
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
+        'SYSCONFDIR=\\"/tmp/bazelaj_3eue5/build/release/etc\\"',
     ],
-    # buildifier: leave-alone
     includes = [
         ".",
-        "src/util",
-        "src",
         "platform/linux-x86_64",
+        "src",
+        "src/util",
     ],
     deps = [
         ":libblake3",
@@ -6860,9 +6627,9 @@ cc_library(
         ":libmesa_util_clflushopt",
         ":libmesa_util_simd",
         "@libdrm//:drm",
-        "@libexpat//:expat",
+        "@libexpat",
         "@libx11",
-        "@libxcb",
+        "@libxcb//:xcb_lib",
         "@zlib",
     ],
 )
@@ -6871,64 +6638,42 @@ genrule(
     name = "generate_astc_spv_h",
     srcs = ["src/compiler/glsl/astc_decoder.glsl"],
     outs = ["src/vulkan/runtime/astc_spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -S comp -x -o $(location src/vulkan/runtime/astc_spv.h) $(location src/compiler/glsl/astc_decoder.glsl) --quiet --depfile $(location src/vulkan/runtime/astc_spv.h.d)",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -S comp -x -o $(location src/vulkan/runtime/astc_spv.h) $(location src/compiler/glsl/astc_decoder.glsl) --quiet --depfile $(location src/vulkan/runtime/astc_spv.h.d)",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -S comp -x -o $(location src/vulkan/runtime/astc_spv.h) $(location src/compiler/glsl/astc_decoder.glsl) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -S comp -x -o $(location src/vulkan/runtime/astc_spv.h) $(location src/compiler/glsl/astc_decoder.glsl) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_builtin_types_c",
-    srcs = ["src/compiler/builtin_types_c.py"],
+    srcs = [
+        "src/compiler/builtin_types.py",
+        "src/compiler/builtin_types_c.py",
+    ],
     outs = ["src/compiler/builtin_types.c"],
-    cmd = "$(location :builtin_types_c) $(location src/compiler/builtin_types.c)",
-    cmd_bat = "$(location :builtin_types_c) $(location src/compiler/builtin_types.c)",
+    cmd = "$(location :builtin_types_c) $(location src/compiler/builtin_types_c.py) $(location src/compiler/builtin_types.c)",
+    cmd_bat = "$(location :builtin_types_c) $(location src/compiler/builtin_types_c.py) $(location src/compiler/builtin_types.c)",
     tools = [":builtin_types_c"],
 )
 
 genrule(
     name = "generate_builtin_types_h",
-    srcs = ["src/compiler/builtin_types_h.py"],
+    srcs = [
+        "src/compiler/builtin_types.py",
+        "src/compiler/builtin_types_h.py",
+    ],
     outs = ["src/compiler/builtin_types.h"],
-    cmd = "$(location :builtin_types_h) $(location src/compiler/builtin_types.h)",
-    cmd_bat = "$(location :builtin_types_h) $(location src/compiler/builtin_types.h)",
+    cmd = "$(location :builtin_types_h) $(location src/compiler/builtin_types_h.py) $(location src/compiler/builtin_types.h)",
+    cmd_bat = "$(location :builtin_types_h) $(location src/compiler/builtin_types_h.py) $(location src/compiler/builtin_types.h)",
     tools = [":builtin_types_h"],
 )
 
-genrule(
-    name = "generate_color-management-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml"],
-    outs = ["src/loader/color-management-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_color-management-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_color-management-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml"],
-    outs = ["src/loader/color-management-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_color-management-v1-protocol_c in rebase
 
-genrule(
-    name = "generate_commit-timing-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml"],
-    outs = ["src/loader/commit-timing-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_commit-timing-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_commit-timing-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml"],
-    outs = ["src/loader/commit-timing-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_commit-timing-v1-protocol_c in rebase
 
 genrule(
     name = "generate_driconf_static_h",
@@ -6942,30 +6687,24 @@ genrule(
     tools = [":00-mesa-defaults"],
 )
 
-genrule(
-    name = "generate_fifo-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml"],
-    outs = ["src/loader/fifo-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_fifo-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_fifo-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml"],
-    outs = ["src/loader/fifo-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_fifo-v1-protocol_c in rebase
 
 genrule(
     name = "generate_fill_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/fill.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/fill.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/fill.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/fill.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
@@ -6973,43 +6712,51 @@ genrule(
     name = "generate_format_srgb",
     srcs = ["src/util/format_srgb.py"],
     outs = ["src/util/format_srgb.c"],
-    cmd = "$(location :format_srgb) > $(location src/util/format_srgb.c)",
-    cmd_bat = "$(location :format_srgb) > $(location src/util/format_srgb.c)",
+    cmd = "$(location :format_srgb) $(location src/util/format_srgb.py) > $(location src/util/format_srgb.c)",
+    cmd_bat = "$(location :format_srgb) $(location src/util/format_srgb.py) > $(location src/util/format_srgb.c)",
     tools = [":format_srgb"],
 )
 
 genrule(
     name = "generate_git_sha1_h",
+    srcs = ["bin/git_sha1_gen.py"],
     outs = ["src/git_sha1.h"],
-    cmd = "$(location :git_sha1_gen) --output $(location src/git_sha1.h)",
-    cmd_bat = "$(location :git_sha1_gen) --output $(location src/git_sha1.h)",
+    cmd = "$(location :git_sha1_gen) $(location bin/git_sha1_gen.py) --output $(location src/git_sha1.h)",
+    cmd_bat = "$(location :git_sha1_gen) $(location bin/git_sha1_gen.py) --output $(location src/git_sha1.h)",
     tools = [":git_sha1_gen"],
 )
 
 genrule(
     name = "generate_histogram_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/histogram.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/histogram.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
-)
-
-genrule(
-    name = "generate_hploc_internal_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/hploc_internal.comp"],
-    outs = ["src/vulkan/runtime/bvh/hploc_internal.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/histogram.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_init_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/init.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/init.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/init.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/init.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
@@ -7024,70 +6771,70 @@ genrule(
 
 genrule(
     name = "generate_lbvh_generate_ir_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/lbvh_generate_ir.comp"],
+    srcs = [
+        "src/vulkan/runtime/bvh/lbvh_generate_ir.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
     outs = ["src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_lbvh_main_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/lbvh_main.comp"],
+    srcs = [
+        "src/vulkan/runtime/bvh/lbvh_main.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
     outs = ["src/vulkan/runtime/bvh/lbvh_main.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_leaf_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/leaf.comp"],
+    srcs = [
+        "src/vulkan/runtime/bvh/leaf.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
     outs = ["src/vulkan/runtime/bvh/leaf.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
-genrule(
-    name = "generate_linux-dmabuf-unstable-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"],
-    outs = ["src/loader/linux-dmabuf-unstable-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_linux-dmabuf-unstable-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_linux-dmabuf-unstable-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"],
-    outs = ["src/loader/linux-dmabuf-unstable-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_linux-dmabuf-unstable-v1-protocol_c in rebase
 
-genrule(
-    name = "generate_linux-drm-syncobj-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml"],
-    outs = ["src/loader/linux-drm-syncobj-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_linux-drm-syncobj-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_linux-drm-syncobj-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml"],
-    outs = ["src/loader/linux-drm-syncobj-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
+filegroup(
+    name = "vk_generator_helpers",
+    srcs = [
+        "src/vulkan/util/vk_entrypoints.py",
+        "src/vulkan/util/vk_extensions.py",
+    ],
 )
 
 genrule(
     name = "generate_lvp_entrypoints",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_entrypoints_gen.py",
     ],
@@ -7095,161 +6842,223 @@ genrule(
         "src/gallium/frontends/lavapipe/lvp_entrypoints.c",
         "src/gallium/frontends/lavapipe/lvp_entrypoints.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --prefix lvp --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --prefix lvp --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --prefix lvp --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/gallium/frontends/lavapipe/lvp_entrypoints.h) --out-c $(location src/gallium/frontends/lavapipe/lvp_entrypoints.c) --prefix lvp --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_morton_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/morton.comp"],
+    srcs = [
+        "src/vulkan/runtime/bvh/morton.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
     outs = ["src/vulkan/runtime/bvh/morton.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton.spv.h) $(location src/vulkan/runtime/bvh/morton.comp) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+filegroup(
+    name = "nir_generator_helpers",
+    srcs = [
+        "src/compiler/nir/nir_intrinsics.py",
+        "src/compiler/nir/nir_opcodes.py",
+    ],
 )
 
 genrule(
     name = "generate_nir_builder_opcodes_h",
-    srcs = ["src/compiler/nir/nir_builder_opcodes_h.py"],
+    srcs = [
+        ":nir_generator_helpers",
+        "src/compiler/nir/nir_builder_opcodes_h.py",
+    ],
     outs = ["src/compiler/nir/nir_builder_opcodes.h"],
-    cmd = "$(location :nir_builder_opcodes_h) > $(location src/compiler/nir/nir_builder_opcodes.h)",
-    cmd_bat = "$(location :nir_builder_opcodes_h) > $(location src/compiler/nir/nir_builder_opcodes.h)",
+    cmd = "$(location :nir_builder_opcodes_h) $(location src/compiler/nir/nir_builder_opcodes_h.py) > $(location src/compiler/nir/nir_builder_opcodes.h)",
+    cmd_bat = "$(location :nir_builder_opcodes_h) $(location src/compiler/nir/nir_builder_opcodes_h.py) > $(location src/compiler/nir/nir_builder_opcodes.h)",
     tools = [":nir_builder_opcodes_h"],
 )
 
 genrule(
     name = "generate_nir_constant_expressions_c",
-    srcs = ["src/compiler/nir/nir_constant_expressions.py"],
+    srcs = [
+        ":nir_generator_helpers",
+        "src/compiler/nir/nir_constant_expressions.py",
+    ],
     outs = ["src/compiler/nir/nir_constant_expressions.c"],
-    cmd = "$(location :nir_constant_expressions) > $(location src/compiler/nir/nir_constant_expressions.c)",
-    cmd_bat = "$(location :nir_constant_expressions) > $(location src/compiler/nir/nir_constant_expressions.c)",
+    cmd = "$(location :nir_constant_expressions) $(location src/compiler/nir/nir_constant_expressions.py) > $(location src/compiler/nir/nir_constant_expressions.c)",
+    cmd_bat = "$(location :nir_constant_expressions) $(location src/compiler/nir/nir_constant_expressions.py) > $(location src/compiler/nir/nir_constant_expressions.c)",
     tools = [":nir_constant_expressions"],
 )
 
 genrule(
     name = "generate_nir_intrinsic_c",
-    srcs = ["src/compiler/nir/nir_intrinsics_c.py"],
+    srcs = [
+        "src/compiler/nir/nir_intrinsics.py",
+        "src/compiler/nir/nir_intrinsics_c.py",
+    ],
     outs = ["src/compiler/nir/nir_intrinsics.c"],
-    cmd = "$(location :nir_intrinsics_c) --out $(location src/compiler/nir/nir_intrinsics.c)",
-    cmd_bat = "$(location :nir_intrinsics_c) --out $(location src/compiler/nir/nir_intrinsics.c)",
+    cmd = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_c) $(location src/compiler/nir/nir_intrinsics_c.py) --out $(location src/compiler/nir/nir_intrinsics.c)",
+    cmd_bat = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_c) $(location src/compiler/nir/nir_intrinsics_c.py) --out $(location src/compiler/nir/nir_intrinsics.c)",
     tools = [":nir_intrinsics_c"],
 )
 
 genrule(
     name = "generate_nir_intrinsics_h",
-    srcs = ["src/compiler/nir/nir_intrinsics_h.py"],
+    srcs = [
+        "src/compiler/nir/nir_intrinsics.py",
+        "src/compiler/nir/nir_intrinsics_h.py",
+    ],
     outs = ["src/compiler/nir/nir_intrinsics.h"],
-    cmd = "$(location :nir_intrinsics_h) --out $(location src/compiler/nir/nir_intrinsics.h)",
-    cmd_bat = "$(location :nir_intrinsics_h) --out $(location src/compiler/nir/nir_intrinsics.h)",
+    cmd = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_h) $(location src/compiler/nir/nir_intrinsics_h.py) --out $(location src/compiler/nir/nir_intrinsics.h)",
+    cmd_bat = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_h) $(location src/compiler/nir/nir_intrinsics_h.py) --out $(location src/compiler/nir/nir_intrinsics.h)",
     tools = [":nir_intrinsics_h"],
 )
 
 genrule(
     name = "generate_nir_intrinsics_indices_h",
-    srcs = ["src/compiler/nir/nir_intrinsics_indices_h.py"],
+    srcs = [
+        "src/compiler/nir/nir_intrinsics.py",
+        "src/compiler/nir/nir_intrinsics_indices_h.py",
+    ],
     outs = ["src/compiler/nir/nir_intrinsics_indices.h"],
-    cmd = "$(location :nir_intrinsics_indices_h) --out $(location src/compiler/nir/nir_intrinsics_indices.h)",
-    cmd_bat = "$(location :nir_intrinsics_indices_h) --out $(location src/compiler/nir/nir_intrinsics_indices.h)",
+    cmd = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_indices_h) $(location src/compiler/nir/nir_intrinsics_indices_h.py) --out $(location src/compiler/nir/nir_intrinsics_indices.h)",
+    cmd_bat = "PYTHONPATH=third_party/mesa3d/src/compiler/nir $(location :nir_intrinsics_indices_h) $(location src/compiler/nir/nir_intrinsics_indices_h.py) --out $(location src/compiler/nir/nir_intrinsics_indices.h)",
     tools = [":nir_intrinsics_indices_h"],
 )
 
 genrule(
     name = "generate_nir_opcodes_c",
-    srcs = ["src/compiler/nir/nir_opcodes_c.py"],
+    srcs = [
+        ":nir_generator_helpers",
+        "src/compiler/nir/nir_opcodes_c.py",
+    ],
     outs = ["src/compiler/nir/nir_opcodes.c"],
-    cmd = "$(location :nir_opcodes_c) > $(location src/compiler/nir/nir_opcodes.c)",
-    cmd_bat = "$(location :nir_opcodes_c) > $(location src/compiler/nir/nir_opcodes.c)",
+    cmd = "$(location :nir_opcodes_c) $(location src/compiler/nir/nir_opcodes_c.py) > $(location src/compiler/nir/nir_opcodes.c)",
+    cmd_bat = "$(location :nir_opcodes_c) $(location src/compiler/nir/nir_opcodes_c.py) > $(location src/compiler/nir/nir_opcodes.c)",
     tools = [":nir_opcodes_c"],
 )
 
 genrule(
     name = "generate_nir_opcodes_h",
-    srcs = ["src/compiler/nir/nir_opcodes_h.py"],
+    srcs = [
+        ":nir_generator_helpers",
+        "src/compiler/nir/nir_opcodes_h.py",
+    ],
     outs = ["src/compiler/nir/nir_opcodes.h"],
-    cmd = "$(location :nir_opcodes_h) > $(location src/compiler/nir/nir_opcodes.h)",
-    cmd_bat = "$(location :nir_opcodes_h) > $(location src/compiler/nir/nir_opcodes.h)",
+    cmd = "$(location :nir_opcodes_h) $(location src/compiler/nir/nir_opcodes_h.py) > $(location src/compiler/nir/nir_opcodes.h)",
+    cmd_bat = "$(location :nir_opcodes_h) $(location src/compiler/nir/nir_opcodes_h.py) > $(location src/compiler/nir/nir_opcodes.h)",
     tools = [":nir_opcodes_h"],
 )
 
-genrule(
-    name = "generate_nir_opt_algebraic",
-    srcs = ["src/compiler/nir/nir_opt_algebraic.py"],
-    outs = ["src/compiler/nir/nir_opt_algebraic.c"],
-    cmd = "$(location :nir_opt_algebraic) --out $(location src/compiler/nir/nir_opt_algebraic.c)",
-    cmd_bat = "$(location :nir_opt_algebraic) --out $(location src/compiler/nir/nir_opt_algebraic.c)",
-    tools = [":nir_opt_algebraic"],
-)
+# Removed genrule generate_nir_opt_algebraic_c in rebase
 
 genrule(
     name = "generate_ploc_internal_spv_h",
-    srcs = ["src/vulkan/runtime/bvh/ploc_internal.comp"],
+    srcs = [
+        "src/vulkan/runtime/bvh/ploc_internal.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
     outs = ["src/vulkan/runtime/bvh/ploc_internal.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -I/work/emu-main-next/third_party/mesa3d/src/vulkan/runtime/bvh -I/work/emu-main-next/third_party/mesa3d/src/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_prefix_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/prefix.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/prefix.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/prefix.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
-genrule(
-    name = "generate_presentation-time-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml"],
-    outs = ["src/loader/presentation-time-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_presentation-time-client-protocol_h in rebase
 
-genrule(
-    name = "generate_presentation-time-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml"],
-    outs = ["src/loader/presentation-time-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_presentation-time-protocol_c in rebase
 
 genrule(
     name = "generate_scatter_0_even_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_scatter_0_odd_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_0_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_scatter_1_even_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_even.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
 genrule(
     name = "generate_scatter_1_odd_comp_spv_h",
-    srcs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp"],
+    srcs = [
+        "src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp",
+        "src/vulkan/runtime/radix_sort/shaders/bufref.h",
+        "src/vulkan/runtime/radix_sort/shaders/config.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix.h",
+        "src/vulkan/runtime/radix_sort/shaders/prefix_limits.h",
+        "src/vulkan/runtime/radix_sort/shaders/push.h",
+        "src/vulkan/runtime/radix_sort/shaders/scatter.glsl",
+    ],
     outs = ["src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h"],
-    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
-    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V --target-env spirv1.5 -x -o $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp.spv.h) $(location src/vulkan/runtime/radix_sort/shaders/scatter_1_odd.comp) -Ithird_party/mesa3d/src/vulkan/runtime/radix_sort/shaders -DRS_KEYVAL_DWORDS=2 --quiet",
     tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
 )
 
@@ -7276,28 +7085,14 @@ genrule(
         "src/compiler/spirv/spirv_info.c",
         "src/compiler/spirv/spirv_info.h",
     ],
-    cmd = "$(location :spirv_core_grammar) --json $(location src/compiler/spirv/spirv_info_gen.py) --out-h $(location src/compiler/spirv/spirv_info.c) --out-c $(location src/compiler/spirv/spirv_info.h)",
-    cmd_bat = "$(location :spirv_core_grammar) --json $(location src/compiler/spirv/spirv_info_gen.py) --out-h $(location src/compiler/spirv/spirv_info.c) --out-c $(location src/compiler/spirv/spirv_info.h)",
+    cmd = "$(location :spirv_core_grammar) $(location src/compiler/spirv/spirv_info_gen.py) --json $(location src/compiler/spirv/spirv.core.grammar.json) --out-h $(location src/compiler/spirv/spirv_info.h) --out-c $(location src/compiler/spirv/spirv_info.c)",
+    cmd_bat = "$(location :spirv_core_grammar) $(location src/compiler/spirv/spirv_info_gen.py) --json $(location src/compiler/spirv/spirv.core.grammar.json) --out-h $(location src/compiler/spirv/spirv_info.h) --out-c $(location src/compiler/spirv/spirv_info.c)",
     tools = [":spirv_core_grammar"],
 )
 
-genrule(
-    name = "generate_tearing-control-v1-client-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml"],
-    outs = ["src/loader/tearing-control-v1-client-protocol.h"],
-    cmd = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-client-protocol.h)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-client-protocol.h)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_tearing-control-v1-client-protocol_h in rebase
 
-genrule(
-    name = "generate_tearing-control-v1-protocol",
-    srcs = ["subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml"],
-    outs = ["src/loader/tearing-control-v1-protocol.c"],
-    cmd = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-protocol.c)",
-    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location subprojects/wayland-protocols-1.41/staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-protocol.c)",
-    tools = ["@wayland//:wayland-scanner"],
-)
+# Removed genrule generate_tearing-control-v1-protocol_c in rebase
 
 genrule(
     name = "generate_tr_util__ch",
@@ -7315,39 +7110,50 @@ genrule(
     tools = [":enums2names"],
 )
 
+filegroup(
+    name = "u_format_generator_helpers",
+    srcs = [
+        "src/util/format/u_format_pack.py",
+        "src/util/format/u_format_parse.py",
+    ],
+)
+
 genrule(
     name = "generate_u_format_gen_h",
     srcs = [
+        ":u_format_generator_helpers",
         "src/util/format/u_format.yaml",
         "src/util/format/u_format_table.py",
     ],
     outs = ["src/util/format/u_format_gen.h"],
-    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) --enums > $(location src/util/format/u_format_gen.h)",
-    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) --enums > $(location src/util/format/u_format_gen.h)",
+    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) --enums $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_gen.h)",
+    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) --enums $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_gen.h)",
     tools = [":u_format"],
 )
 
 genrule(
     name = "generate_u_format_pack_h",
     srcs = [
+        ":u_format_generator_helpers",
         "src/util/format/u_format.yaml",
         "src/util/format/u_format_table.py",
     ],
     outs = ["src/util/format/u_format_pack.h"],
-    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) --header > $(location src/util/format/u_format_pack.h)",
-    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) --header > $(location src/util/format/u_format_pack.h)",
+    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) --header $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_pack.h)",
+    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) --header $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_pack.h)",
     tools = [":u_format"],
 )
 
 genrule(
     name = "generate_u_format_table_c",
     srcs = [
+        ":u_format_generator_helpers",
         "src/util/format/u_format.yaml",
         "src/util/format/u_format_table.py",
     ],
     outs = ["src/util/format/u_format_table.c"],
-    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) > $(location src/util/format/u_format_table.c)",
-    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) > $(location src/util/format/u_format_table.c)",
+    cmd = "$(location :u_format) $(location src/util/format/u_format_table.py) $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_table.c)",
+    cmd_bat = "$(location :u_format) $(location src/util/format/u_format_table.py) $(location src/util/format/u_format.yaml) > $(location src/util/format/u_format_table.c)",
     tools = [":u_format"],
 )
 
@@ -7362,19 +7168,25 @@ genrule(
 
 genrule(
     name = "generate_u_tracepoints_c",
-    srcs = ["src/gallium/auxiliary/util/u_tracepoints.py"],
+    srcs = [
+        "src/gallium/auxiliary/util/u_tracepoints.py",
+        "src/util/perf/u_trace.py",
+    ],
     outs = ["src/gallium/auxiliary/u_tracepoints.c"],
-    cmd = "$(location :u_tracepoints) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
-    cmd_bat = "$(location :u_tracepoints) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
+    cmd = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :u_tracepoints) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
+    cmd_bat = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :u_tracepoints) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
     tools = [":u_tracepoints"],
 )
 
 genrule(
     name = "generate_u_tracepoints_h",
-    srcs = ["src/gallium/auxiliary/util/u_tracepoints.py"],
+    srcs = [
+        "src/gallium/auxiliary/util/u_tracepoints.py",
+        "src/util/perf/u_trace.py",
+    ],
     outs = ["src/gallium/auxiliary/u_tracepoints.h"],
-    cmd = "$(location :u_tracepoints) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
-    cmd_bat = "$(location :u_tracepoints) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
+    cmd = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :u_tracepoints) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
+    cmd_bat = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :u_tracepoints) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
     tools = [":u_tracepoints"],
 )
 
@@ -7390,6 +7202,7 @@ genrule(
 genrule(
     name = "generate_vk_cmd_enqueue_entrypoints",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_entrypoints_gen.py",
     ],
@@ -7397,14 +7210,15 @@ genrule(
         "src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c",
         "src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c) --out-c $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h) --prefix vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c) --out-c $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h) --prefix vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h) --out-c $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c) --prefix vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.h) --out-c $(location src/vulkan/runtime/vk_cmd_enqueue_entrypoints.c) --prefix vk_cmd_enqueue --prefix vk_cmd_enqueue_unless_primary --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_cmd_queue",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_cmd_queue_gen.py",
     ],
@@ -7412,14 +7226,15 @@ genrule(
         "src/vulkan/runtime/vk_cmd_queue.c",
         "src/vulkan/runtime/vk_cmd_queue.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_cmd_queue_gen.py) --out-c $(location src/vulkan/runtime/vk_cmd_queue.c) --out-h $(location src/vulkan/runtime/vk_cmd_queue.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_cmd_queue_gen.py) --out-c $(location src/vulkan/runtime/vk_cmd_queue.c) --out-h $(location src/vulkan/runtime/vk_cmd_queue.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_cmd_queue_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_cmd_queue.c) --out-h $(location src/vulkan/runtime/vk_cmd_queue.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_cmd_queue_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_cmd_queue.c) --out-h $(location src/vulkan/runtime/vk_cmd_queue.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_common_entrypoints",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_entrypoints_gen.py",
     ],
@@ -7427,14 +7242,15 @@ genrule(
         "src/vulkan/runtime/vk_common_entrypoints.c",
         "src/vulkan/runtime/vk_common_entrypoints.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/runtime/vk_common_entrypoints.c) --out-c $(location src/vulkan/runtime/vk_common_entrypoints.h) --prefix vk_common --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/runtime/vk_common_entrypoints.c) --out-c $(location src/vulkan/runtime/vk_common_entrypoints.h) --prefix vk_common --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/runtime/vk_common_entrypoints.h) --out-c $(location src/vulkan/runtime/vk_common_entrypoints.c) --prefix vk_common --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/runtime/vk_common_entrypoints.h) --out-c $(location src/vulkan/runtime/vk_common_entrypoints.c) --prefix vk_common --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_dispatch_table",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_dispatch_table_gen.py",
     ],
@@ -7442,14 +7258,15 @@ genrule(
         "src/vulkan/util/vk_dispatch_table.c",
         "src/vulkan/util/vk_dispatch_table.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_dispatch_table_gen.py) --out-c $(location src/vulkan/util/vk_dispatch_table.c) --out-h $(location src/vulkan/util/vk_dispatch_table.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_dispatch_table_gen.py) --out-c $(location src/vulkan/util/vk_dispatch_table.c) --out-h $(location src/vulkan/util/vk_dispatch_table.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_dispatch_table_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_dispatch_table.c) --out-h $(location src/vulkan/util/vk_dispatch_table.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_dispatch_table_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_dispatch_table.c) --out-h $(location src/vulkan/util/vk_dispatch_table.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_dispatch_trampolines",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_dispatch_trampolines_gen.py",
     ],
@@ -7457,14 +7274,15 @@ genrule(
         "src/vulkan/runtime/vk_dispatch_trampolines.c",
         "src/vulkan/runtime/vk_dispatch_trampolines.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_dispatch_trampolines_gen.py) --out-c $(location src/vulkan/runtime/vk_dispatch_trampolines.c) --out-h $(location src/vulkan/runtime/vk_dispatch_trampolines.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_dispatch_trampolines_gen.py) --out-c $(location src/vulkan/runtime/vk_dispatch_trampolines.c) --out-h $(location src/vulkan/runtime/vk_dispatch_trampolines.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_dispatch_trampolines_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_dispatch_trampolines.c) --out-h $(location src/vulkan/runtime/vk_dispatch_trampolines.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_dispatch_trampolines_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_dispatch_trampolines.c) --out-h $(location src/vulkan/runtime/vk_dispatch_trampolines.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_enum_to_str",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/gen_enum_to_str.py",
     ],
@@ -7473,14 +7291,15 @@ genrule(
         "src/vulkan/util/vk_enum_to_str.c",
         "src/vulkan/util/vk_enum_to_str.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/gen_enum_to_str.py) --out-c $(location src/vulkan/util/vk_enum_defines.h) --out-h $(location src/vulkan/util/vk_enum_to_str.c) --out-d $(location src/vulkan/util/vk_enum_to_str.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/gen_enum_to_str.py) --out-c $(location src/vulkan/util/vk_enum_defines.h) --out-h $(location src/vulkan/util/vk_enum_to_str.c) --out-d $(location src/vulkan/util/vk_enum_to_str.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/gen_enum_to_str.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_enum_to_str.c) --out-h $(location src/vulkan/util/vk_enum_to_str.h) --out-d $(location src/vulkan/util/vk_enum_defines.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/gen_enum_to_str.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_enum_to_str.c) --out-h $(location src/vulkan/util/vk_enum_to_str.h) --out-d $(location src/vulkan/util/vk_enum_defines.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_extensions",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_extensions_gen.py",
     ],
@@ -7488,8 +7307,8 @@ genrule(
         "src/vulkan/util/vk_extensions.c",
         "src/vulkan/util/vk_extensions.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_extensions_gen.py) --out-c $(location src/vulkan/util/vk_extensions.c) --out-h $(location src/vulkan/util/vk_extensions.h)",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_extensions_gen.py) --out-c $(location src/vulkan/util/vk_extensions.c) --out-h $(location src/vulkan/util/vk_extensions.h)",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_extensions_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_extensions.c) --out-h $(location src/vulkan/util/vk_extensions.h)",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_extensions_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/util/vk_extensions.c) --out-h $(location src/vulkan/util/vk_extensions.h)",
     tools = [":vk"],
 )
 
@@ -7503,14 +7322,15 @@ genrule(
         "src/vulkan/runtime/vk_format_info.c",
         "src/vulkan/runtime/vk_format_info.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/runtime/vk_format_info_gen.py) --out-c $(location src/vulkan/runtime/vk_format_info.c) --out-h $(location src/vulkan/runtime/vk_format_info.h)",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/runtime/vk_format_info_gen.py) --out-c $(location src/vulkan/runtime/vk_format_info.c) --out-h $(location src/vulkan/runtime/vk_format_info.h)",
+    cmd = "$(location :vk) $(location src/vulkan/runtime/vk_format_info_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_format_info.c) --out-h $(location src/vulkan/runtime/vk_format_info.h)",
+    cmd_bat = "$(location :vk) $(location src/vulkan/runtime/vk_format_info_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_format_info.c) --out-h $(location src/vulkan/runtime/vk_format_info.h)",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_physical_device_features",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_physical_device_features_gen.py",
     ],
@@ -7518,14 +7338,15 @@ genrule(
         "src/vulkan/runtime/vk_physical_device_features.c",
         "src/vulkan/runtime/vk_physical_device_features.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_features_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_features.c) --out-h $(location src/vulkan/runtime/vk_physical_device_features.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_features_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_features.c) --out-h $(location src/vulkan/runtime/vk_physical_device_features.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_physical_device_features_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_features.c) --out-h $(location src/vulkan/runtime/vk_physical_device_features.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_physical_device_features_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_features.c) --out-h $(location src/vulkan/runtime/vk_physical_device_features.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_physical_device_properties",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_physical_device_properties_gen.py",
     ],
@@ -7533,44 +7354,48 @@ genrule(
         "src/vulkan/runtime/vk_physical_device_properties.c",
         "src/vulkan/runtime/vk_physical_device_properties.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_properties_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_properties.c) --out-h $(location src/vulkan/runtime/vk_physical_device_properties.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_properties_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_properties.c) --out-h $(location src/vulkan/runtime/vk_physical_device_properties.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_physical_device_properties_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_properties.c) --out-h $(location src/vulkan/runtime/vk_physical_device_properties.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_physical_device_properties_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_properties.c) --out-h $(location src/vulkan/runtime/vk_physical_device_properties.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_physical_device_spirv_caps",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
+        "src/vulkan/util/vk_physical_device_features_gen.py",
         "src/vulkan/util/vk_physical_device_spirv_caps_gen.py",
     ],
     outs = ["src/vulkan/runtime/vk_physical_device_spirv_caps.c"],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_spirv_caps_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_spirv_caps.c) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_physical_device_spirv_caps_gen.py) --out-c $(location src/vulkan/runtime/vk_physical_device_spirv_caps.c) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_physical_device_spirv_caps_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_spirv_caps.c) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_physical_device_spirv_caps_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_physical_device_spirv_caps.c) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_struct_type_cast",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_struct_type_cast_gen.py",
     ],
     outs = ["src/vulkan/util/vk_struct_type_cast.h"],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_struct_type_cast_gen.py) --out $(location src/vulkan/util/vk_struct_type_cast.h) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_struct_type_cast_gen.py) --out $(location src/vulkan/util/vk_struct_type_cast.h) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_struct_type_cast_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out $(location src/vulkan/util/vk_struct_type_cast.h) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_struct_type_cast_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out $(location src/vulkan/util/vk_struct_type_cast.h) --beta false",
     tools = [":vk"],
 )
 
 genrule(
     name = "generate_vk_synchronization_helpers",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_synchronization_helpers_gen.py",
     ],
     outs = ["src/vulkan/runtime/vk_synchronization_helpers.c"],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_synchronization_helpers_gen.py) --out-c $(location src/vulkan/runtime/vk_synchronization_helpers.c) --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_synchronization_helpers_gen.py) --out-c $(location src/vulkan/runtime/vk_synchronization_helpers.c) --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_synchronization_helpers_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_synchronization_helpers.c) --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_synchronization_helpers_gen.py) --xml $(location src/vulkan/registry/vk.xml) --out-c $(location src/vulkan/runtime/vk_synchronization_helpers.c) --beta false",
     tools = [":vk"],
 )
 
@@ -7581,8 +7406,8 @@ genrule(
         "src/compiler/spirv/vtn_gather_types_c.py",
     ],
     outs = ["src/compiler/spirv/vtn_gather_types.c"],
-    cmd = "$(location :spirv_core_grammar) $(location src/compiler/spirv/vtn_gather_types_c.py) $(location src/compiler/spirv/vtn_gather_types.c)",
-    cmd_bat = "$(location :spirv_core_grammar) $(location src/compiler/spirv/vtn_gather_types_c.py) $(location src/compiler/spirv/vtn_gather_types.c)",
+    cmd = "$(location :spirv_core_grammar) $(location src/compiler/spirv/vtn_gather_types_c.py) $(location src/compiler/spirv/spirv.core.grammar.json) $(location src/compiler/spirv/vtn_gather_types.c)",
+    cmd_bat = "$(location :spirv_core_grammar) $(location src/compiler/spirv/vtn_gather_types_c.py) $(location src/compiler/spirv/spirv.core.grammar.json) $(location src/compiler/spirv/vtn_gather_types.c)",
     tools = [":spirv_core_grammar"],
 )
 
@@ -7593,14 +7418,15 @@ genrule(
         "src/compiler/spirv/vtn_generator_ids_h.py",
     ],
     outs = ["src/compiler/spirv/vtn_generator_ids.h"],
-    cmd = "$(location :spir-v) $(location src/compiler/spirv/vtn_generator_ids_h.py) $(location src/compiler/spirv/vtn_generator_ids.h)",
-    cmd_bat = "$(location :spir-v) $(location src/compiler/spirv/vtn_generator_ids_h.py) $(location src/compiler/spirv/vtn_generator_ids.h)",
+    cmd = "$(location :spir-v) $(location src/compiler/spirv/vtn_generator_ids_h.py) $(location src/compiler/spirv/spir-v.xml) $(location src/compiler/spirv/vtn_generator_ids.h)",
+    cmd_bat = "$(location :spir-v) $(location src/compiler/spirv/vtn_generator_ids_h.py) $(location src/compiler/spirv/spir-v.xml) $(location src/compiler/spirv/vtn_generator_ids.h)",
     tools = [":spir-v"],
 )
 
 genrule(
     name = "generate_wsi_entrypoints",
     srcs = [
+        ":vk_generator_helpers",
         "src/vulkan/registry/vk.xml",
         "src/vulkan/util/vk_entrypoints_gen.py",
     ],
@@ -7608,168 +7434,589 @@ genrule(
         "src/vulkan/wsi/wsi_common_entrypoints.c",
         "src/vulkan/wsi/wsi_common_entrypoints.h",
     ],
-    cmd = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/wsi/wsi_common_entrypoints.c) --out-c $(location src/vulkan/wsi/wsi_common_entrypoints.h) --prefix wsi --beta false",
-    cmd_bat = "$(location :vk) --xml $(location src/vulkan/util/vk_entrypoints_gen.py) --proto --weak --out-h $(location src/vulkan/wsi/wsi_common_entrypoints.c) --out-c $(location src/vulkan/wsi/wsi_common_entrypoints.h) --prefix wsi --beta false",
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/wsi/wsi_common_entrypoints.h) --out-c $(location src/vulkan/wsi/wsi_common_entrypoints.c) --prefix wsi --beta false",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_entrypoints_gen.py) --xml $(location src/vulkan/registry/vk.xml) --proto --weak --out-h $(location src/vulkan/wsi/wsi_common_entrypoints.h) --out-c $(location src/vulkan/wsi/wsi_common_entrypoints.c) --prefix wsi --beta false",
     tools = [":vk"],
 )
 
-py_binary(
+alias(
     name = "00-mesa-defaults",
-    data = ["src/util/00-mesa-defaults.conf"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "builtin_types_c",
-    srcs = [
-        "src/compiler/builtin_types.py",
-        "src/compiler/builtin_types_c.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "builtin_types_h",
-    srcs = [
-        "src/compiler/builtin_types.py",
-        "src/compiler/builtin_types_h.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
 py_binary(
     name = "enums2names",
     srcs = ["src/gallium/auxiliary/driver_trace/enums2names.py"],
+    main = "src/gallium/auxiliary/driver_trace/enums2names.py",
 )
 
-py_binary(
+alias(
     name = "format_srgb",
-    srcs = ["src/util/format_srgb.py"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "git_sha1_gen",
-    srcs = ["bin/git_sha1_gen.py"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "ir_expression_operation",
-    srcs = ["src/compiler/glsl/ir_expression_operation.py"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_builder_opcodes_h",
-    srcs = [
-        "src/compiler/nir/nir_builder_opcodes_h.py",
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_opcodes.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_constant_expressions",
-    srcs = [
-        "src/compiler/nir/nir_constant_expressions.py",
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_opcodes.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_intrinsics_c",
-    srcs = [
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_intrinsics_c.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_intrinsics_h",
-    srcs = [
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_intrinsics_h.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_intrinsics_indices_h",
-    srcs = [
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_intrinsics_indices_h.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_opcodes_c",
-    srcs = [
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_opcodes.py",
-        "src/compiler/nir/nir_opcodes_c.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_opcodes_h",
-    srcs = [
-        "src/compiler/nir/nir_intrinsics.py",
-        "src/compiler/nir/nir_opcodes.py",
-        "src/compiler/nir/nir_opcodes_h.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "nir_opt_algebraic",
-    srcs = [
-        "src/compiler/nir/nir_algebraic.py",
-        "src/compiler/nir/nir_opcodes.py",
-        "src/compiler/nir/nir_opt_algebraic.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "process_shader_stats",
-    srcs = ["src/util/process_shader_stats.py"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "spir-v",
-    data = ["src/compiler/spirv/spir-v.xml"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "spirv_core_grammar",
-    data = ["src/compiler/spirv/spirv.core.grammar.json"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
-py_binary(
+alias(
     name = "u_format",
-    srcs = [
-        "src/util/format/u_format_pack.py",
-        "src/util/format/u_format_parse.py",
-    ],
-    data = ["src/util/format/u_format.yaml"],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
 py_binary(
     name = "u_indices_gen",
     srcs = ["src/gallium/auxiliary/indices/u_indices_gen.py"],
+    main = "src/gallium/auxiliary/indices/u_indices_gen.py",
 )
 
-py_binary(
+alias(
     name = "u_tracepoints",
-    srcs = [
-        "src/gallium/auxiliary/util/u_tracepoints.py",
-        "src/util/perf/u_trace.py",
-    ],
+    actual = "@lavapipe_bazel_deps//:python3",
 )
 
 py_binary(
     name = "u_unfilled_gen",
     srcs = ["src/gallium/auxiliary/indices/u_unfilled_gen.py"],
+    main = "src/gallium/auxiliary/indices/u_unfilled_gen.py",
 )
 
-py_binary(
+alias(
     name = "vk",
+    actual = "@lavapipe_bazel_deps//:python3",
+)
+
+# === Newly Added Targets from Rebase ===
+cc_library(
+    name = "libmesa_util_clflush",
     srcs = [
-        "src/vulkan/util/vk_entrypoints.py",
-        "src/vulkan/util/vk_extensions.py",
+        "src/util/cache_ops_x86.c",
     ],
-    data = ["src/vulkan/registry/vk.xml"],
+    hdrs = [
+        "include/no_extern_c.h",
+        "src/c11/threads.h",
+        "src/c11/time.h",
+        "src/util/cache_ops.h",
+        "src/util/detect_arch.h",
+        "src/util/detect_cc.h",
+        "src/util/detect_os.h",
+        "src/util/macros.h",
+        "src/util/u_atomic.h",
+        "src/util/u_cpu_detect.h",
+        "src/util/u_thread.h",
+    ],
+    copts = [
+        "-Wno-implicit-function-declaration",
+    ],
+    defines = [
+        "ALLOW_KCMP",
+        "AMD_LLVM_AVAILABLE=1",
+        "DRAW_LLVM_AVAILABLE=1",
+        "ENABLE_SHADER_CACHE",
+        "GALLIVM_USE_ORCJIT=0",
+        "GLAPI_EXPORT_PROTO_ENTRY_POINTS=0",
+        "GLX_INDIRECT_RENDERING",
+        "GLX_USE_DRM",
+        "HAS_SCHED_GETAFFINITY",
+        "HAS_SCHED_H",
+        "HAVE_CET_H",
+        "HAVE_COMPRESSION",
+        "HAVE_DIRENT_D_TYPE",
+        "HAVE_DLADDR",
+        "HAVE_DLFCN_H",
+        "HAVE_DL_ITERATE_PHDR",
+        "HAVE_DRI",
+        "HAVE_DRI2",
+        "HAVE_DRI3_EXPLICIT_SYNC",
+        "HAVE_DRISW_KMS",
+        "HAVE_DRM_PLATFORM",
+        "HAVE_ENDIAN_H",
+        "HAVE_FLOCK",
+        "HAVE_FMEMOPEN",
+        "HAVE_FUNC_ATTRIBUTE_ALIAS",
+        "HAVE_FUNC_ATTRIBUTE_COLD",
+        "HAVE_FUNC_ATTRIBUTE_CONST",
+        "HAVE_FUNC_ATTRIBUTE_FLATTEN",
+        "HAVE_FUNC_ATTRIBUTE_FORMAT",
+        "HAVE_FUNC_ATTRIBUTE_MALLOC",
+        "HAVE_FUNC_ATTRIBUTE_NORETURN",
+        "HAVE_FUNC_ATTRIBUTE_PACKED",
+        "HAVE_FUNC_ATTRIBUTE_PURE",
+        "HAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
+        "HAVE_FUNC_ATTRIBUTE_UNUSED",
+        "HAVE_FUNC_ATTRIBUTE_VISIBILITY",
+        "HAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
+        "HAVE_FUNC_ATTRIBUTE_WEAK",
+        "HAVE_GFX_COMPUTE",
+        "HAVE_GNU_QSORT_R",
+        "HAVE_LIBDRM",
+        "HAVE_LIBGBM",
+        "HAVE_LINUX_FUTEX_H",
+        "HAVE_LLVMPIPE",
+        "HAVE_MEMFD_CREATE",
+        "HAVE_MKOSTEMP",
+        "HAVE_OPENGL=1",
+        "HAVE_OPENGL_ES_1=1",
+        "HAVE_OPENGL_ES_2=1",
+        "HAVE_POLL_H",
+        "HAVE_POSIX_FALLOCATE",
+        "HAVE_POSIX_MEMALIGN",
+        "HAVE_PROGRAM_INVOCATION_NAME",
+        "HAVE_PTHREAD",
+        "HAVE_PTHREAD_SETAFFINITY",
+        "HAVE_RANDOM_R",
+        "HAVE_RENDERDOC_INTEGRATION=true",
+        "HAVE_SECURE_GETENV",
+        "HAVE_STRTOD_L",
+        "HAVE_STRTOF",
+        "HAVE_STRTOK_R",
+        "HAVE_STRUCT_TIMESPEC",
+        "HAVE_SURFACELESS_PLATFORM",
+        "HAVE_SWRAST",
+        "HAVE_SYSCONF",
+        "HAVE_SYS_INOTIFY_H",
+        "HAVE_SYS_SHM_H",
+        "HAVE_UINT128",
+        "HAVE_WAYLAND_PLATFORM",
+        "HAVE_X11_DRM",
+        "HAVE_X11_PLATFORM",
+        "HAVE_XCB_PLATFORM",
+        "HAVE_XLOCALE_H",
+        "HAVE_ZLIB",
+        "HAVE___BUILTIN_ADD_OVERFLOW",
+        "HAVE___BUILTIN_BSWAP32",
+        "HAVE___BUILTIN_BSWAP64",
+        "HAVE___BUILTIN_CLZ",
+        "HAVE___BUILTIN_CLZLL",
+        "HAVE___BUILTIN_CTZ",
+        "HAVE___BUILTIN_EXPECT",
+        "HAVE___BUILTIN_FFS",
+        "HAVE___BUILTIN_FFSLL",
+        "HAVE___BUILTIN_IA32_CLFLUSHOPT",
+        "HAVE___BUILTIN_POPCOUNT",
+        "HAVE___BUILTIN_POPCOUNTLL",
+        "HAVE___BUILTIN_TYPES_COMPATIBLE_P",
+        "HAVE___BUILTIN_UNREACHABLE",
+        "LLVM_IS_SHARED=1",
+        "MAJOR_IN_SYSMACROS",
+        "MESA_DEBUG=0",
+        "MESA_SYSTEM_HAS_KMS_DRM=1",
+        "THREAD_SANITIZER=0",
+        "USE_GCC_ATOMIC_BUILTINS",
+        "USE_LIBGLVND=0",
+        "USE_SSE41",
+        "USE_UNW_DYNAMIC_FDE",
+        "VIDEO_CODEC_AV1DEC=0",
+        "VIDEO_CODEC_AV1ENC=0",
+        "VIDEO_CODEC_H264DEC=0",
+        "VIDEO_CODEC_H264ENC=0",
+        "VIDEO_CODEC_H265DEC=0",
+        "VIDEO_CODEC_H265ENC=0",
+        "VIDEO_CODEC_JPEGDEC=0",
+        "VIDEO_CODEC_MPEG12DEC=0",
+        "VIDEO_CODEC_VC1DEC=0",
+        "VIDEO_CODEC_VP9DEC=0",
+        "WL_HIDE_DEPRECATED",
+        "_FILE_OFFSET_BITS=64",
+        "_GNU_SOURCE",
+        "__STDC_CONSTANT_MACROS",
+        "__STDC_FORMAT_MACROS",
+        "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
+    ],
+    includes = [
+        ".",
+        "include",
+        "platform/linux-x86_64",
+        "src",
+        "src/util",
+    ],
+)
+
+cc_library(
+    name = "libmesa_util_clflushopt",
+    srcs = [
+        "src/util/cache_ops_x86_clflushopt.c",
+    ],
+    hdrs = [
+        "include/no_extern_c.h",
+        "src/c11/threads.h",
+        "src/c11/time.h",
+        "src/util/detect_os.h",
+        "src/util/macros.h",
+        "src/util/u_atomic.h",
+        "src/util/u_cpu_detect.h",
+        "src/util/u_thread.h",
+    ],
+    copts = [
+        "-Wno-implicit-function-declaration",
+        "-mclflushopt",
+    ],
+    defines = [
+        "ALLOW_KCMP",
+        "AMD_LLVM_AVAILABLE=1",
+        "DRAW_LLVM_AVAILABLE=1",
+        "ENABLE_SHADER_CACHE",
+        "GALLIVM_USE_ORCJIT=0",
+        "GLAPI_EXPORT_PROTO_ENTRY_POINTS=0",
+        "GLX_INDIRECT_RENDERING",
+        "GLX_USE_DRM",
+        "HAS_SCHED_GETAFFINITY",
+        "HAS_SCHED_H",
+        "HAVE_CET_H",
+        "HAVE_COMPRESSION",
+        "HAVE_DIRENT_D_TYPE",
+        "HAVE_DLADDR",
+        "HAVE_DLFCN_H",
+        "HAVE_DL_ITERATE_PHDR",
+        "HAVE_DRI",
+        "HAVE_DRI2",
+        "HAVE_DRI3_EXPLICIT_SYNC",
+        "HAVE_DRISW_KMS",
+        "HAVE_DRM_PLATFORM",
+        "HAVE_ENDIAN_H",
+        "HAVE_FLOCK",
+        "HAVE_FMEMOPEN",
+        "HAVE_FUNC_ATTRIBUTE_ALIAS",
+        "HAVE_FUNC_ATTRIBUTE_COLD",
+        "HAVE_FUNC_ATTRIBUTE_CONST",
+        "HAVE_FUNC_ATTRIBUTE_FLATTEN",
+        "HAVE_FUNC_ATTRIBUTE_FORMAT",
+        "HAVE_FUNC_ATTRIBUTE_MALLOC",
+        "HAVE_FUNC_ATTRIBUTE_NORETURN",
+        "HAVE_FUNC_ATTRIBUTE_PACKED",
+        "HAVE_FUNC_ATTRIBUTE_PURE",
+        "HAVE_FUNC_ATTRIBUTE_RETURNS_NONNULL",
+        "HAVE_FUNC_ATTRIBUTE_UNUSED",
+        "HAVE_FUNC_ATTRIBUTE_VISIBILITY",
+        "HAVE_FUNC_ATTRIBUTE_WARN_UNUSED_RESULT",
+        "HAVE_FUNC_ATTRIBUTE_WEAK",
+        "HAVE_GFX_COMPUTE",
+        "HAVE_GNU_QSORT_R",
+        "HAVE_LIBDRM",
+        "HAVE_LIBGBM",
+        "HAVE_LINUX_FUTEX_H",
+        "HAVE_LLVMPIPE",
+        "HAVE_MEMFD_CREATE",
+        "HAVE_MKOSTEMP",
+        "HAVE_OPENGL=1",
+        "HAVE_OPENGL_ES_1=1",
+        "HAVE_OPENGL_ES_2=1",
+        "HAVE_POLL_H",
+        "HAVE_POSIX_FALLOCATE",
+        "HAVE_POSIX_MEMALIGN",
+        "HAVE_PROGRAM_INVOCATION_NAME",
+        "HAVE_PTHREAD",
+        "HAVE_PTHREAD_SETAFFINITY",
+        "HAVE_RANDOM_R",
+        "HAVE_RENDERDOC_INTEGRATION=true",
+        "HAVE_SECURE_GETENV",
+        "HAVE_STRTOD_L",
+        "HAVE_STRTOF",
+        "HAVE_STRTOK_R",
+        "HAVE_STRUCT_TIMESPEC",
+        "HAVE_SURFACELESS_PLATFORM",
+        "HAVE_SWRAST",
+        "HAVE_SYSCONF",
+        "HAVE_SYS_INOTIFY_H",
+        "HAVE_SYS_SHM_H",
+        "HAVE_UINT128",
+        "HAVE_WAYLAND_PLATFORM",
+        "HAVE_X11_DRM",
+        "HAVE_X11_PLATFORM",
+        "HAVE_XCB_PLATFORM",
+        "HAVE_XLOCALE_H",
+        "HAVE_ZLIB",
+        "HAVE___BUILTIN_ADD_OVERFLOW",
+        "HAVE___BUILTIN_BSWAP32",
+        "HAVE___BUILTIN_BSWAP64",
+        "HAVE___BUILTIN_CLZ",
+        "HAVE___BUILTIN_CLZLL",
+        "HAVE___BUILTIN_CTZ",
+        "HAVE___BUILTIN_EXPECT",
+        "HAVE___BUILTIN_FFS",
+        "HAVE___BUILTIN_FFSLL",
+        "HAVE___BUILTIN_IA32_CLFLUSHOPT",
+        "HAVE___BUILTIN_POPCOUNT",
+        "HAVE___BUILTIN_POPCOUNTLL",
+        "HAVE___BUILTIN_TYPES_COMPATIBLE_P",
+        "HAVE___BUILTIN_UNREACHABLE",
+        "LLVM_IS_SHARED=1",
+        "MAJOR_IN_SYSMACROS",
+        "MESA_DEBUG=0",
+        "MESA_SYSTEM_HAS_KMS_DRM=1",
+        "THREAD_SANITIZER=0",
+        "USE_GCC_ATOMIC_BUILTINS",
+        "USE_LIBGLVND=0",
+        "USE_SSE41",
+        "USE_UNW_DYNAMIC_FDE",
+        "VIDEO_CODEC_AV1DEC=0",
+        "VIDEO_CODEC_AV1ENC=0",
+        "VIDEO_CODEC_H264DEC=0",
+        "VIDEO_CODEC_H264ENC=0",
+        "VIDEO_CODEC_H265DEC=0",
+        "VIDEO_CODEC_H265ENC=0",
+        "VIDEO_CODEC_JPEGDEC=0",
+        "VIDEO_CODEC_MPEG12DEC=0",
+        "VIDEO_CODEC_VC1DEC=0",
+        "VIDEO_CODEC_VP9DEC=0",
+        "WL_HIDE_DEPRECATED",
+        "_FILE_OFFSET_BITS=64",
+        "_GNU_SOURCE",
+        "__STDC_CONSTANT_MACROS",
+        "__STDC_FORMAT_MACROS",
+        "__STDC_LIMIT_MACROS",
+        'MESA_LLVM_VERSION_STRING=\\"21.0.0\\"',
+        'PACKAGE_BUGREPORT=\\"https://gitlab.freedesktop.org/mesa/mesa/-/issues\\"',
+        'PACKAGE_VERSION=\\"26.2.0-devel\\"',
+    ],
+    includes = [
+        ".",
+        "include",
+        "platform/linux-x86_64",
+        "src",
+        "src/util",
+    ],
+)
+
+# === Newly Added Genrules from Rebase ===
+genrule(
+    name = "generate_color-management-v1-client-protocol",
+    srcs = ["@wayland-protocols//:staging/color-management/color-management-v1.xml"],
+    outs = ["src/loader/color-management-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_color-management-v1-protocol",
+    srcs = ["@wayland-protocols//:staging/color-management/color-management-v1.xml"],
+    outs = ["src/loader/color-management-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/color-management/color-management-v1.xml) $(location src/loader/color-management-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_commit-timing-v1-client-protocol",
+    srcs = ["@wayland-protocols//:staging/commit-timing/commit-timing-v1.xml"],
+    outs = ["src/loader/commit-timing-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_commit-timing-v1-protocol",
+    srcs = ["@wayland-protocols//:staging/commit-timing/commit-timing-v1.xml"],
+    outs = ["src/loader/commit-timing-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/commit-timing/commit-timing-v1.xml) $(location src/loader/commit-timing-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_fifo-v1-client-protocol",
+    srcs = ["@wayland-protocols//:staging/fifo/fifo-v1.xml"],
+    outs = ["src/loader/fifo-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_fifo-v1-protocol",
+    srcs = ["@wayland-protocols//:staging/fifo/fifo-v1.xml"],
+    outs = ["src/loader/fifo-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/fifo/fifo-v1.xml) $(location src/loader/fifo-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_hploc_internal_spv_h",
+    srcs = [
+        "src/vulkan/runtime/bvh/hploc_internal.comp",
+        "src/vulkan/runtime/bvh/leaf.h",
+        "src/vulkan/runtime/bvh/vk_build_helpers.h",
+        "src/vulkan/runtime/bvh/vk_build_interface.h",
+        "src/vulkan/runtime/bvh/vk_bvh.h",
+        "src/vulkan/runtime/bvh/vk_debug.h",
+    ],
+    outs = ["src/vulkan/runtime/bvh/hploc_internal.spv.h"],
+    cmd = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh -Isrc/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    cmd_bat = "$(location @lavapipe_bazel_deps//:py_glslangValidator) -V -Isrc/vulkan/runtime/bvh -Isrc/compiler/spirv --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet -P#extension GL_GOOGLE_include_directive : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require -P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require -P#extension GL_EXT_scalar_block_layout : require -P#extension GL_EXT_buffer_reference : require -P#extension GL_EXT_buffer_reference2 : require -P#extension GL_KHR_memory_scope_semantics : require -P#extension GL_KHR_shader_subgroup_arithmetic : require -P#extension GL_KHR_shader_subgroup_basic : require -P#extension GL_KHR_shader_subgroup_shuffle : require -P#extension GL_KHR_shader_subgroup_ballot : require -P#extension GL_KHR_shader_subgroup_clustered : require -P#extension GL_KHR_shader_subgroup_vote : require -P#extension GL_EXT_shader_atomic_int64 : require -P#extension GL_EXT_spirv_intrinsics : require",
+    tools = ["@lavapipe_bazel_deps//:py_glslangValidator"],
+)
+
+genrule(
+    name = "generate_linux-dmabuf-unstable-v1-client-protocol",
+    srcs = ["@wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"],
+    outs = ["src/loader/linux-dmabuf-unstable-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_linux-dmabuf-unstable-v1-protocol",
+    srcs = ["@wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml"],
+    outs = ["src/loader/linux-dmabuf-unstable-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml) $(location src/loader/linux-dmabuf-unstable-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_linux-drm-syncobj-v1-client-protocol",
+    srcs = ["@wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml"],
+    outs = ["src/loader/linux-drm-syncobj-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_linux-drm-syncobj-v1-protocol",
+    srcs = ["@wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml"],
+    outs = ["src/loader/linux-drm-syncobj-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/linux-drm-syncobj/linux-drm-syncobj-v1.xml) $(location src/loader/linux-drm-syncobj-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_nir_opt_algebraic",
+    srcs = [
+        "src/compiler/nir/nir_algebraic.py",
+        "src/compiler/nir/nir_opcodes.py",
+        "src/compiler/nir/nir_opt_algebraic.py",
+    ],
+    outs = ["src/compiler/nir/nir_opt_algebraic.c"],
+    cmd = "$(location :nir_opt_algebraic) $(location src/compiler/nir/nir_opt_algebraic.py) --out $(location src/compiler/nir/nir_opt_algebraic.c)",
+    cmd_bat = "$(location :nir_opt_algebraic) $(location src/compiler/nir/nir_opt_algebraic.py) --out $(location src/compiler/nir/nir_opt_algebraic.c)",
+    tools = [":nir_opt_algebraic"],
+)
+
+genrule(
+    name = "generate_presentation-time-client-protocol",
+    srcs = ["@wayland-protocols//:stable/presentation-time/presentation-time.xml"],
+    outs = ["src/loader/presentation-time-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_presentation-time-protocol",
+    srcs = ["@wayland-protocols//:stable/presentation-time/presentation-time.xml"],
+    outs = ["src/loader/presentation-time-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:stable/presentation-time/presentation-time.xml) $(location src/loader/presentation-time-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_tearing-control-v1-client-protocol",
+    srcs = ["@wayland-protocols//:staging/tearing-control/tearing-control-v1.xml"],
+    outs = ["src/loader/tearing-control-v1-client-protocol.h"],
+    cmd = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-client-protocol.h)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) client-header $(location @wayland-protocols//:staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-client-protocol.h)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_tearing-control-v1-protocol",
+    srcs = ["@wayland-protocols//:staging/tearing-control/tearing-control-v1.xml"],
+    outs = ["src/loader/tearing-control-v1-protocol.c"],
+    cmd = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-protocol.c)",
+    cmd_bat = "$(location @wayland//:wayland-scanner) private-code $(location @wayland-protocols//:staging/tearing-control/tearing-control-v1.xml) $(location src/loader/tearing-control-v1-protocol.c)",
+    tools = ["@wayland//:wayland-scanner"],
+)
+
+genrule(
+    name = "generate_lvp_icd",
+    srcs = [
+        "src/vulkan/registry/vk.xml",
+        "src/vulkan/util/vk_icd_gen.py",
+    ],
+    outs = ["lvp_icd.json"],
+    cmd = "$(location :vk) $(location src/vulkan/util/vk_icd_gen.py) --api-version 1.4 --xml $(location src/vulkan/registry/vk.xml) --sizeof-pointer 8 --icd-lib-path . --icd-filename ./libvulkan_lvp.so --out $(location lvp_icd.json)",
+    cmd_bat = "$(location :vk) $(location src/vulkan/util/vk_icd_gen.py) --api-version 1.4 --xml $(location src/vulkan/registry/vk.xml) --sizeof-pointer 8 --icd-lib-path . --icd-filename ./libvulkan_lvp.so --out $(location lvp_icd.json)",
+    tools = [":vk"],
+    visibility = ["//visibility:public"],
 )
