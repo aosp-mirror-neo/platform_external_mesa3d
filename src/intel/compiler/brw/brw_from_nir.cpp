@@ -71,38 +71,6 @@ static void brw_from_nir_emit_memory_access(nir_to_brw_state &ntb,
 static void brw_combine_with_vec(const brw_builder &bld, const brw_reg &dst,
                                  const brw_reg &src, unsigned n);
 
-static bool
-brw_texture_offset(const nir_tex_instr *tex, unsigned src,
-                   uint32_t *offset_bits_out)
-{
-   if (!nir_src_is_const(tex->src[src].src))
-      return false;
-
-   const unsigned num_components = nir_tex_instr_src_size(tex, src);
-
-   /* Combine all three offsets into a single unsigned dword:
-    *
-    *    bits 11:8 - U Offset (X component)
-    *    bits  7:4 - V Offset (Y component)
-    *    bits  3:0 - R Offset (Z component)
-    */
-   uint32_t offset_bits = 0;
-   for (unsigned i = 0; i < num_components; i++) {
-      int offset = nir_src_comp_as_int(tex->src[src].src, i);
-
-      /* offset out of bounds; caller will handle it. */
-      if (offset > 7 || offset < -8)
-         return false;
-
-      const unsigned shift = 4 * (2 - i);
-      offset_bits |= (offset & 0xF) << shift;
-   }
-
-   *offset_bits_out = offset_bits;
-
-   return true;
-}
-
 static brw_reg
 setup_imm_b(const brw_builder &bld, int8_t v)
 {

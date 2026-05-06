@@ -473,7 +473,7 @@ radv_get_sequence_size(const struct radv_indirect_command_layout *layout, const 
             *cmd_size += 3 * 4;
          }
 
-         *cmd_size += (3 * (pipeline_layout->push_constant_size / 4)) * 4;
+         *cmd_size += (3 * util_bitcount64(layout->push_constant_mask)) * 4;
       } else {
          radv_foreach_stage (s, dgc_pc_info.stages) {
             const uint16_t upload_sgpr = dgc_pc_info.shaders[s].upload_sgpr;

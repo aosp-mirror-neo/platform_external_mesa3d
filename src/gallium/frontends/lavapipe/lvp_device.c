@@ -326,9 +326,6 @@ assert_memhandle_type(VkExternalMemoryHandleTypeFlags types)
    unsigned valid[] = {
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
-#if DETECT_OS_ANDROID
-      VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID,
-#endif
    };
    for (unsigned i = 0; i < ARRAY_SIZE(valid); i++) {
       if (types & valid[i])
@@ -2112,20 +2109,6 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
       }
    }
 
-#if DETECT_OS_ANDROID
-   is_ahb_export_alloc = !ahb_import_info && export_info &&
-      export_info->handleTypes & VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID;
-#endif
-
-   /* Can early return with size 0 if not AHB export alloc. See
-    * VUID-VkMemoryAllocateInfo-pNext-01874 for details.
-    */
-   if (pAllocateInfo->allocationSize == 0 && !is_ahb_export_alloc) {
-      /* Apparently, this is allowed */
-      *pMem = VK_NULL_HANDLE;
-      return VK_SUCCESS;
-   }
-
 #ifdef PIPE_MEMORY_FD
    if (import_info != NULL && import_info->fd < 0) {
       const struct lvp_physical_device *pdev = lvp_device_physical(device);
@@ -2240,11 +2223,6 @@ VKAPI_ATTR void VKAPI_CALL lvp_FreeMemory(
       break;
 #ifdef PIPE_MEMORY_FD
    case LVP_DEVICE_MEMORY_TYPE_DMA_BUF:
-#if DETECT_OS_ANDROID
-      if (mem->android_hardware_buffer)
-         AHardwareBuffer_release(mem->android_hardware_buffer);
-      FALLTHROUGH;
-#endif
    case LVP_DEVICE_MEMORY_TYPE_OPAQUE_FD:
       device->pscreen->free_memory_fd(device->pscreen, mem->pmem);
       if(mem->backed_fd >= 0)

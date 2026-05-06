@@ -3014,9 +3014,6 @@ tu_lower_nir(struct tu_device *dev,
    if (!key->multiview_mask)
       tu_nir_lower_view_to_zero(nir);
 
-   if (!key->multiview_mask)
-      tu_nir_lower_view_to_zero(nir);
-
    if (nir->info.stage == MESA_SHADER_FRAGMENT && key->force_sample_interp) {
       nir->info.fs.uses_sample_shading = true;
       nir_foreach_shader_in_variable(var, nir) {

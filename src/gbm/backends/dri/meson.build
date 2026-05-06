@@ -12,10 +12,6 @@ if with_platform_wayland
   endif
 endif
 
-if with_platform_x11
-  deps_gbm_dri += [dep_xcb, dep_xcb_dri3, dep_xcb_present, dep_xcb_sync, dep_xshmfence, dep_xcb_xfixes]
-endif
-
 shared_library(
   'dri_gbm',
   files('gbm_dri.c', 'gbm_driint.h'),

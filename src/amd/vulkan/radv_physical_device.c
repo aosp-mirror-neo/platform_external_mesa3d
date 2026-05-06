@@ -1706,7 +1706,6 @@ radv_init_image_properties(struct radv_physical_device *pdev)
 static void
 radv_get_physical_device_properties(struct radv_physical_device *pdev)
 {
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    VkSampleCountFlags sample_counts = 0xf;
 
    size_t max_descriptor_set_size = radv_max_descriptor_set_size();

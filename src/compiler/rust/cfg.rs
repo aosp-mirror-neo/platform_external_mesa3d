@@ -273,27 +273,6 @@ fn reaches<N>(nodes: &Vec<CFGNode<N>>, edge: (usize, usize)) -> BitSet {
     r_dfs.reaches
 }
 
-/// Computes the set of nodes that reach the given node without going through
-/// stop
-fn reaches_dfs<N>(
-    nodes: &Vec<CFGNode<N>>,
-    id: usize,
-    stop: usize,
-    reaches: &mut BitSet,
-) {
-    if id == stop || reaches.contains(id) {
-        return;
-    }
-
-    reaches.insert(id);
-
-    // Since we're trying to find the set of things that reach the start node,
-    // not the set of things reachable from the start node, walk predecessors.
-    for &s in nodes[id].pred.iter() {
-        reaches_dfs(nodes, s, stop, reaches);
-    }
-}
-
 fn detect_loops<N>(nodes: &mut Vec<CFGNode<N>>) -> bool {
     let back_edges = find_back_edges(nodes);
     if back_edges.is_empty() {

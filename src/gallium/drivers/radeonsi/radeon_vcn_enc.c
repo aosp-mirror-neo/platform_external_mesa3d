@@ -705,32 +705,6 @@ static bool transform_skip_supported(struct si_screen *sscreen)
       return false;
 }
 
-static bool cu_qp_delta_supported(struct si_screen *sscreen)
-{
-   if (sscreen->info.vcn_ip_version >= VCN_5_0_0)
-      return true;
-   else if (sscreen->info.vcn_ip_version >= VCN_4_0_0)
-      return sscreen->info.vcn_enc_minor_version >= 7;
-   else if (sscreen->info.vcn_ip_version >= VCN_3_0_0)
-      return sscreen->info.vcn_enc_minor_version >= 26;
-   else if (sscreen->info.vcn_ip_version >= VCN_2_0_0)
-      return sscreen->info.vcn_enc_minor_version >= 20;
-   else
-      return false;
-}
-
-static bool transform_skip_supported(struct si_screen *sscreen)
-{
-   if (sscreen->info.vcn_ip_version >= VCN_5_0_0)
-      return true;
-   else if (sscreen->info.vcn_ip_version >= VCN_4_0_0)
-      return sscreen->info.vcn_enc_minor_version >= 2;
-   else if (sscreen->info.vcn_ip_version >= VCN_3_0_0)
-      return sscreen->info.vcn_enc_minor_version >= 23;
-   else
-      return false;
-}
-
 static void radeon_vcn_enc_hevc_get_spec_misc_param(struct radeon_encoder *enc,
                                                     struct pipe_h265_enc_picture_desc *pic)
 {

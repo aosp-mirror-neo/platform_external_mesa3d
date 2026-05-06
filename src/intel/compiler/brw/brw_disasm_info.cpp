@@ -59,54 +59,6 @@ print_predecessors_for_disasm(FILE *f, struct bblock_t *block)
    }
 }
 
-static bool
-is_do_block(struct bblock_t *block)
-{
-   return block->start()->opcode == BRW_OPCODE_DO;
-}
-
-static bool
-is_flow_block(struct bblock_t *block)
-{
-   return block->start()->opcode == SHADER_OPCODE_FLOW;
-}
-
-static bool
-should_omit_link(struct bblock_t *block,
-                 struct bblock_link *link)
-{
-   return link->kind == bblock_link_physical &&
-          (is_do_block(block) || is_do_block(link->block));
-}
-
-static void
-print_successors_for_disasm(struct bblock_t *block)
-{
-   foreach_list_typed(struct bblock_link, succ, link,
-                      &block->children) {
-      if (should_omit_link(block, succ))
-         continue;
-      if (is_do_block(succ->block) || is_flow_block(succ->block))
-         print_successors_for_disasm(succ->block);
-      else
-         fprintf(stderr, " ->B%d", succ->block->num);
-   }
-}
-
-static void
-print_predecessors_for_disasm(struct bblock_t *block)
-{
-   foreach_list_typed(struct bblock_link, pred, link,
-                      &block->parents) {
-      if (should_omit_link(block, pred))
-         continue;
-      if (is_do_block(pred->block) || is_flow_block(pred->block))
-         print_predecessors_for_disasm(pred->block);
-      else
-         fprintf(stderr, " <-B%d", pred->block->num);
-   }
-}
-
 void
 dump_assembly(void *assembly, int start_offset, int end_offset,
               struct disasm_info *disasm, const unsigned *block_latency, FILE *f)

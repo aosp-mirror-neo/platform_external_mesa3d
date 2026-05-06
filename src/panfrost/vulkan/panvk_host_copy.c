@@ -120,6 +120,7 @@ panvk_copy_image_to_from_memory(struct image_params img,
       vk_image_subresource_layer_count(&img.img->vk, &img.subres);
 
    void *img_base_ptr = img.ptr + plane->mem_offset + slice_layout->offset_B;
+
    for (unsigned layer = 0; layer < layer_count; layer++) {
       unsigned img_layer = layer + img.subres.baseArrayLayer;
       void *img_layer_ptr = img_base_ptr +
@@ -350,6 +351,7 @@ panvk_copy_image_to_memory(struct panvk_image *src,
 VKAPI_ATTR VkResult VKAPI_CALL
 panvk_CopyImageToMemory(VkDevice device, const VkCopyImageToMemoryInfo *info)
 {
+   VK_FROM_HANDLE(panvk_device, dev, device);
    VK_FROM_HANDLE(panvk_image, src, info->srcImage);
    void *src_cpu[PANVK_MAX_PLANES] = {NULL};
    VkResult result = VK_SUCCESS;
@@ -456,6 +458,7 @@ panvk_copy_image_to_image(struct panvk_image *dst,
       src_cpu + src_plane->mem_offset + src_slice_layout->offset_B;
    void *dst_base_ptr =
       dst_cpu + dst_plane->mem_offset + dst_slice_layout->offset_B;
+
    for (unsigned layer = 0; layer < layer_count; layer++) {
       unsigned src_layer = layer + src_subres.baseArrayLayer;
       unsigned dst_layer = layer + dst_subres.baseArrayLayer;

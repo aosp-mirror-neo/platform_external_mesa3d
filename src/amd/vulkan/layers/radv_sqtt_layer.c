@@ -18,8 +18,8 @@
 #include "ac_sqtt.h"
 #include "util/u_memory.h"
 
-static void
-radv_gfx12_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv_graphics_pipeline *pipeline)
+void
+radv_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv_graphics_pipeline *pipeline)
 {
    const struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
@@ -54,23 +54,6 @@ radv_gfx12_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struc
          radeon_set_sh_reg(task_shader->regs.pgm_lo, va >> 8);
       }
       radeon_end();
-   }
-}
-
-void
-radv_sqtt_emit_relocated_shaders(struct radv_cmd_buffer *cmd_buffer, struct radv_graphics_pipeline *pipeline)
-{
-   const struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
-   const struct radv_physical_device *pdev = radv_device_physical(device);
-   struct radv_sqtt_shaders_reloc *reloc = pipeline->sqtt_shaders_reloc;
-   struct radeon_cmdbuf *cs = cmd_buffer->cs;
-
-   radv_cs_add_buffer(device->ws, cs, reloc->bo);
-
-   if (pdev->info.gfx_level >= GFX12) {
-      radv_gfx12_sqtt_emit_relocated_shaders(cmd_buffer, pipeline);
-   } else {
-      radv_gfx6_sqtt_emit_relocated_shaders(cmd_buffer, pipeline);
    }
 }
 

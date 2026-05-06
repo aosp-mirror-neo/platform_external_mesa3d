@@ -555,7 +555,6 @@ radv_amdgpu_cs_unchain(struct ac_cmdbuf *cs)
       return;
 
    assert(cs->cdw <= cs->max_dw + 4);
-   const uint32_t nop_packet = get_nop_packet(acs);
 
    acs->chained_to = NULL;
    cs->buf[cs->cdw - 4] = PKT3(PKT3_NOP, 2, 0);
