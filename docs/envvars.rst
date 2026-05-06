@@ -1494,6 +1494,8 @@ RADV driver environment variables
       don't mitigate SMEM memory access issues on GFX6-7
    ``notccompatcmask``
       disable TC-compat CMASK for MSAA surfaces
+   ``notmz``
+      disable TMZ (trusted memory zone) support
    ``noumr``
       disable UMR dumps during GPU hang detection (only with
       :envvar:`RADV_DEBUG` = ``hang``)
@@ -1615,7 +1617,7 @@ RADV driver environment variables
    ``heap``
       enable experimental implementation of VK_EXT_descriptor_heap
    ``hic``
-      enable experimental implementation of VK_EXT_host_image_copy (GFX10+)
+      enable experimental implementation of VK_EXT_host_image_copy on GFX10
    ``sparse``
       enable experimental sparse binding and sparse residency on GPUs where we don't support it by default (pre Polaris)
    ``transfer_queue``

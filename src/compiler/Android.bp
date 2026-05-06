@@ -92,6 +92,15 @@ cc_library_headers {
     ],
 }
 
+cc_defaults {
+    name: "compiler_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
 cc_library_static {
     name: "compiler",
     vendor: true,
@@ -101,6 +110,7 @@ cc_library_static {
         "_trial_msvc",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "compiler_c_flags",
         "no_override_init_args",
     ],
     header_libs: [

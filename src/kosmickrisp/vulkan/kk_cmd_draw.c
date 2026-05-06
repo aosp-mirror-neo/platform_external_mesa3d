@@ -639,6 +639,21 @@ kk_calculate_vbo_clamp(uint64_t vbuf, uint64_t sink, enum pipe_format format,
    }
 }
 
+static bool
+is_primitive_culled(VkPrimitiveTopology topology)
+{
+   switch (topology) {
+   case VK_PRIMITIVE_TOPOLOGY_POINT_LIST:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_LIST_WITH_ADJACENCY:
+   case VK_PRIMITIVE_TOPOLOGY_LINE_STRIP_WITH_ADJACENCY:
+      return false;
+   default:
+      return true;
+   }
+}
+
 static void
 set_empty_scissor(mtl_render_encoder *enc)
 {
@@ -660,8 +675,6 @@ kk_flush_pipeline(struct kk_cmd_buffer *cmd)
 
    /* Depth/stencil state may be dynamic, handle it as part of the pipeline. */
    if (cmd->state.gfx.is_depth_stencil_dynamic &&
-       (cmd->state.gfx.render.depth_att.vk_format != VK_FORMAT_UNDEFINED ||
-        cmd->state.gfx.render.stencil_att.vk_format != VK_FORMAT_UNDEFINED) &&
        (IS_DIRTY(DS_DEPTH_TEST_ENABLE) | IS_DIRTY(DS_DEPTH_WRITE_ENABLE) |
         IS_DIRTY(DS_DEPTH_COMPARE_OP) | IS_DIRTY(DS_STENCIL_TEST_ENABLE) |
         IS_DIRTY(DS_STENCIL_OP) | IS_DIRTY(DS_STENCIL_COMPARE_MASK) |
@@ -708,9 +721,11 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
       }
    }
 
-   if (IS_DIRTY(RS_CULL_MODE)) {
+   if (IS_DIRTY(RS_CULL_MODE) || IS_DIRTY(IA_PRIMITIVE_TOPOLOGY)) {
+      /* Only disable rendering if primitive type is culled. */
       gfx->is_cull_front_and_back =
-         dyn->rs.cull_mode == VK_CULL_MODE_FRONT_AND_BACK;
+         dyn->rs.cull_mode == VK_CULL_MODE_FRONT_AND_BACK &&
+         is_primitive_culled(dyn->ia.primitive_topology);
       if (gfx->is_cull_front_and_back) {
          set_empty_scissor(enc);
       } else {
@@ -726,6 +741,12 @@ kk_flush_dynamic_state(struct kk_cmd_buffer *cmd)
        (IS_DIRTY(VP_VIEWPORT_COUNT) || IS_DIRTY(VP_VIEWPORTS) ||
         IS_DIRTY(VP_SCISSOR_COUNT) || IS_DIRTY(VP_SCISSORS)))
       kk_flush_vp_state(cmd);
+
+   if (IS_DIRTY(VP_DEPTH_CLIP_NEGATIVE_ONE_TO_ONE)) {
+      desc->root.draw.clip_z_coeff =
+         dyn->vp.depth_clip_negative_one_to_one ? 0.5f : 0.0f;
+      desc->root_dirty = true;
+   }
 
    if (IS_DIRTY(RS_FRONT_FACE)) {
       mtl_set_front_face_winding(

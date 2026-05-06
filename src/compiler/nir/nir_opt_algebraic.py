@@ -1943,7 +1943,8 @@ optimizations.extend([
    # fract(x) = x - floor(x), so fract(NaN/Inf) = NaN
    (('ffract(nnan)', 'a(is_integral)'), 0.0),
    (('ffract', ('ffract', a)), ('ffract', a)),
-   (('fabs', 'a(is_not_negative)'), ('fcanonicalize', a)),
+   (('fabs(nsz)', 'a(is_not_negative)'), ('fcanonicalize', a)),
+   (('fabs', 'a(is_not_negative_or_negative_zero)'), ('fcanonicalize', a)),
    (('fabs(nsz)', 'a(is_not_positive)'), ('fneg', a)),
 
    (('fneu', 'a(is_not_zero)', 0.0), True),
@@ -2230,8 +2231,12 @@ optimizations.extend([
    # Reduce intermediate precision with int64.
    (('u2u32', ('iadd(is_used_once)', 'a@64', b)),
     ('iadd', ('u2u32', a), ('u2u32', b))),
+   (('unpack_64_2x32_split_x', ('iadd(is_used_once)', 'a@64', b)),
+    ('iadd', ('u2u32', a), ('u2u32', b))),
 
    (('u2u32', ('imul(is_used_once)', 'a@64', b)),
+    ('imul', ('u2u32', a), ('u2u32', b))),
+   (('unpack_64_2x32_split_x', ('imul(is_used_once)', 'a@64', b)),
     ('imul', ('u2u32', a), ('u2u32', b))),
 
    (('u2f32', ('u2u64', 'a@32')), ('u2f32', a)),

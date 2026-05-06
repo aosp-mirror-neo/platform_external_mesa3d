@@ -11,11 +11,9 @@
 #ifndef RADV_DEVICE_H
 #define RADV_DEVICE_H
 
-#include "ac_descriptors.h"
 #include "ac_spm.h"
 #include "ac_sqtt.h"
 
-#include "util/bitset.h"
 #include "util/mesa-blake3.h"
 
 #include "radv_debug_nir.h"
@@ -151,7 +149,9 @@ struct radv_device {
    struct radv_meta_state meta_state;
 
    struct radv_queue *queues[RADV_MAX_QUEUE_FAMILIES];
+   struct radv_queue *queues_protected[RADV_MAX_QUEUE_FAMILIES];
    int queue_count[RADV_MAX_QUEUE_FAMILIES];
+   int queue_count_protected[RADV_MAX_QUEUE_FAMILIES];
 
    bool pbb_allowed;
    uint32_t scratch_waves;
@@ -326,6 +326,8 @@ struct radv_device {
    simple_mtx_t blit_queue_mtx;
 
    struct radv_address_binding_tracker *addr_binding_tracker;
+
+   struct radv_compiler_info compiler_info;
 };
 
 VK_DEFINE_HANDLE_CASTS(radv_device, vk.base, VkDevice, VK_OBJECT_TYPE_DEVICE)

@@ -14,11 +14,23 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
+cc_defaults {
+    name: "_mesa_u_gralloc_c_flags",
+    vendor: true,
+    cflags: select(os(), {
+        "android": [
+            "-fvisibility=hidden",
+        ],
+        default: [],
+    }),
+}
+
 cc_library_static {
     name: "_mesa_u_gralloc",
     vendor: true,
     c_std: "c11",
     defaults: [
+        "_mesa_u_gralloc_c_flags",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
     ],

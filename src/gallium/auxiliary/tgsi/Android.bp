@@ -15,7 +15,7 @@ package {
 }
 
 filegroup {
-    name: "files_libgallium_10",
+    name: "files_libgallium_9",
     srcs: [
         "tgsi_aa_point.c",
         "tgsi_build.c",

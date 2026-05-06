@@ -413,34 +413,6 @@
    DRI_CONF_OPT_B(precise_trig, def, \
                   "Prefer accuracy over performance in trig functions")
 
-#define DRI_CONF_PP_CELSHADE(def) \
-   DRI_CONF_OPT_E(pp_celshade, def, 0, 1, \
-                  "A post-processing filter to cel-shade the output", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NORED(def) \
-   DRI_CONF_OPT_E(pp_nored, def, 0, 1, \
-                  "A post-processing filter to remove the red channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NOGREEN(def) \
-   DRI_CONF_OPT_E(pp_nogreen, def, 0, 1, \
-                  "A post-processing filter to remove the green channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NOBLUE(def) \
-   DRI_CONF_OPT_E(pp_noblue, def, 0, 1, \
-                  "A post-processing filter to remove the blue channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_JIMENEZMLAA(def,min,max) \
-   DRI_CONF_OPT_I(pp_jimenezmlaa, def, min, max, \
-                  "Morphological anti-aliasing based on Jimenez' MLAA. 0 to disable, 8 for default quality")
-
-#define DRI_CONF_PP_JIMENEZMLAA_COLOR(def,min,max) \
-   DRI_CONF_OPT_I(pp_jimenezmlaa_color, def, min, max, \
-                  "Morphological anti-aliasing based on Jimenez' MLAA. 0 to disable, 8 for default quality. Color version, usable with 2d GL apps")
-
 #define DRI_CONF_PP_LOWER_DEPTH_RANGE_RATE() \
    DRI_CONF_OPT_F(lower_depth_range_rate, 1.0, 0.0, 1.0, \
                   "Lower depth range for fixing misrendering issues due to z coordinate float point interpolation accuracy")
@@ -865,6 +837,10 @@
    DRI_CONF_OPT_B(radv_cooperative_matrix2_nv, def, \
                   "Expose VK_NV_cooperative_matrix2 on supported hardware.")
 
+#define DRI_CONF_RADV_ALLOW_DGC_MULTIVIEW(def) \
+   DRI_CONF_OPT_B(radv_allow_dgc_multiview, def, \
+                  "Allow to use DGC with multiview for DX12 emulation.")
+
 #define DRI_CONF_RADV_GFX12_HIZ_WA() \
    DRI_CONF_OPT_S_NODEF(radv_gfx12_hiz_wa, \
                         "Choose the specific HiZ workaround to apply on GFX12 (RDNA4). " \
@@ -937,6 +913,10 @@
 #define DRI_CONF_ANV_EXTERNAL_MEMORY_IMPLICIT_SYNC(def) \
    DRI_CONF_OPT_B(anv_external_memory_implicit_sync, def, "Implicit sync on external BOs")
 
+#define DRI_CONF_ANV_PROMOTE_CBV_TO_PUSH_BUFFERS(def) \
+   DRI_CONF_OPT_B(anv_promote_cbv_to_push_buffers, def, \
+                  "Promote CBV 64bit pointers in push constant data to push buffers")
+
 #define DRI_CONF_ANV_STATE_CACHE_PERF_FIX(def) \
    DRI_CONF_OPT_B(anv_state_cache_perf_fix, def, \
                   "Whether COMMON_SLICE_CHICKEN3 bit13 should be programmed to enable BTP+BTI RCC keying")
@@ -983,6 +963,10 @@
 #define DRI_CONF_ANV_ENABLE_OPT_DIVERGENT_ATOMICS(def) \
    DRI_CONF_OPT_I(anv_enable_opt_divergent_atomics, def, 0, 3,\
                   "Enable fusion of divergent atomics (see brw_divergent_atomics_flags)")
+
+#define DRI_CONF_ANV_BRW_DISABLE_SUBGROUP_SIZE_CONTROL(def) \
+   DRI_CONF_OPT_B(anv_brw_disable_subgroup_size_control, def, \
+                  "Disable EXT_subgroup_size_control support when using brw compiler.")
 
 /**
  * \brief HASVK specific configuration options

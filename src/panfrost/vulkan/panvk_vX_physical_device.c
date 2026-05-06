@@ -95,7 +95,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_sampler_mirror_clamp_to_edge = true,
       .KHR_sampler_ycbcr_conversion = true,
       .KHR_separate_depth_stencil_layouts = true,
-      .KHR_shader_clock = true,
+      .KHR_shader_clock = device->kmod.dev->props.gpu_can_query_timestamp,
       .KHR_shader_draw_parameters = true,
       .KHR_shader_expect_assume = true,
       .KHR_shader_float_controls = true,
@@ -150,6 +150,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_display_control = true,
 #endif
       .EXT_descriptor_indexing = PAN_ARCH >= 9,
+      .EXT_dynamic_rendering_unused_attachments = true,
       .EXT_extended_dynamic_state = true,
       .EXT_extended_dynamic_state2 = true,
       .EXT_external_memory_acquire_unmodified = true,
@@ -222,7 +223,7 @@ panvk_per_arch(get_physical_device_extensions)(
 
       .VALVE_mutable_descriptor_type = PAN_ARCH >= 9,
 
-      .ARM_shader_core_builtins = true,
+      .ARM_shader_core_builtins = PAN_ARCH >= 9,
       .ARM_shader_core_properties = has_vk1_1,
       .ARM_scheduling_controls = PAN_ARCH >= 10,
    };
@@ -484,6 +485,9 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_EXT_depth_clip_enable */
       .depthClipEnable = true,
+
+      /* VK_EXT_dynamic_rendering_unused_attachments */
+      .dynamicRenderingUnusedAttachments = true,
 
       /* VK_EXT_extended_dynamic_state */
       .extendedDynamicState = true,

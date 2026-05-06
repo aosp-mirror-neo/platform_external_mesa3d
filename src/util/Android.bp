@@ -118,6 +118,72 @@ cc_defaults {
 }
 
 cc_defaults {
+    name: "mesa_util_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_defaults {
+    name: "mesa_util_clflush_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: select(arch(), {
+        "x86_64": [
+            "-fvisibility=hidden",
+        ],
+        "x86": [
+            "-fvisibility=hidden",
+        ],
+        default: [],
+    }),
+}
+
+cc_defaults {
+    name: "mesa_util_clflushopt_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: select(arch(), {
+        "x86_64": [
+            "-fvisibility=hidden",
+        ],
+        "x86": [
+            "-fvisibility=hidden",
+        ],
+        default: [],
+    }),
+}
+
+cc_defaults {
+    name: "mesa_util_cpp_flags",
+    vendor: true,
+    host_supported: true,
+    cppflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_defaults {
+    name: "mesa_util_simd_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_defaults {
+    name: "parson_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
+cc_defaults {
     name: "xmlconfig_c_flags",
     vendor: true,
     host_supported: true,
@@ -126,6 +192,7 @@ cc_defaults {
         "-DSYSCONFDIR=\"/usr/local/etc\"",
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -136,6 +203,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -151,6 +219,8 @@ cc_library_static {
         "aosp_mesa3d_c_project_args",
         "aosp_mesa3d_cpp_link_args",
         "aosp_mesa3d_cpp_project_args",
+        "mesa_util_c_flags",
+        "mesa_util_cpp_flags",
     ],
     header_libs: [
         "inc_include",
@@ -320,6 +390,7 @@ cc_library_static {
     defaults: [
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "mesa_util_clflush_c_flags",
         "no_override_init_args",
     ],
     header_libs: select(arch(), {
@@ -353,6 +424,7 @@ cc_library_static {
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
         "clflushopt_args",
+        "mesa_util_clflushopt_c_flags",
         "no_override_init_args",
     ],
     header_libs: select(arch(), {
@@ -386,6 +458,7 @@ cc_library_static {
         "_trial_msvc",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "mesa_util_simd_c_flags",
         "sse41_args",
     ],
     header_libs: [
@@ -405,6 +478,7 @@ cc_library_static {
     defaults: [
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "parson_c_flags",
     ],
     srcs: [
         "parson.c",

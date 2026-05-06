@@ -186,6 +186,9 @@ anv_shader_init_uuid(struct anv_physical_device *device)
    const bool btp_bti_rcc = device->rt_change_needs_flush;
    _mesa_blake3_update(&ctx, &btp_bti_rcc, sizeof(btp_bti_rcc));
 
+   const bool cbv_push_buffer = device->instance->promote_cbv_to_push_buffers;
+   _mesa_blake3_update(&ctx, &cbv_push_buffer, sizeof(cbv_push_buffer));
+
    uint8_t blake3[BLAKE3_KEY_LEN];
    _mesa_blake3_final(&ctx, blake3);
    memcpy(device->shader_binary_uuid, blake3, sizeof(device->shader_binary_uuid));
@@ -219,7 +222,7 @@ anv_shader_get_spirv_options(struct vk_physical_device *device,
       .phys_ssbo_addr_format = nir_address_format_64bit_global,
       .push_const_addr_format = nir_address_format_logical,
 
-      .printf = INTEL_DEBUG(DEBUG_SHADER_PRINT),
+      .printf = ANV_DEBUG(SHADER_PRINT),
 
       /* TODO: Consider changing this to an address format that has the NULL
        * pointer equals to 0.  That might be a better format to play nice
@@ -270,7 +273,7 @@ anv_shader_preprocess_nir(struct vk_physical_device *device,
    NIR_PASS(_, nir, nir_opt_barrier_modes);
    NIR_PASS(_, nir, nir_opt_acquire_release_barriers, SCOPE_QUEUE_FAMILY);
 
-   if (INTEL_DEBUG(DEBUG_SHADER_PRINT)) {
+   if (ANV_DEBUG(SHADER_PRINT)) {
       const nir_lower_printf_options printf_opts = {
          .ptr_bit_size = 64,
          .hash_format_strings = true,
@@ -1530,10 +1533,23 @@ anv_shader_lower_nir(struct anv_device *device,
                pdevice->isl_dev.shader_tiling);
    }
 
-   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
-            nir_address_format_64bit_global);
+   /* Lower push constants variables prior to global realignment for CBV
+    * resources, it makes identifying a 64bit pointer from the push constants
+    * easier.
+    */
    NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_push_const,
             nir_address_format_32bit_offset);
+
+   /* Realign pointers to CBV on stages that can promote to push buffers. */
+   if (pdevice->instance->promote_cbv_to_push_buffers &&
+       nir->info.stage <= MESA_SHADER_FRAGMENT) {
+      /* Cleanup for the analysis, we don't want any ALU */
+      cleanup_nir(nir);
+      NIR_PASS(_, nir, anv_nir_realign_cbv);
+   }
+
+   NIR_PASS(_, nir, nir_lower_explicit_io, nir_var_mem_global,
+            nir_address_format_64bit_global);
 
    NIR_PASS(_, nir, brw_nir_lower_ray_queries, &pdevice->info);
 

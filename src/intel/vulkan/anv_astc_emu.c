@@ -493,9 +493,16 @@ anv_device_init_astc_emu(struct anv_device *device)
       simple_mtx_init(&astc_emu->mutex, mtx_plain);
 
    if (device->physical->emu_astc_ldr) {
-      result = vk_texcompress_astc_init(&device->vk, &device->vk.alloc,
-                                        VK_NULL_HANDLE,
-                                        &astc_emu->texcompress);
+      result = vk_texcompress_astc_init(
+         &device->vk, &device->vk.alloc, VK_NULL_HANDLE,
+         &astc_emu->texcompress,
+         (struct vk_texcompress_astc_params) {
+            .luts_alignment = 64,
+            .luts_memory_flags = (VK_MEMORY_PROPERTY_HOST_COHERENT_BIT |
+                                  VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                                  (device->physical->has_small_bar ? 0 :
+                                   VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)),
+         });
    }
 
    return result;

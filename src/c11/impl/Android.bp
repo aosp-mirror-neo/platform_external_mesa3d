@@ -14,6 +14,15 @@ package {
     default_applicable_licenses: ["external_mesa3d_license"],
 }
 
+cc_defaults {
+    name: "mesa_util_c11_c_flags",
+    vendor: true,
+    host_supported: true,
+    cflags: [
+        "-fvisibility=hidden",
+    ],
+}
+
 cc_library_static {
     name: "mesa_util_c11",
     vendor: true,
@@ -23,6 +32,7 @@ cc_library_static {
         "_trial_msvc",
         "aosp_mesa3d_c_link_args",
         "aosp_mesa3d_c_project_args",
+        "mesa_util_c11_c_flags",
     ],
     header_libs: [
         "inc_util_c11",

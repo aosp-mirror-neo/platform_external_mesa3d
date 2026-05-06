@@ -124,6 +124,7 @@ cc_defaults {
     cflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -134,6 +135,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -144,6 +146,7 @@ cc_defaults {
     cflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -154,6 +157,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -164,6 +168,7 @@ cc_defaults {
     cflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -174,6 +179,7 @@ cc_defaults {
     cppflags: [
         "-DXXH_FORCE_ALIGN_CHECK=0",
         "-DXXH_FORCE_MEMORY_ACCESS=0",
+        "-fvisibility=hidden",
     ],
 }
 
@@ -230,7 +236,6 @@ cc_library_static {
         "inc_src_gallium_auxiliary_indices",
         "inc_src_gallium_auxiliary_nir",
         "inc_src_gallium_auxiliary_pipebuffer",
-        "inc_src_gallium_auxiliary_postprocess",
         "inc_src_gallium_auxiliary_renderonly",
         "inc_src_gallium_auxiliary_rtasm",
         "inc_src_gallium_auxiliary_tessellator",
@@ -272,7 +277,6 @@ cc_library_static {
         ":files_libgallium_13",
         ":files_libgallium_14",
         ":files_libgallium_15",
-        ":files_libgallium_16",
         ":files_libgallium_2",
         ":files_libgallium_3",
         ":files_libgallium_4",
