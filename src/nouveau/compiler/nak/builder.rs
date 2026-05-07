@@ -4,12 +4,12 @@
 use crate::ir::*;
 
 pub trait Builder {
-    fn push_instr(&mut self, instr: Box<Instr>) -> &mut Instr;
+    fn push_instr(&mut self, instr: Instr) -> &mut Instr;
 
     fn sm(&self) -> u8;
 
     fn push_op(&mut self, op: impl Into<Op>) -> &mut Instr {
-        self.push_instr(Instr::new_boxed(op))
+        self.push_instr(Instr::new(op))
     }
 
     fn predicate(&mut self, pred: Pred) -> PredicatedBuilder<'_, Self>
@@ -241,6 +241,42 @@ pub trait SSABuilder: Builder {
         dst
     }
 
+    fn urol(&mut self, x: Src, shift: Src) -> SSAValue {
+        let dst = self.alloc_ssa(RegFile::GPR);
+        assert!(self.sm() >= 32);
+
+        self.push_op(OpShf {
+            dst: dst.into(),
+            low: x.clone(),
+            high: x,
+            shift: shift,
+            right: false,
+            wrap: true,
+            data_type: IntType::U32,
+            dst_high: true,
+        });
+
+        dst
+    }
+
+    fn uror(&mut self, x: Src, shift: Src) -> SSAValue {
+        let dst = self.alloc_ssa(RegFile::GPR);
+        assert!(self.sm() >= 32);
+
+        self.push_op(OpShf {
+            dst: dst.into(),
+            low: x.clone(),
+            high: x,
+            shift: shift,
+            right: true,
+            wrap: true,
+            data_type: IntType::U32,
+            dst_high: false,
+        });
+
+        dst
+    }
+
     fn fadd(&mut self, x: Src, y: Src) -> SSAValue {
         let dst = self.alloc_ssa(RegFile::GPR);
         self.push_op(OpFAdd {
@@ -249,19 +285,6 @@ pub trait SSABuilder: Builder {
             saturate: false,
             rnd_mode: FRndMode::NearestEven,
             ftz: false,
-        });
-        dst
-    }
-
-    fn fmul(&mut self, x: Src, y: Src) -> SSAValue {
-        let dst = self.alloc_ssa(RegFile::GPR);
-        self.push_op(OpFMul {
-            dst: dst.into(),
-            srcs: [x, y],
-            saturate: false,
-            rnd_mode: FRndMode::NearestEven,
-            ftz: false,
-            dnz: false,
         });
         dst
     }
@@ -707,46 +730,37 @@ pub trait SSABuilder: Builder {
         dst
     }
 
-    fn mufu(&mut self, op: MuFuOp, src: Src) -> SSAValue {
+    fn mufu(&mut self, op: MuFuOp, src: Src, op_type: FloatType) -> SSAValue {
         let dst = self.alloc_ssa(RegFile::GPR);
         self.push_op(OpMuFu {
             dst: dst.into(),
             op: op,
             src: src,
+            op_type: op_type,
         });
         dst
     }
 
     fn fsin(&mut self, src: Src) -> SSAValue {
-        let tmp = if self.sm() >= 70 {
-            let frac_1_2pi = 1.0 / (2.0 * std::f32::consts::PI);
-            self.fmul(src, frac_1_2pi.into())
-        } else {
-            let tmp = self.alloc_ssa(RegFile::GPR);
-            self.push_op(OpRro {
-                dst: tmp.into(),
-                op: RroOp::SinCos,
-                src,
-            });
-            tmp.into()
-        };
-        self.mufu(MuFuOp::Sin, tmp.into())
+        assert!(self.sm() < 70);
+        let tmp = self.alloc_ssa(RegFile::GPR);
+        self.push_op(OpRro {
+            dst: tmp.into(),
+            op: RroOp::SinCos,
+            src,
+        });
+        self.mufu(MuFuOp::Sin, tmp.into(), FloatType::F32)
     }
 
     fn fcos(&mut self, src: Src) -> SSAValue {
-        let tmp = if self.sm() >= 70 {
-            let frac_1_2pi = 1.0 / (2.0 * std::f32::consts::PI);
-            self.fmul(src, frac_1_2pi.into())
-        } else {
-            let tmp = self.alloc_ssa(RegFile::GPR);
-            self.push_op(OpRro {
-                dst: tmp.into(),
-                op: RroOp::SinCos,
-                src,
-            });
-            tmp.into()
-        };
-        self.mufu(MuFuOp::Cos, tmp.into())
+        assert!(self.sm() < 70);
+        let tmp = self.alloc_ssa(RegFile::GPR);
+        self.push_op(OpRro {
+            dst: tmp.into(),
+            op: RroOp::SinCos,
+            src,
+        });
+        self.mufu(MuFuOp::Cos, tmp.into(), FloatType::F32)
     }
 
     fn fexp2(&mut self, src: Src) -> SSAValue {
@@ -761,7 +775,7 @@ pub trait SSABuilder: Builder {
             });
             tmp.into()
         };
-        self.mufu(MuFuOp::Exp2, tmp)
+        self.mufu(MuFuOp::Exp2, tmp, FloatType::F32)
     }
 
     fn prmt(&mut self, x: Src, y: Src, sel: [u8; 4]) -> SSAValue {
@@ -861,11 +875,11 @@ pub trait SSABuilder: Builder {
             self.alloc_ssa(RegFile::GPR)
         };
         self.copy_to(dst.into(), src);
-        dst.into()
+        dst
     }
 
     fn bmov_to_bar(&mut self, src: Src) -> SSAValue {
-        assert!(src.src_ref.as_ssa().unwrap().file() == Some(RegFile::GPR));
+        assert!(src.src_ref.as_ssa().unwrap().file() == RegFile::GPR);
         let dst = self.alloc_ssa(RegFile::Bar);
         self.push_op(OpBMov {
             dst: dst.into(),
@@ -876,7 +890,7 @@ pub trait SSABuilder: Builder {
     }
 
     fn bmov_to_gpr(&mut self, src: Src) -> SSAValue {
-        assert!(src.src_ref.as_ssa().unwrap().file() == Some(RegFile::Bar));
+        assert!(src.src_ref.as_ssa().unwrap().file() == RegFile::Bar);
         let dst = self.alloc_ssa(RegFile::GPR);
         self.push_op(OpBMov {
             dst: dst.into(),
@@ -889,11 +903,11 @@ pub trait SSABuilder: Builder {
 
 pub struct InstrBuilder<'a> {
     instrs: MappedInstrs,
-    sm: &'a dyn ShaderModel,
+    sm: &'a ShaderModelInfo,
 }
 
 impl<'a> InstrBuilder<'a> {
-    pub fn new(sm: &'a dyn ShaderModel) -> Self {
+    pub fn new(sm: &'a ShaderModelInfo) -> Self {
         Self {
             instrs: MappedInstrs::None,
             sm,
@@ -902,7 +916,7 @@ impl<'a> InstrBuilder<'a> {
 }
 
 impl InstrBuilder<'_> {
-    pub fn into_vec(self) -> Vec<Box<Instr>> {
+    pub fn into_vec(self) -> Vec<Instr> {
         match self.instrs {
             MappedInstrs::None => Vec::new(),
             MappedInstrs::One(i) => vec![i],
@@ -916,9 +930,9 @@ impl InstrBuilder<'_> {
 }
 
 impl Builder for InstrBuilder<'_> {
-    fn push_instr(&mut self, instr: Box<Instr>) -> &mut Instr {
+    fn push_instr(&mut self, instr: Instr) -> &mut Instr {
         self.instrs.push(instr);
-        self.instrs.last_mut().unwrap().as_mut()
+        self.instrs.last_mut().unwrap()
     }
 
     fn sm(&self) -> u8 {
@@ -933,7 +947,7 @@ pub struct SSAInstrBuilder<'a> {
 
 impl<'a> SSAInstrBuilder<'a> {
     pub fn new(
-        sm: &'a dyn ShaderModel,
+        sm: &'a ShaderModelInfo,
         alloc: &'a mut SSAValueAllocator,
     ) -> Self {
         Self {
@@ -944,18 +958,17 @@ impl<'a> SSAInstrBuilder<'a> {
 }
 
 impl SSAInstrBuilder<'_> {
-    pub fn into_vec(self) -> Vec<Box<Instr>> {
+    pub fn into_vec(self) -> Vec<Instr> {
         self.b.into_vec()
     }
 
-    #[allow(dead_code)]
     pub fn into_mapped_instrs(self) -> MappedInstrs {
         self.b.into_mapped_instrs()
     }
 }
 
 impl Builder for SSAInstrBuilder<'_> {
-    fn push_instr(&mut self, instr: Box<Instr>) -> &mut Instr {
+    fn push_instr(&mut self, instr: Instr) -> &mut Instr {
         self.b.push_instr(instr)
     }
 
@@ -980,7 +993,7 @@ pub struct PredicatedBuilder<'a, T: Builder> {
 }
 
 impl<T: Builder> Builder for PredicatedBuilder<'_, T> {
-    fn push_instr(&mut self, instr: Box<Instr>) -> &mut Instr {
+    fn push_instr(&mut self, instr: Instr) -> &mut Instr {
         let mut instr = instr;
         assert!(instr.pred.is_true());
         instr.pred = self.pred;
@@ -1014,7 +1027,7 @@ impl<'a, T: Builder> UniformBuilder<'a, T> {
 }
 
 impl<T: Builder> Builder for UniformBuilder<'_, T> {
-    fn push_instr(&mut self, instr: Box<Instr>) -> &mut Instr {
+    fn push_instr(&mut self, instr: Instr) -> &mut Instr {
         self.b.push_instr(instr)
     }
 

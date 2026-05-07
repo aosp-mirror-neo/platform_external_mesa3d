@@ -41,20 +41,12 @@ cmd_desc_state_bind_sets(struct panvk_descriptor_state *desc_state,
 
       desc_state->sets[set_idx] = set;
 
-      if (!set || !set->layout->dyn_buf_count)
-         continue;
-
-      for (unsigned b = 0; b < set->layout->binding_count; b++) {
-         VkDescriptorType type = set->layout->bindings[b].type;
-
-         if (!vk_descriptor_type_is_dynamic(type))
-            continue;
-
-         unsigned dyn_buf_idx = set->layout->bindings[b].desc_idx;
-         for (unsigned e = 0; e < set->layout->bindings[b].desc_count; e++) {
-            desc_state->dyn_buf_offsets[set_idx][dyn_buf_idx++] =
+      if (set) {
+         for (unsigned b = 0; b < set->layout->dyn_buf_count; b++) {
+            desc_state->dyn_buf_offsets[set_idx][b] =
                info->pDynamicOffsets[dynoffset_idx++];
          }
+         desc_state->dyn_ssbos[set_idx] = set->layout->dyn_ssbos;
       }
    }
 
@@ -86,12 +78,11 @@ cmd_get_push_desc_set(struct vk_command_buffer *vk_cmdbuf,
    } else {
       push_set = vk_zalloc(&pool->vk.alloc, sizeof(*push_set), 8,
                            VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      if (unlikely(!push_set)) {
+         vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
+         return NULL;
+      }
       list_addtail(&push_set->base.node, &cmdbuf->push_sets);
-   }
-
-   if (unlikely(!push_set)) {
-      vk_command_buffer_set_error(&cmdbuf->vk, VK_ERROR_OUT_OF_HOST_MEMORY);
-      return NULL;
    }
 
    if (desc_state->push_sets[set_idx] == NULL) {
@@ -113,7 +104,7 @@ VkResult
 panvk_per_arch(cmd_prepare_dyn_ssbos)(
    struct panvk_cmd_buffer *cmdbuf,
    const struct panvk_descriptor_state *desc_state,
-   const struct panvk_shader *shader,
+   const struct panvk_shader_variant *shader,
    struct panvk_shader_desc_state *shader_desc_state)
 {
    shader_desc_state->dyn_ssbos = 0;
@@ -151,7 +142,7 @@ panvk_per_arch(cmd_prepare_dyn_ssbos)(
 
 static void
 panvk_cmd_fill_dyn_ubos(const struct panvk_descriptor_state *desc_state,
-                        const struct panvk_shader *shader,
+                        const struct panvk_shader_variant *shader,
                         struct mali_uniform_buffer_packed *ubos,
                         uint32_t ubo_count)
 {
@@ -180,7 +171,7 @@ VkResult
 panvk_per_arch(cmd_prepare_shader_desc_tables)(
    struct panvk_cmd_buffer *cmdbuf,
    const struct panvk_descriptor_state *desc_state,
-   const struct panvk_shader *shader,
+   const struct panvk_shader_variant *shader,
    struct panvk_shader_desc_state *shader_desc_state)
 {
    memset(shader_desc_state->tables, 0, sizeof(shader_desc_state->tables));
@@ -246,7 +237,8 @@ panvk_per_arch(cmd_prepare_shader_desc_tables)(
 void
 panvk_per_arch(cmd_fill_dyn_bufs)(
    const struct panvk_descriptor_state *desc_state,
-   const struct panvk_shader *shader, struct mali_buffer_packed *buffers)
+   const struct panvk_shader_variant *shader,
+   struct mali_buffer_packed *buffers)
 {
    if (!shader)
       return;
@@ -258,12 +250,14 @@ panvk_per_arch(cmd_fill_dyn_bufs)(
       const struct panvk_descriptor_set *set = desc_state->sets[set_idx];
       const uint32_t dyn_buf_offset =
          desc_state->dyn_buf_offsets[set_idx][dyn_buf_idx];
+      const bool is_ssbo =
+         desc_state->dyn_ssbos[set_idx] & BITFIELD_BIT(dyn_buf_idx);
 
       assert(set_idx < MAX_SETS);
       assert(set);
 
       pan_pack(&buffers[i], BUFFER, cfg) {
-         cfg.size = set->dyn_bufs[dyn_buf_idx].size;
+         cfg.size = align(set->dyn_bufs[dyn_buf_idx].size, is_ssbo ? 4 : 16);
          cfg.address = set->dyn_bufs[dyn_buf_idx].dev_addr + dyn_buf_offset;
       }
    }
@@ -273,7 +267,7 @@ VkResult
 panvk_per_arch(cmd_prepare_shader_res_table)(
    struct panvk_cmd_buffer *cmdbuf,
    const struct panvk_descriptor_state *desc_state,
-   const struct panvk_shader *shader,
+   const struct panvk_shader_variant *shader,
    struct panvk_shader_desc_state *shader_desc_state, uint32_t repeat_count)
 {
    if (!shader) {

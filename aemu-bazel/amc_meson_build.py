@@ -12,6 +12,8 @@ def main():
     parser = argparse.ArgumentParser(description="Build Meson project using AMC toolchain.")
     parser.add_argument("--build-config", required=True, help="Path to the build config file.")
     parser.add_argument("--install-dir", help="Optional directory to copy build artifacts to.")
+    parser.add_argument("--gen-bazel", action="store_true", help="Generate Bazel files instead of building.")
+    parser.add_argument("--shim", help="Path to the shim config file (required for Bazel generation).")
     parser.add_argument("meson_project_dir", help="Directory of the Meson project.")
 
     args = parser.parse_args()
@@ -37,7 +39,10 @@ def main():
     script_dir = Path(__file__).resolve().parent
     # AOSP_ROOT is 3 levels up from third_party/mesa3d/aemu-bazel
     aosp_root = script_dir.parents[2]
-    output_dir = script_dir / "out-amc"
+    if args.gen_bazel:
+        output_dir = script_dir / "out-amc-bazel"
+    else:
+        output_dir = script_dir / "out-amc"
 
     if not aosp_root.exists():
         print(f"Error: AOSP_ROOT directory not found at {aosp_root}")
@@ -55,6 +60,59 @@ def main():
         print(f"Removing existing output directory: {output_dir}")
         shutil.rmtree(output_dir)
 
+    if args.gen_bazel:
+        print("--- Running amc.py bazel (Generate Bazel files) ---")
+        cmd = [sys.executable, str(amc_py_path), "-v", "bazel", "--aosp", str(aosp_root), "--config", str(build_config_path)]
+        if args.shim:
+            cmd += ["--shim", str(Path(args.shim).resolve())]
+        cmd.append(str(output_dir))
+        
+        try:
+            subprocess.check_call(cmd, cwd=meson_project_dir)
+        except subprocess.CalledProcessError as e:
+            print(f"Error running amc.py bazel: {e}")
+            sys.exit(1)
+
+        print("--- Post processing generated Bazel files ---")
+        zip_files = list(output_dir.glob("*.zip"))
+        if not zip_files:
+            print(f"Error: No .zip files found in {output_dir}")
+            sys.exit(1)
+
+        zip_path = zip_files[0]
+        dest_dir = meson_project_dir
+
+        build_bazel_path = dest_dir / "BUILD.bazel"
+        if build_bazel_path.exists():
+            print(f"Cleaning up old BUILD.bazel file")
+            os.remove(build_bazel_path)
+
+        platform_dir = dest_dir / "platform"
+        if platform_dir.exists():
+            print(f"Cleaning up old platform directory")
+            shutil.rmtree(platform_dir)
+
+        import zipfile
+        print(f"Extracting {zip_path} into {dest_dir}")
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            zf.extractall(dest_dir)
+
+        generated_build_files = list((dest_dir / "platform").glob("BUILD.*"))
+        if not generated_build_files:
+            print(f"Error: Could not find BUILD.* in extracted platform folder")
+            sys.exit(1)
+
+        print(f"Renaming {generated_build_files[0]} to {build_bazel_path}")
+        os.rename(generated_build_files[0], build_bazel_path)
+
+        buildifier_path = aosp_root / "tools" / "buildSrc" / "servers" / "buildifier.py"
+        if buildifier_path.exists():
+            print(f"Formatting with buildifier: {buildifier_path}")
+            subprocess.run([sys.executable, str(buildifier_path), str(build_bazel_path)])
+
+        print("--- Bazel files generated successfully ---")
+        sys.exit(0)
+
     print("--- Running amc.py setup ---")
     # We run from meson_project_dir to match the behavior of 'cd "$MESON_PROJECT_DIR"' in the shell script
     try:
@@ -63,7 +121,7 @@ def main():
             cwd=meson_project_dir
         )
     except subprocess.CalledProcessError as e:
-        print(f"Error running amc.py: {e}")
+        print(f"Error running amc.py setup: {e}")
         sys.exit(1)
 
     print("--- Verifying amc.py setup output ---")

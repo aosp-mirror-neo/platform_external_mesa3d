@@ -67,40 +67,36 @@ build_background_op(nir_builder *b, enum agx_bg_eot_op op, unsigned rt,
                     unsigned nr, bool msaa, bool layered)
 {
    if (op == AGX_BG_LOAD) {
-      nir_def *coord = nir_u2u32(b, nir_load_pixel_coord(b));
+      nir_def *coord = nir_load_pixel_coord(b);
+
+      /* MSAA/array lowerings assume 32-bit coordinates, could be lifted but
+       * that's going to need more work.
+       */
+      if (layered || msaa)
+         coord = nir_u2u32(b, coord);
 
       if (layered) {
          coord = nir_vec3(b, nir_channel(b, coord, 0), nir_channel(b, coord, 1),
                           nir_load_layer_id(b));
       }
 
-      nir_tex_instr *tex = nir_tex_instr_create(b->shader, 2);
-      /* The type doesn't matter as long as it matches the store */
-      tex->dest_type = nir_type_uint32;
-      tex->sampler_dim = msaa ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;
-      tex->is_array = layered;
-      tex->op = msaa ? nir_texop_txf_ms : nir_texop_txf;
-      tex->src[0] = nir_tex_src_for_ssa(nir_tex_src_coord, coord);
+      b->shader->info.fs.uses_sample_shading |= msaa;
 
-      /* Layer is necessarily already in-bounds so we do not want the compiler
-       * to clamp it, which would require reading the descriptor
-       */
-      tex->backend_flags = AGX_TEXTURE_FLAG_NO_CLAMP;
+      nir_def *tex = nir_txf(
+         b, coord, .ms_index = msaa ? nir_load_sample_id(b) : NULL,
+         .texture_index = rt * 2,
+         .dim = msaa ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D,
+         .is_array = layered,
 
-      if (msaa) {
-         tex->src[1] =
-            nir_tex_src_for_ssa(nir_tex_src_ms_index, nir_load_sample_id(b));
-         b->shader->info.fs.uses_sample_shading = true;
-      } else {
-         tex->src[1] = nir_tex_src_for_ssa(nir_tex_src_lod, nir_imm_int(b, 0));
-      }
+         /* The type doesn't matter as long as it matches the store */
+         .dest_type = nir_type_uint32,
 
-      tex->coord_components = layered ? 3 : 2;
-      tex->texture_index = rt * 2;
-      nir_def_init(&tex->instr, &tex->def, 4, 32);
-      nir_builder_instr_insert(b, &tex->instr);
+         /* Layer is necessarily already in-bounds so we do not want the
+          * compiler to clamp it, which would require reading the descriptor
+          */
+         .backend_flags = AGX_TEXTURE_FLAG_NO_CLAMP);
 
-      return nir_trim_vector(b, &tex->def, nr);
+      return nir_trim_vector(b, tex, nr);
    } else {
       assert(op == AGX_BG_CLEAR);
 
@@ -172,8 +168,8 @@ agx_build_end_of_tile_shader(struct agx_bg_eot_cache *cache,
          layer = nir_u2u16(&b, nir_load_layer_id(&b));
 
       nir_image_store_block_agx(
-         &b, nir_imm_intN_t(&b, rt, 16), nir_imm_intN_t(&b, offset_B, 16),
-         layer, .format = agx_tilebuffer_physical_format(&key->tib, rt),
+         &b, nir_imm_intN_t(&b, rt, 16), nir_imm_int(&b, offset_B), layer,
+         .format = agx_tilebuffer_physical_format(&key->tib, rt),
          .image_dim = dim, .image_array = key->tib.layered);
    }
 

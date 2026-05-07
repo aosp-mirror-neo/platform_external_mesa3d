@@ -18,15 +18,17 @@
 #include "vk_ycbcr_conversion.h"
 
 static enum mali_mipmap_mode
-panvk_translate_sampler_mipmap_mode(VkSamplerMipmapMode mode)
+panvk_translate_sampler_mipmap_mode(VkSamplerMipmapMode mode,
+                                    bool use_perf_trilinear)
 {
    switch (mode) {
    case VK_SAMPLER_MIPMAP_MODE_NEAREST:
       return MALI_MIPMAP_MODE_NEAREST;
    case VK_SAMPLER_MIPMAP_MODE_LINEAR:
-      return MALI_MIPMAP_MODE_TRILINEAR;
+      return use_perf_trilinear ? MALI_MIPMAP_MODE_PERFORMANCE_TRILINEAR :
+                                  MALI_MIPMAP_MODE_TRILINEAR;
    default:
-      unreachable("Invalid mipmap mode");
+      UNREACHABLE("Invalid mipmap mode");
    }
 }
 
@@ -45,7 +47,7 @@ panvk_translate_sampler_address_mode(VkSamplerAddressMode mode)
    case VK_SAMPLER_ADDRESS_MODE_MIRROR_CLAMP_TO_EDGE:
       return MALI_WRAP_MODE_MIRRORED_CLAMP_TO_EDGE;
    default:
-      unreachable("Invalid wrap");
+      UNREACHABLE("Invalid wrap");
    }
 }
 
@@ -70,7 +72,7 @@ panvk_translate_reduction_mode(VkSamplerReductionMode reduction_mode)
    case VK_SAMPLER_REDUCTION_MODE_MAX:
       return MALI_REDUCTION_MODE_MAXIMUM;
    default:
-      unreachable("Invalid reduction mode");
+      UNREACHABLE("Invalid reduction mode");
    }
 }
 #endif
@@ -106,11 +108,12 @@ panvk_sampler_fill_desc(const struct VkSamplerCreateInfo *info,
                         VkSamplerReductionMode reduction_mode,
                         VkSamplerCreateFlags flags)
 {
+   bool use_aniso = info->anisotropyEnable && info->maxAnisotropy > 1;
    pan_pack(desc, SAMPLER, cfg) {
       cfg.magnify_nearest = mag_filter == VK_FILTER_NEAREST;
       cfg.minify_nearest = min_filter == VK_FILTER_NEAREST;
       cfg.mipmap_mode =
-         panvk_translate_sampler_mipmap_mode(info->mipmapMode);
+         panvk_translate_sampler_mipmap_mode(info->mipmapMode, use_aniso);
       cfg.normalized_coordinates = !info->unnormalizedCoordinates;
       cfg.clamp_integer_array_indices = false;
 
@@ -165,7 +168,7 @@ panvk_sampler_fill_desc(const struct VkSamplerCreateInfo *info,
       cfg.border_color_b = border_color.uint32[2];
       cfg.border_color_a = border_color.uint32[3];
 
-      if (info->anisotropyEnable && info->maxAnisotropy > 1) {
+      if (use_aniso) {
          cfg.maximum_anisotropy = info->maxAnisotropy;
          cfg.lod_algorithm = MALI_LOD_ALGORITHM_ANISOTROPIC;
       }

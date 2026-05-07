@@ -22,11 +22,7 @@ use std::ops::Range;
 
 use crate::extent::{units, Extent4D};
 use crate::format::Format;
-use crate::image::Image;
-use crate::image::ImageDim;
-use crate::image::SampleLayout;
-use crate::image::View;
-use crate::image::ViewType;
+use crate::image::{Image, ImageDim, SampleLayout, View, ViewAccess, ViewType};
 
 macro_rules! set_enum {
     ($th:expr, $cls:ident, $field:ident, $enum:ident) => {
@@ -277,6 +273,19 @@ fn normalize_extent(image: &Image, view: &View) -> Extent4D<units::Pixels> {
     }
     extent.array_len = 0;
 
+    // When an MSAA image is accessed through surface ops (suld/sust), the
+    // surface hardware entirely ignores the sample layout so we have to
+    // increase the size in the descriptor or else it will crop to the upper
+    // left corner.
+    if view.access == ViewAccess::Storage
+        && image.sample_layout != SampleLayout::_1x1
+    {
+        assert!(image.dim == ImageDim::_2D);
+        assert!(view.base_level == 0);
+        assert!(view.num_levels == 1);
+        extent = extent.to_sa(image.sample_layout).cast_units();
+    }
+
     extent
 }
 
@@ -512,7 +521,7 @@ fn nvb097_fill_image_view_desc(
 
     th.set_field(clb097::TEXHEAD_BL_S_R_G_B_CONVERSION, view.format.is_srgb());
 
-    set_enum!(th, clb097, TEXHEAD_BL_SECTOR_PROMOTION, PROMOTE_TO_2_V);
+    set_enum!(th, clb097, TEXHEAD_BL_SECTOR_PROMOTION, NO_PROMOTION);
     set_enum!(th, clb097, TEXHEAD_BL_BORDER_SIZE, BORDER_SAMPLER_COLOR);
 
     // In the sampler, the two options for FLOAT_COORD_NORMALIZATION are:
@@ -580,7 +589,7 @@ fn nvcb97_fill_image_view_desc(
             view.base_array_layer + view.array_len <= image.extent_px.array_len
         );
         layer_address +=
-            u64::from(view.base_array_layer) * u64::from(image.array_stride_B);
+            u64::from(view.base_array_layer) * image.array_stride_B;
     }
 
     if tiling.is_tiled() {
@@ -694,7 +703,7 @@ fn nvcb97_fill_image_view_desc(
         view.format.is_srgb(),
     );
 
-    set_enum!(th, clcb97, TEXHEAD_V2_BL_SECTOR_PROMOTION, PROMOTE_TO_2_V);
+    set_enum!(th, clcb97, TEXHEAD_V2_BL_SECTOR_PROMOTION, NO_PROMOTION);
     set_enum!(th, clcb97, TEXHEAD_V2_BL_BORDER_SOURCE, BORDER_COLOR);
 
     // In the sampler, the two options for FLOAT_COORD_NORMALIZATION are:
@@ -793,7 +802,7 @@ fn nvb097_nil_fill_buffer_desc(
     set_enum!(th, clb097, TEXHEAD_1D_TEXTURE_TYPE, ONE_D_BUFFER);
 
     // TODO: Do we need this?
-    set_enum!(th, clb097, TEXHEAD_1D_SECTOR_PROMOTION, PROMOTE_TO_2_V);
+    set_enum!(th, clb097, TEXHEAD_1D_SECTOR_PROMOTION, NO_PROMOTION);
 }
 
 fn nvcb97_nil_fill_buffer_desc(
@@ -824,7 +833,7 @@ fn nvcb97_nil_fill_buffer_desc(
     th.set_field(clcb97::TEXHEAD_V2_1DRT_WIDTH_MINUS_ONE, num_elements - 1);
 
     // TODO: Do we need this?
-    set_enum!(th, clcb97, TEXHEAD_1D_SECTOR_PROMOTION, PROMOTE_TO_2_V);
+    set_enum!(th, clcb97, TEXHEAD_1D_SECTOR_PROMOTION, NO_PROMOTION);
 }
 
 pub const ZERO_SWIZZLE: [nil_rs_bindings::pipe_swizzle; 4] = [
@@ -922,6 +931,9 @@ impl Descriptor {
                 &mut desc.bits,
             );
         } else if dev.cls_eng3d >= FERMI_A {
+            // Kepler and earlier doesn't support surface access through
+            // conventional image descriptors
+            assert_eq!(view.access, ViewAccess::Texture);
             nv9097_fill_image_view_desc(
                 image,
                 view,

@@ -44,8 +44,11 @@ nir_def *nir_normalize(nir_builder *b, nir_def *vec);
 nir_def *nir_smoothstep(nir_builder *b, nir_def *edge0,
                         nir_def *edge1, nir_def *x);
 nir_def *nir_upsample(nir_builder *b, nir_def *hi, nir_def *lo);
+nir_def *nir_acos(nir_builder *b, nir_def *x);
+nir_def *nir_asin(nir_builder *b, nir_def *x);
 nir_def *nir_atan(nir_builder *b, nir_def *y_over_x);
 nir_def *nir_atan2(nir_builder *b, nir_def *y, nir_def *x);
+
 
 nir_def *
 nir_build_texture_query(nir_builder *b, nir_tex_instr *tex, nir_texop texop,
@@ -61,10 +64,10 @@ nir_get_texture_size(nir_builder *b, nir_tex_instr *tex);
 static inline nir_def *
 nir_fisnan(nir_builder *b, nir_def *x)
 {
-   bool old_exact = b->exact;
-   b->exact = true;
+   unsigned old_fp_math_ctrl = b->fp_math_ctrl;
+   b->fp_math_ctrl |= nir_fp_exact;
    nir_def *res = nir_fneu(b, x, x);
-   b->exact = old_exact;
+   b->fp_math_ctrl = old_fp_math_ctrl;
    return res;
 }
 

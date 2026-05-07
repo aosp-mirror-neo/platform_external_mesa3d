@@ -1,4 +1,29 @@
-# Video failures
-dEQP-VK.video.capabilities.queue_support_query,Fail
-
-dEQP-VK.binding_model.descriptor_buffer.sparse_binding_buffer.capture_replay.compute_comp_combined_image_sampler_custom_border_color,Fail
+# RADV bug
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.general.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.general.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.transfer_dst_optimal.32x32x1_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.transfer_dst_optimal.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.transfer_dst_optimal.32x32x2_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.transfer_dst_optimal.32x32x2_cq_regions_img2img,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm.transfer_dst_optimal.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.general.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.general.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.transfer_dst_optimal.32x32x1_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.transfer_dst_optimal.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.transfer_dst_optimal.32x32x2_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.transfer_dst_optimal.32x32x2_cq_regions_img2img,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d16_unorm_s8_uint.transfer_dst_optimal.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.general.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.general.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.transfer_dst_optimal.32x32x1_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.transfer_dst_optimal.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.transfer_dst_optimal.32x32x2_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.transfer_dst_optimal.32x32x2_cq_regions_img2img,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat.transfer_dst_optimal.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.general.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.general.32x32x2_cq_regions_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.transfer_dst_optimal.32x32x1_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.transfer_dst_optimal.32x32x2_cq_img2img_msaa,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.transfer_dst_optimal.32x32x2_cq_regions,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.transfer_dst_optimal.32x32x2_cq_regions_img2img,Fail
+dEQP-VK.api.copy_and_blit.core.use_after_copy.d32_sfloat_s8_uint.transfer_dst_optimal.32x32x2_cq_regions_img2img_msaa,Fail

@@ -46,6 +46,7 @@ struct gl_program;
 struct gl_transform_feedback_info;
 struct xfb_decl;
 struct nir_xfb_info;
+struct pipe_screen;
 
 struct gl_nir_linker_options {
    bool fill_parameters;
@@ -62,7 +63,8 @@ void gl_nir_opts(nir_shader *nir);
 void gl_nir_detect_recursion_linked(struct gl_shader_program *prog,
                                     nir_shader *shader);
 
-bool gl_nir_link_spirv(const struct gl_constants *consts,
+bool gl_nir_link_spirv(const struct pipe_screen *screen,
+                       const struct gl_constants *consts,
                        const struct gl_extensions *exts,
                        struct gl_shader_program *prog,
                        const struct gl_nir_linker_options *options);
@@ -80,7 +82,8 @@ bool gl_nir_link_uniforms(const struct gl_constants *consts,
                           struct gl_shader_program *prog,
                           bool fill_parameters);
 
-bool gl_nir_link_varyings(const struct gl_constants *consts,
+bool gl_nir_link_varyings(const struct pipe_screen *screen,
+                          const struct gl_constants *consts,
                           const struct gl_extensions *exts,
                           gl_api api, struct gl_shader_program *prog);
 

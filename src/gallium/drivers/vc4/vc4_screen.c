@@ -109,7 +109,7 @@ vc4_screen_destroy(struct pipe_screen *pscreen)
                 screen->ro->destroy(screen->ro);
 
 #ifdef USE_VC4_SIMULATOR
-        vc4_simulator_destroy(screen);
+        vc4_simulator_destroy(screen->sim_file);
 #endif
 
         u_transfer_helper_destroy(pscreen->transfer_helper);
@@ -135,11 +135,11 @@ vc4_has_feature(struct vc4_screen *screen, uint32_t feature)
 static void
 vc4_init_shader_caps(struct vc4_screen *screen)
 {
-        for (unsigned i = 0; i <= PIPE_SHADER_FRAGMENT; i++) {
+        for (unsigned i = 0; i <= MESA_SHADER_FRAGMENT; i++) {
                 struct pipe_shader_caps *caps =
                         (struct pipe_shader_caps *)&screen->base.shader_caps[i];
 
-                if (i != PIPE_SHADER_VERTEX && i != PIPE_SHADER_FRAGMENT)
+                if (i != MESA_SHADER_VERTEX && i != MESA_SHADER_FRAGMENT)
                         continue;
 
                 caps->max_instructions =
@@ -149,7 +149,7 @@ vc4_init_shader_caps(struct vc4_screen *screen)
 
                 caps->max_control_flow_depth = screen->has_control_flow;
                 caps->max_inputs = 8;
-                caps->max_outputs = i == PIPE_SHADER_FRAGMENT ? 1 : 8;
+                caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 1 : 8;
                 caps->max_temps = 256; /* GL_MAX_PROGRAM_TEMPORARIES_ARB */
                 caps->max_const_buffer0_size = 16 * 1024 * sizeof(float);
                 caps->max_const_buffers = 1;
@@ -422,15 +422,15 @@ vc4_get_chip_info(struct vc4_screen *screen)
                         screen->v3d_ver = 21;
                         return true;
                 } else {
-                        fprintf(stderr, "Couldn't get V3D IDENT0: %s\n",
-                                strerror(errno));
+                        mesa_loge("Couldn't get V3D IDENT0: %s",
+                                  strerror(errno));
                         return false;
                 }
         }
         ret = vc4_ioctl(screen->fd, DRM_IOCTL_VC4_GET_PARAM, &ident1);
         if (ret != 0) {
-                fprintf(stderr, "Couldn't get V3D IDENT1: %s\n",
-                        strerror(errno));
+                mesa_loge("Couldn't get V3D IDENT1: %s",
+                          strerror(errno));
                 return false;
         }
 
@@ -439,10 +439,9 @@ vc4_get_chip_info(struct vc4_screen *screen)
         screen->v3d_ver = major * 10 + minor;
 
         if (screen->v3d_ver != 21 && screen->v3d_ver != 26) {
-                fprintf(stderr,
-                        "V3D %d.%d not supported by this version of Mesa.\n",
-                        screen->v3d_ver / 10,
-                        screen->v3d_ver % 10);
+                mesa_loge("V3D %d.%d not supported by this version of Mesa.",
+                          screen->v3d_ver / 10,
+                          screen->v3d_ver % 10);
                 return false;
         }
 
@@ -505,15 +504,17 @@ vc4_screen_create(int fd, const struct pipe_screen_config *config,
         vc4_mesa_debug = debug_get_option_vc4_debug();
 
 #ifdef USE_VC4_SIMULATOR
-        vc4_simulator_init(screen);
+        screen->sim_file = vc4_simulator_init(screen);
 #endif
 
         vc4_resource_screen_init(pscreen);
 
+        for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+           pscreen->nir_options[i] = vc4_screen_get_compiler_options(pscreen, i);
+
         pscreen->get_name = vc4_screen_get_name;
         pscreen->get_vendor = vc4_screen_get_vendor;
         pscreen->get_device_vendor = vc4_screen_get_vendor;
-        pscreen->get_compiler_options = vc4_screen_get_compiler_options;
         pscreen->query_dmabuf_modifiers = vc4_screen_query_dmabuf_modifiers;
         pscreen->is_dmabuf_modifier_supported = vc4_screen_is_dmabuf_modifier_supported;
 

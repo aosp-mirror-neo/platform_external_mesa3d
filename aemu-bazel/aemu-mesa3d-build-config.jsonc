@@ -50,8 +50,8 @@
         "python3": "@lavapipe_bazel_deps//:python3",
         "wayland-scanner": "@wayland//:wayland-scanner",
         // TODO(joshuaduong): These lavapipe deps should be built from source.
-        "glslangValidator": "//prebuilts/android-emulator-build/common/vulkan/linux-x86_64/lavapipe-bazel-deps:py_glslangValidator",
-        "llvm-config": "//prebuilts/android-emulator-build/common/vulkan/linux-x86_64/lavapipe-bazel-deps:py_llvm_config"
+        "glslangValidator": "@lavapipe_bazel_deps//:py_glslangValidator",
+        "llvm-config": "@lavapipe_bazel_deps//:py_llvm_config"
       },
       "dependencies": {
         "zlib": {
@@ -78,7 +78,12 @@
           "version": "2.4.110",
           "shim": {
             "name": "libdrm",
-            "Libs": "${libdir}/libdrm.a"
+            "Libs": "${libdir}/libdrm.a",
+            // Hack: loader_dri_helper.h unconditionally includes <xcb/dri3.h>
+            // when HAVE_X11_PLATFORM is defined, but gbm_dri target in Meson
+            // doesn't explicitly depend on xcb-dri3.
+            // We force it transitively here via libdrm which gbm_dri depends on.
+            "Requires": "xcb-dri3"
           }
         },
         "libffi": {
@@ -127,7 +132,11 @@
           "shim": {
             "name": "xcb-dri3",
             "Libs": "-lxcb-aemu",
-            "include_target": "@libxcb//:xcb_lib"
+            "include_target": "@libxcb//:xcb_lib",
+            // Hack: loader_dri3_helper.c unconditionally includes <X11/Xlib-xcb.h>
+            // but libdri target in Meson doesn't explicitly depend on x11-xcb.
+            // We force it transitively here via xcb-dri3 which libdri depends on.
+            "Requires": "x11-xcb"
           }
         },
         "libxcb-present": {

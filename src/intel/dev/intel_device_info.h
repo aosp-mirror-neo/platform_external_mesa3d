@@ -31,6 +31,7 @@
 #include "util/bitset.h"
 #include "util/macros.h"
 #include "compiler/shader_enums.h"
+#include "intel_debug.h"
 #include "intel_kmd.h"
 
 #include "intel/dev/intel_wa.h"
@@ -82,6 +83,9 @@ extern "C" {
 #endif
 
 #define GFX_IP_VER(major, minor) ((major << 16) | minor)
+
+#define BMG_G31_IP_VER GFX_IP_VER(20, 2)
+#define intel_device_info_is_bmg_g31(devinfo) (devinfo->gfx_ip_ver == BMG_G31_IP_VER)
 
 static inline bool
 intel_device_info_slice_available(const struct intel_device_info *devinfo,
@@ -153,7 +157,7 @@ intel_device_info_dual_subslice_id_bound(const struct intel_device_info *devinfo
             return s * devinfo->max_subslices_per_slice + ss + 1;
       }
    }
-   unreachable("Invalid topology");
+   UNREACHABLE("Invalid topology");
    return 0;
 }
 
@@ -200,16 +204,47 @@ bool intel_device_info_compute_system_memory(struct intel_device_info *devinfo, 
 #ifdef GFX_VERx10
 #define intel_needs_workaround(devinfo, id)         \
    (INTEL_WA_ ## id ## _GFX_VER &&                              \
-    BITSET_TEST(devinfo->workarounds, INTEL_WA_##id))
+    BITSET_TEST((devinfo)->workarounds, INTEL_WA_##id))
 #else
 #define intel_needs_workaround(devinfo, id) \
-   BITSET_TEST(devinfo->workarounds, INTEL_WA_##id)
+   BITSET_TEST((devinfo)->workarounds, INTEL_WA_##id)
 #endif
 
 enum intel_wa_steppings intel_device_info_wa_stepping(struct intel_device_info *devinfo);
 
 uint32_t intel_device_info_get_max_slm_size(const struct intel_device_info *devinfo);
 uint32_t intel_device_info_get_max_preferred_slm_size(const struct intel_device_info *devinfo);
+
+/**
+ * True if this device supports the Extended Bindless Surface Offset mode,
+ * which offers 26-bit surface handles, instead of 20-bit.  This effectively
+ * gives us 4GB of bindless surface descriptors instead of only 64MB.
+ *
+ * On Gfx12.5 this is enabled via an "ExBSO" bit in the SEND instruction.
+ */
+static inline bool
+intel_has_extended_bindless(const struct intel_device_info *devinfo)
+{
+   return devinfo->verx10 >= 125;
+}
+
+/**
+ * Whether indirect UBO loads should use the sampler or go through the
+ * data/constant cache.  For the sampler, UBO surface states have to be set
+ * up with VK_FORMAT_R32G32B32A32_FLOAT whereas if it's going through the
+ * constant or data cache, UBOs must use VK_FORMAT_RAW.
+ */
+static inline bool
+intel_indirect_ubos_use_sampler(const struct intel_device_info *devinfo)
+{
+   return devinfo->ver < 12;
+}
+
+static inline bool
+intel_use_tcs_multi_patch(const struct intel_device_info *devinfo)
+{
+   return devinfo->ver >= 12;
+}
 
 #ifdef __cplusplus
 }

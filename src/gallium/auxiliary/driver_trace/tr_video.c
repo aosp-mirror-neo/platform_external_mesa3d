@@ -51,13 +51,6 @@ unwrap_refrence_frames(struct pipe_picture_desc **picture)
         *picture = (struct pipe_picture_desc*)copied;
         return true;
     }
-    case PIPE_VIDEO_FORMAT_MPEG4: {
-        struct pipe_mpeg4_picture_desc *copied = mem_dup(*picture, sizeof(struct pipe_mpeg4_picture_desc));
-        assert(copied);
-        unwrap_refrence_frames_in_place(copied->ref, ARRAY_SIZE(copied->ref));
-        *picture = (struct pipe_picture_desc*)copied;
-        return true;
-    }
     case PIPE_VIDEO_FORMAT_VC1:{
         struct pipe_vc1_picture_desc *copied = mem_dup(*picture, sizeof(struct pipe_vc1_picture_desc));
         assert(copied);
@@ -98,7 +91,7 @@ unwrap_refrence_frames(struct pipe_picture_desc **picture)
     }
     case PIPE_VIDEO_FORMAT_UNKNOWN:
     default:
-        unreachable("unknown video format");
+        UNREACHABLE("unknown video format");
     }
 }
 

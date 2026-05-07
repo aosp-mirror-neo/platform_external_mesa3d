@@ -1,24 +1,6 @@
 /*
  * Copyright © 2011 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "elk_vec4.h"
@@ -357,7 +339,7 @@ void
 vec4_visitor::emit_pack_half_2x16(dst_reg dst, src_reg src0)
 {
    if (devinfo->ver < 7) {
-      unreachable("ir_unop_pack_half_2x16 should be lowered");
+      UNREACHABLE("ir_unop_pack_half_2x16 should be lowered");
    }
 
    assert(dst.type == ELK_REGISTER_TYPE_UD);
@@ -434,7 +416,7 @@ void
 vec4_visitor::emit_unpack_half_2x16(dst_reg dst, src_reg src0)
 {
    if (devinfo->ver < 7) {
-      unreachable("ir_unop_unpack_half_2x16 should be lowered");
+      UNREACHABLE("ir_unop_unpack_half_2x16 should be lowered");
    }
 
    assert(dst.type == ELK_REGISTER_TYPE_F);
@@ -626,7 +608,7 @@ elk_type_size_xvec4(const struct glsl_type *type, bool as_vec4, bool bindless)
    case GLSL_TYPE_VOID:
    case GLSL_TYPE_ERROR:
    case GLSL_TYPE_COOPERATIVE_MATRIX:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
 
    return 0;
@@ -795,13 +777,13 @@ vec4_visitor::emit_uniformize(const src_reg &src)
 void
 vec4_visitor::gs_emit_vertex(int /* stream_id */)
 {
-   unreachable("not reached");
+   UNREACHABLE("not reached");
 }
 
 void
 vec4_visitor::gs_end_primitive()
 {
-   unreachable("not reached");
+   UNREACHABLE("not reached");
 }
 
 void

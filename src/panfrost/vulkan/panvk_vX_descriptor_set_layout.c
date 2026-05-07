@@ -1,5 +1,6 @@
 /*
  * Copyright © 2024 Collabora Ltd.
+ * Copyright © 2025 Arm Ltd.
  * SPDX-License-Identifier: MIT
  */
 
@@ -90,6 +91,10 @@ panvk_per_arch(CreateDescriptorSetLayout)(
    VkDescriptorSetLayoutBinding *bindings = NULL;
    unsigned num_bindings = 0;
    VkResult result;
+   const VkDescriptorSetLayoutBindingFlagsCreateInfo *binding_flags_info =
+      vk_find_struct_const(pCreateInfo->pNext,
+                           DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO);
+   VkDescriptorBindingFlags *sorted_binding_flags = NULL;
 
    unsigned immutable_sampler_count = 0;
    for (uint32_t j = 0; j < pCreateInfo->bindingCount; j++) {
@@ -113,7 +118,9 @@ panvk_per_arch(CreateDescriptorSetLayout)(
 
    if (pCreateInfo->bindingCount) {
       result = vk_create_sorted_bindings(pCreateInfo->pBindings,
-                                         pCreateInfo->bindingCount, &bindings);
+                                         pCreateInfo->bindingCount, &bindings,
+                                         binding_flags_info,
+                                         &sorted_binding_flags);
       if (result != VK_SUCCESS)
          return panvk_error(device, result);
 
@@ -136,12 +143,9 @@ panvk_per_arch(CreateDescriptorSetLayout)(
    layout->bindings = binding_layouts;
    layout->binding_count = num_bindings;
 
-   const VkDescriptorSetLayoutBindingFlagsCreateInfo *binding_flags_info =
-      vk_find_struct_const(pCreateInfo->pNext,
-                           DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO);
-
    unsigned desc_idx = 0;
    unsigned dyn_buf_idx = 0;
+   uint32_t dyn_ssbos = 0;
    for (unsigned i = 0; i < pCreateInfo->bindingCount; i++) {
       const VkDescriptorSetLayoutBinding *binding = &bindings[i];
       struct panvk_descriptor_set_binding_layout *binding_layout =
@@ -152,9 +156,8 @@ panvk_per_arch(CreateDescriptorSetLayout)(
 
       binding_layout->type = binding->descriptorType;
 
-      if (binding_flags_info && binding_flags_info->bindingCount > 0) {
-         assert(binding_flags_info->bindingCount == pCreateInfo->bindingCount);
-         binding_layout->flags = binding_flags_info->pBindingFlags[i];
+      if (sorted_binding_flags) {
+         binding_layout->flags = sorted_binding_flags[i];
       }
 
       if (binding_layout->type == VK_DESCRIPTOR_TYPE_INLINE_UNIFORM_BLOCK) {
@@ -182,6 +185,8 @@ panvk_per_arch(CreateDescriptorSetLayout)(
 
       if (vk_descriptor_type_is_dynamic(binding_layout->type)) {
          binding_layout->desc_idx = dyn_buf_idx;
+         if (binding_layout->type == VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC)
+            dyn_ssbos |= BITFIELD_RANGE(dyn_buf_idx, binding->descriptorCount);
          dyn_buf_idx += binding_layout->desc_count;
       } else {
          binding_layout->desc_idx = desc_idx;
@@ -192,6 +197,7 @@ panvk_per_arch(CreateDescriptorSetLayout)(
 
    layout->desc_count = desc_idx;
    layout->dyn_buf_count = dyn_buf_idx;
+   layout->dyn_ssbos = dyn_ssbos;
 
    struct mesa_blake3 hash_ctx;
    _mesa_blake3_init(&hash_ctx);
@@ -232,9 +238,36 @@ panvk_per_arch(CreateDescriptorSetLayout)(
    _mesa_blake3_final(&hash_ctx, layout->vk.blake3);
 
    free(bindings);
+   free(sorted_binding_flags);
    *pSetLayout = panvk_descriptor_set_layout_to_handle(layout);
 
    return VK_SUCCESS;
+}
+
+static bool
+is_supported_mutable_type(VkDescriptorType t)
+{
+   switch (t) {
+      case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
+      case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+      case VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER:
+      case VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
+      case VK_DESCRIPTOR_TYPE_STORAGE_BUFFER:
+         return true;
+      default:
+         return false;
+   }
+}
+
+static bool
+is_mutable_type_list_supported(const VkMutableDescriptorTypeListEXT *const lst)
+{
+   for (uint32_t i = 0; i < lst->descriptorTypeCount; i++) {
+      if (!is_supported_mutable_type(lst->pDescriptorTypes[i]))
+         return false;
+   }
+   return true;
 }
 
 void
@@ -248,6 +281,9 @@ panvk_per_arch(GetDescriptorSetLayoutSupport)(
    VkDescriptorSetVariableDescriptorCountLayoutSupport *var_desc_count =
       vk_find_struct(pSupport->pNext,
                      DESCRIPTOR_SET_VARIABLE_DESCRIPTOR_COUNT_LAYOUT_SUPPORT);
+
+   const VkMutableDescriptorTypeCreateInfoEXT *mut_info = vk_find_struct_const(
+      pCreateInfo->pNext, MUTABLE_DESCRIPTOR_TYPE_CREATE_INFO_EXT);
 
    pSupport->supported = false;
 
@@ -264,6 +300,16 @@ panvk_per_arch(GetDescriptorSetLayoutSupport)(
       if (vk_descriptor_type_is_dynamic(type)) {
          dyn_buf_count += binding->descriptorCount;
          continue;
+      }
+
+      if (binding->descriptorType == VK_DESCRIPTOR_TYPE_MUTABLE_EXT) {
+         /* VUID-VkDescriptorSetLayoutCreateInfo-pBindings-07303 */
+         assert(mut_info->mutableDescriptorTypeListCount > i);
+         if (!is_mutable_type_list_supported(
+                &mut_info->pMutableDescriptorTypeLists[i])) {
+            pSupport->supported = false;
+            return;
+         }
       }
 
       unsigned textures_per_desc = is_texture(type) ? 1 : 0;

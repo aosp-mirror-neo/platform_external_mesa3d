@@ -24,21 +24,7 @@
  **************************************************************************/
 
 #include "lp_bld_nir.h"
-#include "lp_bld_arit.h"
-#include "lp_bld_bitarit.h"
-#include "lp_bld_const.h"
-#include "lp_bld_conv.h"
-#include "lp_bld_gather.h"
-#include "lp_bld_logic.h"
-#include "lp_bld_quad.h"
-#include "lp_bld_flow.h"
-#include "lp_bld_intr.h"
-#include "lp_bld_struct.h"
-#include "lp_bld_debug.h"
-#include "lp_bld_printf.h"
 #include "nir.h"
-#include "nir_deref.h"
-#include "nir_search_helpers.h"
 
 /* do some basic opts to remove some things we don't want to see. */
 void
@@ -51,12 +37,12 @@ lp_build_opt_nir(struct nir_shader *nir)
       .lower_txp = ~0u,
       .lower_invalid_implicit_lod = true,
    };
-   NIR_PASS_V(nir, nir_lower_tex, &lower_tex_options);
-   NIR_PASS_V(nir, nir_lower_frexp);
+   NIR_PASS(_, nir, nir_lower_tex, &lower_tex_options);
+   NIR_PASS(_, nir, nir_lower_frexp);
 
    if (nir->info.stage == MESA_SHADER_TASK) {
       nir_lower_task_shader_options ts_opts = { 0 };
-      NIR_PASS_V(nir, nir_lower_task_shader, ts_opts);
+      NIR_PASS(_, nir, nir_lower_task_shader, ts_opts);
    }
 
    if (nir->info.stage == MESA_SHADER_FRAGMENT) {
@@ -69,8 +55,8 @@ lp_build_opt_nir(struct nir_shader *nir)
       }
    }
 
-   NIR_PASS_V(nir, nir_lower_flrp, 16|32|64, true);
-   NIR_PASS_V(nir, nir_lower_fp16_casts, nir_lower_fp16_all | nir_lower_fp16_split_fp64);
+   NIR_PASS(_, nir, nir_lower_flrp, 16|32|64, true);
+   NIR_PASS(_, nir, nir_lower_fp16_casts, nir_lower_fp16_all | nir_lower_fp16_split_fp64);
 
    NIR_PASS(_, nir, nir_lower_alu);
 
@@ -81,7 +67,7 @@ lp_build_opt_nir(struct nir_shader *nir)
       NIR_PASS(progress, nir, nir_lower_pack);
 
       nir_lower_tex_options options = { .lower_invalid_implicit_lod = true, };
-      NIR_PASS_V(nir, nir_lower_tex, &options);
+      NIR_PASS(_, nir, nir_lower_tex, &options);
 
       const nir_lower_subgroups_options subgroups_options = {
          .subgroup_size = lp_native_vector_width / 32,
@@ -91,6 +77,7 @@ lp_build_opt_nir(struct nir_shader *nir)
          .lower_subgroup_masks = true,
          .lower_relative_shuffle = true,
          .lower_inverse_ballot = true,
+         .lower_rotate_to_shuffle = true,
       };
       NIR_PASS(progress, nir, nir_lower_subgroups, &subgroups_options);
    } while (progress);
@@ -99,9 +86,9 @@ lp_build_opt_nir(struct nir_shader *nir)
       progress = false;
       NIR_PASS(progress, nir, nir_opt_algebraic_late);
       if (progress) {
-         NIR_PASS_V(nir, nir_copy_prop);
-         NIR_PASS_V(nir, nir_opt_dce);
-         NIR_PASS_V(nir, nir_opt_cse);
+         NIR_PASS(_, nir, nir_opt_copy_prop);
+         NIR_PASS(_, nir, nir_opt_dce);
+         NIR_PASS(_, nir, nir_opt_cse);
       }
    } while (progress);
 }

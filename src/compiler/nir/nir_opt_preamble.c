@@ -102,18 +102,10 @@ typedef struct {
 static bool
 instr_can_speculate(nir_instr *instr)
 {
-   /* Intrinsics with an ACCESS index can only be speculated if they are
-    * explicitly CAN_SPECULATE.
-    */
-   if (instr->type == nir_instr_type_intrinsic) {
-      nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+   if (instr->type == nir_instr_type_phi)
+      return true;
 
-      if (nir_intrinsic_has_access(intr))
-         return nir_intrinsic_access(intr) & ACCESS_CAN_SPECULATE;
-   }
-
-   /* For now, everything else can be speculated. TODO: Bindless textures. */
-   return true;
+   return nir_instr_can_speculate(instr);
 }
 
 static float
@@ -152,7 +144,6 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_work_dim:
    case nir_intrinsic_load_num_workgroups:
    case nir_intrinsic_load_ray_launch_size:
-   case nir_intrinsic_load_sbt_base_amd:
    case nir_intrinsic_load_is_indexed_draw:
    case nir_intrinsic_load_viewport_scale:
    case nir_intrinsic_load_user_clip_plane:
@@ -188,6 +179,7 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_cull_any_enabled_amd:
    case nir_intrinsic_load_cull_small_triangle_precision_amd:
    case nir_intrinsic_load_vbo_base_agx:
+   case nir_intrinsic_load_push_data_intel:
       return true;
 
    /* Intrinsics which can be moved depending on hardware */
@@ -224,12 +216,15 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_image_levels:
    case nir_intrinsic_image_deref_levels:
    case nir_intrinsic_bindless_image_levels:
+   case nir_intrinsic_image_heap_levels:
    case nir_intrinsic_image_samples:
    case nir_intrinsic_image_deref_samples:
    case nir_intrinsic_bindless_image_samples:
+   case nir_intrinsic_image_heap_samples:
    case nir_intrinsic_image_size:
    case nir_intrinsic_image_deref_size:
    case nir_intrinsic_bindless_image_size:
+   case nir_intrinsic_image_heap_size:
    case nir_intrinsic_vulkan_resource_index:
    case nir_intrinsic_vulkan_resource_reindex:
    case nir_intrinsic_load_vulkan_descriptor:
@@ -240,6 +235,7 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_load_const_ir3:
    case nir_intrinsic_load_constant_agx:
    case nir_intrinsic_bindless_image_agx:
+   case nir_intrinsic_bindless_sampler_agx:
       return can_move_srcs(&instr->instr, ctx);
 
    /* Image/SSBO loads can be moved if they are CAN_REORDER and their
@@ -248,6 +244,7 @@ can_move_intrinsic(nir_intrinsic_instr *instr, opt_preamble_ctx *ctx)
    case nir_intrinsic_image_load:
    case nir_intrinsic_image_samples_identical:
    case nir_intrinsic_bindless_image_load:
+   case nir_intrinsic_image_heap_load:
    case nir_intrinsic_load_global_bounded:
    case nir_intrinsic_load_ssbo:
    case nir_intrinsic_load_ssbo_intel:
@@ -457,7 +454,7 @@ calculate_can_move_for_cf_list(opt_preamble_ctx *ctx, struct exec_list *list)
       }
 
       default:
-         unreachable("Unexpected CF node type");
+         UNREACHABLE("Unexpected CF node type");
       }
    }
 
@@ -507,7 +504,7 @@ replace_for_block(nir_builder *b, opt_preamble_ctx *ctx,
                assert(else_def == NULL);
                else_def = phi_src->src.ssa;
             } else {
-               unreachable("Invalid predecessor for phi of if");
+               UNREACHABLE("Invalid predecessor for phi of if");
             }
          }
 
@@ -522,7 +519,7 @@ replace_for_block(nir_builder *b, opt_preamble_ctx *ctx,
             nir_before_block_after_phis(nir_cursor_current_block(b->cursor));
 
          nir_def *repl = nir_if_phi(b, then_def, else_def);
-         clone = repl->parent_instr;
+         clone = nir_def_instr(repl);
 
          _mesa_hash_table_insert(remap_table, &phi->def, repl);
       } else {
@@ -607,7 +604,7 @@ replace_for_cf_list(nir_builder *b, opt_preamble_ctx *ctx,
       }
 
       default:
-         unreachable("Unexpected CF node type");
+         UNREACHABLE("Unexpected CF node type");
       }
    }
 }
@@ -938,8 +935,7 @@ nir_opt_preamble(nir_shader *shader, const nir_opt_preamble_options *options,
     * we did.
     */
    ctx.reconstructed_ifs = _mesa_pointer_set_create(NULL);
-   ctx.reconstructed_defs = calloc(BITSET_WORDS(impl->ssa_alloc),
-                                   sizeof(BITSET_WORD));
+   ctx.reconstructed_defs = BITSET_CALLOC(impl->ssa_alloc);
    analyze_reconstructed(&ctx, impl);
 
    /* If we make progress analyzing speculation, we need to re-analyze

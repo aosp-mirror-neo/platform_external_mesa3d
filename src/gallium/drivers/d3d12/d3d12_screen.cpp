@@ -46,7 +46,7 @@
 #include "util/u_memory.h"
 #include "util/u_screen.h"
 #include "util/u_dl.h"
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 
 #include "frontend/sw_winsys.h"
 
@@ -127,7 +127,7 @@ d3d12_get_video_mem(struct pipe_screen *pscreen)
 static void
 d3d12_init_shader_caps(struct d3d12_screen *screen)
 {
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&screen->base.shader_caps[i];
 
@@ -138,23 +138,23 @@ d3d12_init_shader_caps(struct d3d12_screen *screen)
       caps->max_control_flow_depth = INT_MAX;
 
       switch (i) {
-      case PIPE_SHADER_VERTEX:
+      case MESA_SHADER_VERTEX:
          caps->max_inputs = D3D12_VS_INPUT_REGISTER_COUNT;
          caps->max_outputs = D3D12_VS_OUTPUT_REGISTER_COUNT;
          break;
-      case PIPE_SHADER_FRAGMENT:
+      case MESA_SHADER_FRAGMENT:
          caps->max_inputs = D3D12_PS_INPUT_REGISTER_COUNT;
          caps->max_outputs = D3D12_PS_OUTPUT_REGISTER_COUNT;
          break;
-      case PIPE_SHADER_GEOMETRY:
+      case MESA_SHADER_GEOMETRY:
          caps->max_inputs = D3D12_GS_INPUT_REGISTER_COUNT;
          caps->max_outputs = D3D12_GS_OUTPUT_REGISTER_COUNT;
          break;
-      case PIPE_SHADER_TESS_CTRL:
+      case MESA_SHADER_TESS_CTRL:
          caps->max_inputs = D3D12_HS_CONTROL_POINT_PHASE_INPUT_REGISTER_COUNT;
          caps->max_outputs = D3D12_HS_CONTROL_POINT_PHASE_OUTPUT_REGISTER_COUNT;
          break;
-      case PIPE_SHADER_TESS_EVAL:
+      case MESA_SHADER_TESS_EVAL:
          caps->max_inputs = D3D12_DS_INPUT_CONTROL_POINT_REGISTER_COUNT;
          caps->max_outputs = D3D12_DS_OUTPUT_REGISTER_COUNT;
          break;
@@ -232,6 +232,7 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
 
    u_init_pipe_screen_caps(&screen->base, caps->accelerated);
 
+   caps->prefer_real_buffer_in_constbuf0 = true;
    caps->npot_textures = true;
 
    /* D3D12 only supports dual-source blending for a single
@@ -336,7 +337,6 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
    caps->seamless_cube_map = true;
    caps->texture_query_lod = true;
    caps->vs_instanceid = true;
-   caps->tgsi_tex_txf_lz = true;
    caps->occlusion_query = true;
    caps->viewport_transform_lowered = true;
    caps->psiz_clamped = true;
@@ -436,6 +436,7 @@ d3d12_init_screen_caps(struct d3d12_screen *screen)
    caps->max_texture_anisotropy = D3D12_MAX_MAXANISOTROPY;
 
    caps->max_texture_lod_bias = 15.99f;
+   caps->packed_uniforms = true;
 }
 
 static bool
@@ -512,7 +513,7 @@ d3d12_is_format_supported(struct pipe_screen *pscreen,
       dim_support = D3D12_FORMAT_SUPPORT1_BUFFER;
       break;
    default:
-      unreachable("Unknown target");
+      UNREACHABLE("Unknown target");
    }
 
    if (bind & PIPE_BIND_DISPLAY_TARGET) {
@@ -649,6 +650,10 @@ d3d12_deinit_screen(struct d3d12_screen *screen)
    if (screen->dev10) {
       screen->dev10->Release();
       screen->dev10 = nullptr;
+   }
+   if (screen->dev15) {
+      screen->dev15->Release();
+      screen->dev15 = nullptr;
    }
    if (screen->dev) {
       screen->dev->Release();
@@ -1156,6 +1161,21 @@ d3d12_interop_query_device_info(struct pipe_screen *pscreen, uint32_t data_size,
    memcpy(&info->adapter_luid, &screen->adapter_luid, sizeof(screen->adapter_luid));
    info->device = screen->dev;
    info->queue = screen->cmdqueue;
+
+   if (data_size >= sizeof(d3d12_interop_device_info1)) {
+      d3d12_interop_device_info1 *info1 = (d3d12_interop_device_info1 *)data;
+      info1->set_context_queue_priority_manager = d3d12_context_set_queue_priority_manager;
+#ifdef HAVE_GALLIUM_D3D12_VIDEO
+      info1->set_video_encoder_max_async_queue_depth = d3d12_video_encoder_set_max_async_queue_depth;
+      info1->get_video_enc_last_slice_completion_fence = d3d12_video_encoder_get_last_slice_completion_fence;
+#else
+      info1->set_video_encoder_max_async_queue_depth = NULL;
+      info1->get_video_enc_last_slice_completion_fence = NULL;
+#endif // HAVE_GALLIUM_D3D12_VIDEO
+
+      return sizeof(*info1);
+   }
+
    return sizeof(*info);
 }
 
@@ -1201,6 +1221,32 @@ static void* d3d12_fence_get_win32_handle(struct pipe_screen *pscreen,
       *fence_value = fence->value;
 
    return (void*) shared_handle;
+}
+
+static void *d3d12_fence_get_win32_event([[maybe_unused]] struct pipe_screen *pscreen,
+                                         struct pipe_fence_handle *fence_handle)
+{
+   struct d3d12_fence* fence = (struct d3d12_fence*) fence_handle;
+
+   if (fence->type != PIPE_FD_TYPE_NATIVE_SYNC)
+      return NULL;
+
+   /* Create a new manual-reset event rather than duplicating the fence's
+    * auto-reset event.  Duplicated handles share the same kernel object, so
+    * a wait on any handle consumes the single auto-reset signal — causing
+    * other waiters to hang.
+    * A dedicated manual-reset event with its own SetEventOnCompletion avoids
+    * this by giving each caller an independent signal. */
+   HANDLE event = CreateEvent(NULL, TRUE /* bManualReset */, FALSE, NULL);
+   if (!event)
+      return NULL;
+
+   if (FAILED(fence->cmdqueue_fence->SetEventOnCompletion(fence->value, event))) {
+      CloseHandle(event);
+      return NULL;
+   }
+
+   return event;
 }
 #endif
 
@@ -1265,7 +1311,9 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
 #ifdef HAVE_GALLIUM_D3D12_GRAPHICS
    d3d12_varying_cache_init(screen);
    mtx_init(&screen->varying_info_mutex, mtx_plain);
-   screen->base.get_compiler_options = d3d12_get_compiler_options;
+
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      screen->base.nir_options[i] = &screen->nir_options;
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
    slab_create_parent(&screen->transfer_pool, sizeof(struct d3d12_transfer), 16);
@@ -1286,6 +1334,7 @@ d3d12_init_screen_base(struct d3d12_screen *screen, struct sw_winsys *winsys, LU
    screen->base.interop_export_object = d3d12_interop_export_object;
 #ifdef _WIN32
    screen->base.fence_get_win32_handle = d3d12_fence_get_win32_handle;
+   screen->base.fence_get_win32_event = d3d12_fence_get_win32_event;
 #endif
    screen->base.query_memory_info = d3d12_query_memory_info;
 
@@ -1409,11 +1458,13 @@ try_create_device_factory(util_dl_library *d3d12_mod)
       /* It's possible there's a D3D12Core.dll next to the .exe, for development/testing purposes. If so, we'll be notified
        * by environment variables what the relative path is and the version to use.
        */
-      const char *d3d12core_relative_path = getenv("D3D12_AGILITY_RELATIVE_PATH");
-      const char *d3d12core_sdk_version = getenv("D3D12_AGILITY_SDK_VERSION");
+      char *d3d12core_relative_path = os_get_option_dup("D3D12_AGILITY_RELATIVE_PATH");
+      char *d3d12core_sdk_version = os_get_option_dup("D3D12_AGILITY_SDK_VERSION");
       if (d3d12core_relative_path && d3d12core_sdk_version) {
          (void)sdk_config->SetSDKVersion(atoi(d3d12core_sdk_version), d3d12core_relative_path);
       }
+      free(d3d12core_relative_path);
+      free(d3d12core_sdk_version);
       sdk_config->Release();
    }
 #endif
@@ -1422,6 +1473,32 @@ try_create_device_factory(util_dl_library *d3d12_mod)
    return factory;
 }
 #endif
+
+static bool
+d3d12_init_screen_command_queue(struct d3d12_screen *screen, D3D12_COMMAND_QUEUE_FLAGS queue_flags)
+{
+   D3D12_COMMAND_QUEUE_DESC queue_desc = {};
+   queue_desc.Type = screen->queue_type;
+   queue_desc.Flags = queue_flags;
+
+#ifndef _GAMING_XBOX
+   ID3D12Device9 *device9 = NULL;
+   if (SUCCEEDED(screen->dev->QueryInterface(&device9))) {
+      if (FAILED(device9->CreateCommandQueue1(&queue_desc, OpenGLOn12CreatorID,
+                                              IID_PPV_ARGS(&screen->cmdqueue)))) {
+         device9->Release();
+         return false;
+      }
+      device9->Release();
+   } else
+#endif
+   {
+      if (FAILED(screen->dev->CreateCommandQueue(&queue_desc,
+                                                 IID_PPV_ARGS(&screen->cmdqueue))))
+         return false;
+   }
+   return true;
+}
 
 bool
 d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
@@ -1575,30 +1652,23 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
    }
 #endif // HAVE_GALLIUM_D3D12_GRAPHICS
 
-   D3D12_COMMAND_QUEUE_DESC queue_desc;
-   queue_desc.Type = screen->queue_type;
-   queue_desc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
-   queue_desc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
-   queue_desc.NodeMask = 0;
-
-#ifndef _GAMING_XBOX
-   ID3D12Device9 *device9;
-   if (SUCCEEDED(screen->dev->QueryInterface(&device9))) {
-      if (FAILED(device9->CreateCommandQueue1(&queue_desc, OpenGLOn12CreatorID,
-                                              IID_PPV_ARGS(&screen->cmdqueue))))
-         return false;
-      device9->Release();
+   if (d3d12_init_screen_command_queue(screen, D3D12_COMMAND_QUEUE_FLAG_ALLOW_DYNAMIC_PRIORITY)) {
+      screen->supports_dynamic_queue_priority = true;
    } else
-#endif
    {
-      if (FAILED(screen->dev->CreateCommandQueue(&queue_desc,
-                                                 IID_PPV_ARGS(&screen->cmdqueue))))
+      screen->supports_dynamic_queue_priority = false;
+      if (!d3d12_init_screen_command_queue(screen, D3D12_COMMAND_QUEUE_FLAG_NONE)) {
+         debug_printf("D3D12: failed to create command queue\n");
          return false;
+      }
    }
 
    if (FAILED(screen->dev->CreateFence(0, D3D12_FENCE_FLAG_SHARED, IID_PPV_ARGS(&screen->fence))))
       return false;
 
+   screen->dev->QueryInterface(&screen->dev15);
+
+   // Uses screen->dev15 so QI must be before this
    if (!d3d12_init_residency(screen))
       return false;
 
@@ -1690,26 +1760,26 @@ d3d12_init_screen(struct d3d12_screen *screen, IUnknown *adapter)
 #endif
 
    const char *mesa_version = "Mesa " PACKAGE_VERSION MESA_GIT_SHA1;
-   struct mesa_sha1 sha1_ctx;
-   uint8_t sha1[SHA1_DIGEST_LENGTH];
-   STATIC_ASSERT(PIPE_UUID_SIZE <= sizeof(sha1));
+   blake3_hasher blake3_ctx;
+   uint8_t blake3[BLAKE3_KEY_LEN];
+   STATIC_ASSERT(PIPE_UUID_SIZE <= sizeof(blake3));
 
    /* The driver UUID is used for determining sharability of images and memory
     * between two instances in separate processes.  People who want to
     * share memory need to also check the device UUID or LUID so all this
     * needs to be is the build-id.
     */
-   _mesa_sha1_compute(mesa_version, strlen(mesa_version), sha1);
-   memcpy(screen->driver_uuid, sha1, PIPE_UUID_SIZE);
+   _mesa_blake3_compute(mesa_version, strlen(mesa_version), blake3);
+   memcpy(screen->driver_uuid, blake3, PIPE_UUID_SIZE);
 
    /* The device UUID uniquely identifies the given device within the machine. */
-   _mesa_sha1_init(&sha1_ctx);
-   _mesa_sha1_update(&sha1_ctx, &screen->vendor_id, sizeof(screen->vendor_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->device_id, sizeof(screen->device_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->subsys_id, sizeof(screen->subsys_id));
-   _mesa_sha1_update(&sha1_ctx, &screen->revision, sizeof(screen->revision));
-   _mesa_sha1_final(&sha1_ctx, sha1);
-   memcpy(screen->device_uuid, sha1, PIPE_UUID_SIZE);
+   _mesa_blake3_init(&blake3_ctx);
+   _mesa_blake3_update(&blake3_ctx, &screen->vendor_id, sizeof(screen->vendor_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->device_id, sizeof(screen->device_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->subsys_id, sizeof(screen->subsys_id));
+   _mesa_blake3_update(&blake3_ctx, &screen->revision, sizeof(screen->revision));
+   _mesa_blake3_final(&blake3_ctx, blake3);
+   memcpy(screen->device_uuid, blake3, PIPE_UUID_SIZE);
 
    d3d12_init_shader_caps(screen);
    d3d12_init_compute_caps(screen);

@@ -53,7 +53,7 @@ struct panvk_cmd_compute_state {
                  &__new_sysval.__name, sizeof(__new_sysval.__name))) {         \
          (__cmdbuf)->state.compute.sysvals.__name = __new_sysval.__name;       \
          BITSET_SET_RANGE(__dirty, sysval_fau_start(compute, __name),          \
-                          sysval_fau_start(compute, __name));                  \
+                          sysval_fau_end(compute, __name));                    \
       }                                                                        \
    } while (0)
 
@@ -77,7 +77,7 @@ void panvk_per_arch(cmd_prepare_dispatch_sysvals)(
    struct panvk_cmd_buffer *cmdbuf, const struct panvk_dispatch_info *info);
 
 uint64_t panvk_per_arch(cmd_dispatch_prepare_tls)(
-   struct panvk_cmd_buffer *cmdbuf, const struct panvk_shader *shader,
+   struct panvk_cmd_buffer *cmdbuf, const struct panvk_shader_variant *shader,
    const struct pan_compute_dim *dim, bool indirect);
 
 #endif

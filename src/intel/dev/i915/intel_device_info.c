@@ -429,7 +429,7 @@ has_bit6_swizzle(int fd)
    };
 
    if (intel_ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create)) {
-      unreachable("Failed to create GEM BO");
+      UNREACHABLE("Failed to create GEM BO");
       return false;
    }
 
@@ -445,7 +445,7 @@ has_bit6_swizzle(int fd)
    };
 
    if (intel_ioctl(fd, DRM_IOCTL_I915_GEM_SET_TILING, &set_tiling)) {
-      unreachable("Failed to set BO tiling");
+      UNREACHABLE("Failed to set BO tiling");
       goto close_and_return;
    }
 
@@ -454,7 +454,7 @@ has_bit6_swizzle(int fd)
    };
 
    if (intel_ioctl(fd, DRM_IOCTL_I915_GEM_GET_TILING, &get_tiling)) {
-      unreachable("Failed to get BO tiling");
+      UNREACHABLE("Failed to get BO tiling");
       goto close_and_return;
    }
 
@@ -479,7 +479,7 @@ has_get_tiling(int fd)
    };
 
    if (intel_ioctl(fd, DRM_IOCTL_I915_GEM_CREATE, &gem_create)) {
-      unreachable("Failed to create GEM BO");
+      UNREACHABLE("Failed to create GEM BO");
       return false;
    }
 
@@ -494,6 +494,20 @@ has_get_tiling(int fd)
    intel_ioctl(fd, DRM_IOCTL_GEM_CLOSE, &close);
 
    return ret == 0;
+}
+
+static bool
+has_userptr(int fd)
+{
+   struct drm_i915_gem_userptr userptr = {
+      .user_ptr = 0,
+      .user_size = 0,
+      .flags = 0,
+   };
+
+   intel_ioctl(fd, DRM_IOCTL_I915_GEM_USERPTR, &userptr);
+
+   return errno == EINVAL;
 }
 
 static void
@@ -600,6 +614,7 @@ bool intel_device_info_i915_get_info_from_fd(int fd, struct intel_device_info *d
    intel_get_aperture_size(fd, &devinfo->aperture_bytes);
    get_context_param(fd, 0, I915_CONTEXT_PARAM_GTT_SIZE, &devinfo->gtt_size);
    devinfo->has_tiling_uapi = has_get_tiling(fd);
+   devinfo->has_userptr_uapi = has_userptr(fd);
    devinfo->has_caching_uapi =
       devinfo->platform < INTEL_PLATFORM_DG2_START && !devinfo->has_local_mem;
    if (devinfo->ver > 12 || intel_device_info_is_mtl_or_arl(devinfo))
@@ -613,6 +628,8 @@ bool intel_device_info_i915_get_info_from_fd(int fd, struct intel_device_info *d
       devinfo->has_userptr_probe = val;
    if (getparam(fd, I915_PARAM_HAS_CONTEXT_ISOLATION, &val))
       devinfo->has_context_isolation = val;
+   if (getparam(fd, getparam(fd, I915_PARAM_HAS_CONTEXT_ISOLATION, &val), &val))
+      devinfo->supports_low_latency_hint = val == 1;
 
    /* TODO: We might be able to reduce alignment to 4Kb on DG1. */
    if (devinfo->verx10 >= 125)

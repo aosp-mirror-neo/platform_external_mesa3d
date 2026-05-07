@@ -31,7 +31,7 @@ void
 st_nir_finish_builtin_nir(struct st_context *st, nir_shader *nir)
 {
    struct pipe_screen *screen = st->screen;
-   gl_shader_stage stage = nir->info.stage;
+   mesa_shader_stage stage = nir->info.stage;
 
    MESA_TRACE_FUNC();
 
@@ -64,13 +64,12 @@ st_nir_finish_builtin_nir(struct st_context *st, nir_shader *nir)
 
    if (nir->info.io_lowered &&
        !(nir->options->io_options & nir_io_has_intrinsics)) {
-      NIR_PASS(_, nir, st_nir_unlower_io_to_vars);
+      NIR_PASS(_, nir, nir_unlower_io_to_vars, false);
       gl_nir_opts(nir);
    }
 
    if (screen->finalize_nir) {
-      char *msg = screen->finalize_nir(screen, nir);
-      free(msg);
+      screen->finalize_nir(screen, nir, true);
    } else {
       gl_nir_opts(nir);
    }
@@ -102,7 +101,7 @@ st_nir_make_passthrough_vs(struct st_context *st,
                            unsigned sysval_mask)
 {
    const nir_shader_compiler_options *options =
-      st_get_nir_compiler_options(st, MESA_SHADER_VERTEX);
+      st->screen->nir_options[MESA_SHADER_VERTEX];
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_VERTEX, options,
                                                   "%s", shader_name);
@@ -139,7 +138,7 @@ void *
 st_nir_make_clearcolor_shader(struct st_context *st)
 {
    const nir_shader_compiler_options *options =
-      st_get_nir_compiler_options(st, MESA_SHADER_FRAGMENT);
+      st->screen->nir_options[MESA_SHADER_FRAGMENT];
 
    nir_builder b = nir_builder_init_simple_shader(MESA_SHADER_FRAGMENT, options,
                                                   "clear color FS");

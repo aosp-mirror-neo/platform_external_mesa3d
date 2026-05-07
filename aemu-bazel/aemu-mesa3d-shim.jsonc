@@ -10,6 +10,14 @@
           "-Wno-implicit-function-declaration"
         ]
       }
+    },
+    {
+      "target": "^libmesa_util_simd$",
+      "shims": {
+        "+copts": [
+          "-msse4.1"
+        ]
+      }
     }
   ],
   // These are the bazel mappings we are going to use for
@@ -60,6 +68,27 @@
     ],
     "xshmfence": [
       "@libxshmfence//:xshmfence"
+    ],
+    "expat": [
+      "@libexpat//:expat"
+    ],
+    "xext": [
+      "@libxext//:libxext"
+    ],
+    "glproto": [
+      "@xorgproto//:xorgproto"
+    ],
+    "x11": [
+      "@libx11//:libx11"
+    ],
+    "wayland-egl-backend": [
+      "@wayland//:wayland-server"
+    ],
+    "xcb-glx": [
+      "@libxcb//:libxcb"
+    ],
+    "ffi": [
+      "@libffi//:ffi"
     ]
   },
   // The actual set of targets you wish to generate bazel targets for.

@@ -21,8 +21,12 @@
  * IN THE SOFTWARE.
  */
 
-#include "v3dv_private.h"
-#include "drm-uapi/v3d_drm.h"
+#include "v3dv_device.h"
+#include "v3dv_cmd_buffer.h"
+#include "v3dv_image.h"
+#include "v3dv_entrypoints.h"
+#include "v3dv_version_dispatch.h"
+#include <xf86drm.h>
 
 #include "broadcom/clif/clif_dump.h"
 #include "util/libsync.h"
@@ -43,8 +47,9 @@ v3dv_clif_dump(struct v3dv_device *device,
          V3D_DBG(CLIF)))
       return;
 
+   struct log_stream *stream = mesa_log_streami();
    struct clif_dump *clif = clif_dump_init(&device->devinfo,
-                                           stderr,
+                                           stream,
                                            V3D_DBG(CL) ||
                                            V3D_DBG(CL_NO_BIN),
                                            V3D_DBG(CL_NO_BIN));
@@ -69,6 +74,7 @@ v3dv_clif_dump(struct v3dv_device *device,
 
  free_clif:
    clif_dump_destroy(clif);
+   mesa_log_stream_destroy(stream);
 }
 
 static VkResult
@@ -1222,7 +1228,7 @@ queue_handle_job(struct v3dv_queue *queue,
    case V3DV_JOB_TYPE_CPU_TIMESTAMP_QUERY:
       return handle_timestamp_query_cpu_job(queue, job, sync_info, signal_syncs);
    default:
-      unreachable("Unhandled job type");
+      UNREACHABLE("Unhandled job type");
    }
 }
 

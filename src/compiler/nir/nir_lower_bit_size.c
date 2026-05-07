@@ -37,7 +37,7 @@ convert_to_bit_size(nir_builder *bld, nir_def *src,
    assert(src->bit_size < bit_size);
 
    /* create b2i32(a) instead of i2i32(b2i8(a))/i2i32(b2i16(a)) */
-   nir_alu_instr *alu = nir_src_as_alu_instr(nir_src_for_ssa(src));
+   nir_alu_instr *alu = nir_def_as_alu_or_null(src);
    if ((type & (nir_type_uint | nir_type_int)) && bit_size == 32 &&
        alu && (alu->op == nir_op_b2i8 || alu->op == nir_op_b2i16)) {
       nir_alu_instr *instr = nir_alu_instr_create(bld->shader, nir_op_b2i32);
@@ -67,10 +67,10 @@ before_conversion(nir_builder *bld, nir_alu_type type, unsigned bit_size, nir_de
    default:
       return NULL;
    }
-   if (def->parent_instr->type != nir_instr_type_alu) {
+   if (!nir_def_is_alu(def)) {
       return NULL;
    }
-   nir_alu_instr *alu_instr = nir_instr_as_alu(def->parent_instr);
+   nir_alu_instr *alu_instr = nir_def_as_alu(def);
    if (alu_instr->op != nir_type_conversion_op((nir_alu_type)(type | bit_size),
                                                (nir_alu_type)(type | def->bit_size),
                                                nir_rounding_mode_undef) ||
@@ -199,6 +199,8 @@ lower_intrinsic_instr(nir_builder *b, nir_intrinsic_instr *intrin,
    case nir_intrinsic_shuffle_xor:
    case nir_intrinsic_shuffle_up:
    case nir_intrinsic_shuffle_down:
+   case nir_intrinsic_shuffle_up_intel:
+   case nir_intrinsic_shuffle_down_intel:
    case nir_intrinsic_quad_broadcast:
    case nir_intrinsic_quad_swap_horizontal:
    case nir_intrinsic_quad_swap_vertical:
@@ -222,6 +224,15 @@ lower_intrinsic_instr(nir_builder *b, nir_intrinsic_instr *intrin,
       nir_def *new_src = nir_convert_to_bit_size(b, intrin->src[0].ssa,
                                                  type, bit_size);
       new_intrin->src[0] = nir_src_for_ssa(new_src);
+
+      if (intrin->intrinsic == nir_intrinsic_shuffle_up_intel ||
+          intrin->intrinsic == nir_intrinsic_shuffle_down_intel) {
+         assert(intrin->src[1].ssa->bit_size == intrin->def.bit_size);
+
+         nir_def *new_src1 = nir_convert_to_bit_size(b, intrin->src[1].ssa,
+                                                     type, bit_size);
+         new_intrin->src[1] = nir_src_for_ssa(new_src1);
+      }
 
       /* These return the same bit size as the source; we need to adjust
        * the size and then we'll have to emit a down-cast.
@@ -280,7 +291,7 @@ lower_intrinsic_instr(nir_builder *b, nir_intrinsic_instr *intrin,
    }
 
    default:
-      unreachable("Unsupported instruction");
+      UNREACHABLE("Unsupported instruction");
    }
 }
 
@@ -303,8 +314,7 @@ lower_phi_instr(nir_builder *b, nir_phi_instr *phi, unsigned bit_size,
    b->cursor = nir_after_instr(&last_phi->instr);
 
    nir_def *new_dest = nir_u2uN(b, &phi->def, old_bit_size);
-   nir_def_rewrite_uses_after(&phi->def, new_dest,
-                              new_dest->parent_instr);
+   nir_def_rewrite_uses_after(&phi->def, new_dest);
 }
 
 static bool
@@ -340,7 +350,7 @@ lower_impl(nir_function_impl *impl,
             break;
 
          default:
-            unreachable("Unsupported instruction type");
+            UNREACHABLE("Unsupported instruction type");
          }
          progress = true;
       }

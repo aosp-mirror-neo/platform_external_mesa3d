@@ -6,12 +6,17 @@
 
 set -uex
 
-uncollapsed_section_start vulkan-validation "Building Vulkan validation layers"
+section_start vulkan-validation "Building Vulkan validation layers"
 
-VALIDATION_TAG="snapshot-2025wk15"
+VALIDATION_TAG="cb2acdf7f49053406770ae73cbb315229a9131eb"
 
-git clone -b "$VALIDATION_TAG" --single-branch --depth 1 https://github.com/KhronosGroup/Vulkan-ValidationLayers.git
+mkdir Vulkan-ValidationLayers
 pushd Vulkan-ValidationLayers
+git init
+git remote add origin https://github.com/KhronosGroup/Vulkan-ValidationLayers.git
+git fetch --depth 1 origin "$VALIDATION_TAG"
+git checkout FETCH_HEAD
+
 # we don't need to build SPIRV-Tools tools
 sed -i scripts/known_good.json -e 's/SPIRV_SKIP_EXECUTABLES=OFF/SPIRV_SKIP_EXECUTABLES=ON/'
 python3 scripts/update_deps.py --dir external --config release --generator Ninja --optional tests

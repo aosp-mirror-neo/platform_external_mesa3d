@@ -45,7 +45,6 @@ struct ntt_insn {
    struct ureg_dst dst[2];
    struct ureg_src src[4];
    enum tgsi_texture_type tex_target;
-   enum tgsi_return_type tex_return_type;
    struct tgsi_texture_offset tex_offset[4];
 
    unsigned mem_qualifier;
@@ -76,7 +75,6 @@ struct ntt_compile {
 
    bool needs_texcoord_semantic;
    bool native_integers;
-   bool has_txf_lz;
 
    bool addr_declared[3];
    struct ureg_dst addr_reg[3];
@@ -144,7 +142,7 @@ ntt_insn(struct ntt_compile *c, enum tgsi_opcode opcode,
       .src = { src0, src1, src2, src3 },
       .precise = c->precise,
    };
-   util_dynarray_append(&c->cur_block->insns, struct ntt_insn, insn);
+   util_dynarray_append(&c->cur_block->insns, insn);
    return util_dynarray_top_ptr(&c->cur_block->insns, struct ntt_insn);
 }
 
@@ -449,10 +447,8 @@ ntt_live_regs(struct ntt_compile *c, nir_function_impl *impl)
                                ~bs->livein[i]);
          if (new_livein) {
             bs->livein[i] |= new_livein;
-            set_foreach(block->predecessors, entry) {
-               nir_block *pred = (void *)entry->key;
+            nir_foreach_pred(pred, block)
                nir_block_worklist_push_tail(&state.worklist, pred);
-            }
 
             if (new_livein & state.blocks[block->index].defin[i])
                c->liveness[i].start = MIN2(c->liveness[i].start, ntt_block->start_ip);
@@ -485,7 +481,7 @@ ntt_allocate_regs(struct ntt_compile *c, nir_function_impl *impl)
    ntt_live_regs(c, impl);
 
    unsigned *ra_map = ralloc_array(c, unsigned, c->num_temps);
-   unsigned *released = rzalloc_array(c, BITSET_WORD, BITSET_WORDS(c->num_temps));
+   unsigned *released = BITSET_RZALLOC(c, c->num_temps);
 
    /* No RA on NIR array regs */
    for (int i = 0; i < c->first_non_array_temp; i++)
@@ -554,7 +550,7 @@ ntt_extract_const_src_offset(nir_src *src)
    nir_scalar s = nir_get_scalar(src->ssa, 0);
 
    while (nir_scalar_is_alu(s)) {
-      nir_alu_instr *alu = nir_instr_as_alu(s.def->parent_instr);
+      nir_alu_instr *alu = nir_def_as_alu(s.def);
 
       if (alu->op == nir_op_iadd) {
          for (int i = 0; i < 2; i++) {
@@ -828,7 +824,7 @@ ntt_try_store_ssa_in_tgsi_output(struct ntt_compile *c, struct ureg_dst *dst,
    nir_foreach_use_including_if(use, def) {
       return ntt_try_store_in_tgsi_output_with_use(c, dst, use);
    }
-   unreachable("We have one use");
+   UNREACHABLE("We have one use");
 }
 
 static void
@@ -987,7 +983,7 @@ tgsi_texture_type_from_sampler_dim(enum glsl_sampler_dim dim, bool is_array, boo
    case GLSL_SAMPLER_DIM_BUF:
       return TGSI_TEXTURE_BUFFER;
    default:
-      unreachable("unknown sampler dim");
+      UNREACHABLE("unknown sampler dim");
    }
 }
 
@@ -1002,7 +998,7 @@ tgsi_return_type_from_base_type(enum glsl_base_type type)
    case GLSL_TYPE_FLOAT:
      return TGSI_RETURN_TYPE_FLOAT;
    default:
-      unreachable("unexpected texture type");
+      UNREACHABLE("unexpected texture type");
    }
 }
 
@@ -1224,8 +1220,8 @@ static struct ureg_src
 ntt_get_chased_src(struct ntt_compile *c, nir_legacy_src *src)
 {
    if (src->is_ssa) {
-      if (src->ssa->parent_instr->type == nir_instr_type_load_const)
-         return ntt_get_load_const_src(c, nir_instr_as_load_const(src->ssa->parent_instr));
+      if (nir_def_is_const(src->ssa))
+         return ntt_get_load_const_src(c, nir_def_as_load_const(src->ssa));
 
       return c->ssa_temp[src->ssa->index];
    } else {
@@ -1268,7 +1264,7 @@ ntt_get_alu_src(struct ntt_compile *c, nir_alu_instr *instr, int i)
     * the specific swizzles from an undef don't matter)
     */
    if (nir_src_bit_size(instr->src[i].src) == 64 &&
-      !(src.src.is_ssa && src.src.ssa->parent_instr->type == nir_instr_type_undef)) {
+      !(src.src.is_ssa && nir_def_is_undef(src.src.ssa))) {
       int chan1 = 1;
       if (nir_op_infos[instr->op].input_sizes[i] == 0) {
          chan1 = instr->def.num_components > 1 ? 1 : 0;
@@ -1450,7 +1446,23 @@ ntt_emit_alu(struct ntt_compile *c, nir_alu_instr *instr)
    if (instr->op == nir_op_fsat && nir_legacy_fsat_folds(instr))
       return;
 
-   c->precise = instr->exact;
+   switch (instr->op) {
+   case nir_op_flt32:
+   case nir_op_fge32:
+   case nir_op_feq32:
+   case nir_op_fneu32:
+   case nir_op_slt:
+   case nir_op_sge:
+   case nir_op_seq:
+   case nir_op_sne:
+   case nir_op_fmin:
+   case nir_op_fmax:
+      c->precise = nir_alu_instr_is_nan_preserve(instr);
+      break;
+   default:
+      c->precise = nir_alu_instr_is_exact(instr);
+      break;
+   }
 
    assert(num_srcs <= ARRAY_SIZE(src));
    for (i = 0; i < num_srcs; i++)
@@ -1704,7 +1716,7 @@ ntt_emit_alu(struct ntt_compile *c, nir_alu_instr *instr)
          break;
 
       case nir_op_fmod:
-         unreachable("should be handled by .lower_fmod = true");
+         UNREACHABLE("should be handled by .lower_fmod = true");
          break;
 
       case nir_op_fpow:
@@ -1780,7 +1792,7 @@ ntt_emit_alu(struct ntt_compile *c, nir_alu_instr *instr)
 
       case nir_op_frexp_sig:
       case nir_op_frexp_exp:
-         unreachable("covered by nir_lower_frexp()");
+         UNREACHABLE("covered by nir_lower_frexp()");
          break;
 
       case nir_op_ldexp:
@@ -1794,11 +1806,11 @@ ntt_emit_alu(struct ntt_compile *c, nir_alu_instr *instr)
       case nir_op_vec4:
       case nir_op_vec3:
       case nir_op_vec2:
-         unreachable("covered by nir_lower_vec_to_movs()");
+         UNREACHABLE("covered by nir_lower_vec_to_movs()");
 
       default:
          fprintf(stderr, "Unknown NIR opcode: %s\n", nir_op_infos[instr->op].name);
-         unreachable("Unknown NIR opcode");
+         UNREACHABLE("Unknown NIR opcode");
       }
    }
 
@@ -1964,7 +1976,7 @@ ntt_translate_atomic_op(nir_atomic_op op)
    case nir_atomic_op_ixor: return TGSI_OPCODE_ATOMXOR;
    case nir_atomic_op_ior:  return TGSI_OPCODE_ATOMOR;
    case nir_atomic_op_xchg: return TGSI_OPCODE_ATOMXCHG;
-   default: unreachable("invalid atomic");
+   default: UNREACHABLE("invalid atomic");
    }
 }
 
@@ -2015,7 +2027,7 @@ ntt_emit_mem(struct ntt_compile *c, nir_intrinsic_instr *instr,
    }
 
    default:
-      unreachable("unknown memory type");
+      UNREACHABLE("unknown memory type");
    }
 
    if (is_store) {
@@ -2088,7 +2100,7 @@ ntt_emit_mem(struct ntt_compile *c, nir_intrinsic_instr *instr,
       opcode = TGSI_OPCODE_RESQ;
       break;
    default:
-      unreachable("unknown memory op");
+      UNREACHABLE("unknown memory op");
    }
 
    unsigned qualifier = 0;
@@ -2206,7 +2218,7 @@ ntt_emit_image_load_store(struct ntt_compile *c, nir_intrinsic_instr *instr)
       op = TGSI_OPCODE_ATOMCAS;
       break;
    default:
-      unreachable("bad op");
+      UNREACHABLE("bad op");
    }
 
    struct ntt_insn *insn = ntt_insn(c, op, opcode_dst, srcs[0], srcs[1], srcs[2], srcs[3]);
@@ -2276,7 +2288,7 @@ ntt_emit_load_input(struct ntt_compile *c, nir_intrinsic_instr *instr)
       input = ntt_ureg_src_indirect(c, input, instr->src[1], 0);
 
       nir_intrinsic_instr *bary_instr =
-         nir_instr_as_intrinsic(instr->src[0].ssa->parent_instr);
+         nir_def_as_intrinsic(instr->src[0].ssa);
 
       switch (bary_instr->intrinsic) {
       case nir_intrinsic_load_barycentric_pixel:
@@ -2312,13 +2324,13 @@ ntt_emit_load_input(struct ntt_compile *c, nir_intrinsic_instr *instr)
          break;
 
       default:
-         unreachable("bad barycentric interp intrinsic\n");
+         UNREACHABLE("bad barycentric interp intrinsic\n");
       }
       break;
    }
 
    default:
-      unreachable("bad load input intrinsic\n");
+      UNREACHABLE("bad load input intrinsic\n");
    }
 }
 
@@ -2434,7 +2446,7 @@ ntt_emit_load_sysval(struct ntt_compile *c, nir_intrinsic_instr *instr)
 static void
 ntt_emit_barrier(struct ntt_compile *c, nir_intrinsic_instr *intr)
 {
-   bool compute = gl_shader_stage_is_compute(c->s->info.stage);
+   bool compute = mesa_shader_stage_is_compute(c->s->info.stage);
 
    if (nir_intrinsic_memory_scope(intr) != SCOPE_NONE) {
       nir_variable_mode modes = nir_intrinsic_memory_modes(intr);
@@ -2640,7 +2652,7 @@ ntt_emit_intrinsic(struct ntt_compile *c, nir_intrinsic_instr *instr)
       ntt_emit_mem(c, instr, nir_var_uniform);
       break;
    case nir_intrinsic_atomic_counter_pre_dec:
-      unreachable("Should be lowered by ntt_lower_atomic_pre_dec()");
+      UNREACHABLE("Should be lowered by ntt_lower_atomic_pre_dec()");
       break;
 
    case nir_intrinsic_image_load:
@@ -2773,15 +2785,6 @@ ntt_emit_texture(struct ntt_compile *c, nir_tex_instr *instr)
    case nir_texop_txf:
    case nir_texop_txf_ms:
       tex_opcode = TGSI_OPCODE_TXF;
-
-      if (c->has_txf_lz) {
-         int lod_src = nir_tex_instr_src_index(instr, nir_tex_src_lod);
-         if (lod_src >= 0 &&
-             nir_src_is_const(instr->src[lod_src].src) &&
-             ntt_src_as_uint(c, instr->src[lod_src].src) == 0) {
-            tex_opcode = TGSI_OPCODE_TXF_LZ;
-         }
-      }
       break;
    case nir_texop_txl:
       tex_opcode = TGSI_OPCODE_TXL;
@@ -2808,7 +2811,7 @@ ntt_emit_texture(struct ntt_compile *c, nir_tex_instr *instr)
       tex_opcode = TGSI_OPCODE_TXQS;
       break;
    default:
-      unreachable("unsupported tex op");
+      UNREACHABLE("unsupported tex op");
    }
 
    struct ntt_tex_operand_state s = { .i = 0 };
@@ -2852,21 +2855,6 @@ ntt_emit_texture(struct ntt_compile *c, nir_tex_instr *instr)
 
    s.srcs[s.i++] = sampler;
 
-   enum tgsi_return_type tex_type;
-   switch (instr->dest_type) {
-   case nir_type_float32:
-      tex_type = TGSI_RETURN_TYPE_FLOAT;
-      break;
-   case nir_type_int32:
-      tex_type = TGSI_RETURN_TYPE_SINT;
-      break;
-   case nir_type_uint32:
-      tex_type = TGSI_RETURN_TYPE_UINT;
-      break;
-   default:
-      unreachable("unknown texture type");
-   }
-
    struct ureg_dst tex_dst;
    if (instr->op == nir_texop_query_levels)
       tex_dst = ureg_writemask(ntt_temp(c), TGSI_WRITEMASK_W);
@@ -2878,7 +2866,6 @@ ntt_emit_texture(struct ntt_compile *c, nir_tex_instr *instr)
 
    struct ntt_insn *insn = ntt_insn(c, tex_opcode, tex_dst, s.srcs[0], s.srcs[1], s.srcs[2], s.srcs[3]);
    insn->tex_target = target;
-   insn->tex_return_type = tex_type;
    insn->is_tex = true;
 
    int tex_offset_src = nir_tex_instr_src_index(instr, nir_tex_src_offset);
@@ -3019,7 +3006,7 @@ ntt_emit_block(struct ntt_compile *c, nir_block *block)
          fprintf(stderr, "Emitted ureg insn during: ");
          nir_print_instr(instr, stderr);
          fprintf(stderr, "\n");
-         unreachable("emitted ureg insn");
+         UNREACHABLE("emitted ureg insn");
       }
    }
 
@@ -3053,7 +3040,7 @@ ntt_emit_cf_list(struct ntt_compile *c, struct exec_list *list)
          break;
 
       default:
-         unreachable("unknown CF type");
+         UNREACHABLE("unknown CF type");
       }
    }
 }
@@ -3109,7 +3096,7 @@ ntt_emit_block_ureg(struct ntt_compile *c, struct nir_block *block)
             }
             ureg_tex_insn(c->ureg, insn->opcode,
                           insn->dst, opcode_info->num_dst,
-                          insn->tex_target, insn->tex_return_type,
+                          insn->tex_target,
                           insn->tex_offset,
                           num_offsets,
                           insn->src, opcode_info->num_src);
@@ -3169,7 +3156,7 @@ ntt_emit_cf_list_ureg(struct ntt_compile *c, struct exec_list *list)
          break;
 
       default:
-         unreachable("unknown CF type");
+         UNREACHABLE("unknown CF type");
       }
    }
 }
@@ -3299,7 +3286,7 @@ ntt_should_vectorize_io(unsigned align_mul,
 static nir_variable_mode
 ntt_no_indirects_mask(nir_shader *s, struct pipe_screen *screen)
 {
-   unsigned pipe_stage = pipe_shader_type_from_mesa(s->info.stage);
+   unsigned pipe_stage = s->info.stage;
    unsigned indirect_mask = 0;
 
    if (!(s->options->support_indirect_inputs & BITFIELD_BIT(pipe_stage))) {
@@ -3322,7 +3309,7 @@ ntt_optimize_nir(struct nir_shader *s, struct pipe_screen *screen,
                  const struct nir_to_tgsi_options *options)
 {
    bool progress;
-   unsigned pipe_stage = pipe_shader_type_from_mesa(s->info.stage);
+   unsigned pipe_stage = s->info.stage;
    unsigned control_flow_depth =
       screen->shader_caps[pipe_stage].max_control_flow_depth;
    do {
@@ -3331,7 +3318,7 @@ ntt_optimize_nir(struct nir_shader *s, struct pipe_screen *screen,
       NIR_PASS(progress, s, nir_lower_vars_to_ssa);
       NIR_PASS(progress, s, nir_split_64bit_vec3_and_vec4);
 
-      NIR_PASS(progress, s, nir_copy_prop);
+      NIR_PASS(progress, s, nir_opt_copy_prop);
       NIR_PASS(progress, s, nir_opt_algebraic);
       NIR_PASS(progress, s, nir_opt_constant_folding);
       NIR_PASS(progress, s, nir_opt_remove_phis);
@@ -3396,11 +3383,28 @@ ntt_optimize_nir(struct nir_shader *s, struct pipe_screen *screen,
 
 /* Scalarizes all 64-bit ALU ops.  Note that we only actually need to
  * scalarize vec3/vec4s, should probably fix that.
+ * Also lower vector comparisons.
  */
 static bool
-scalarize_64bit(const nir_instr *instr, const void *data)
+ntt_scalarize_cb(const nir_instr *instr, const void *data)
 {
    const nir_alu_instr *alu = nir_instr_as_alu(instr);
+
+   switch (alu->op) {
+   case nir_op_ball_fequal2:
+   case nir_op_ball_fequal3:
+   case nir_op_ball_fequal4:
+   case nir_op_bany_fnequal2:
+   case nir_op_bany_fnequal3:
+   case nir_op_bany_fnequal4:
+   case nir_op_ball_iequal2:
+   case nir_op_ball_iequal3:
+   case nir_op_ball_iequal4:
+   case nir_op_bany_inequal2:
+   case nir_op_bany_inequal3:
+   case nir_op_bany_inequal4: return true;
+   default: break;
+   }
 
    return (alu->def.bit_size == 64 ||
            nir_src_bit_size(alu->src[0].src) == 64);
@@ -3686,7 +3690,7 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
 {
    const struct nir_shader_compiler_options *options = s->options;
    bool lower_fsqrt =
-      !screen->shader_caps[pipe_shader_type_from_mesa(s->info.stage)].tgsi_sqrt_supported;
+      !screen->shader_caps[s->info.stage].tgsi_sqrt_supported;
 
    bool force_indirect_unrolling_sampler =
       screen->caps.glsl_feature_level < 400;
@@ -3705,7 +3709,6 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
        !options->lower_uadd_sat ||
        !options->lower_usub_sat ||
        !options->lower_uniforms_to_ubo ||
-       !options->lower_vector_cmp ||
        options->has_rotate8 ||
        options->has_rotate16 ||
        options->has_rotate32 ||
@@ -3727,7 +3730,6 @@ ntt_fix_nir_options(struct pipe_screen *screen, struct nir_shader *s,
       new_options->lower_uadd_sat = true;
       new_options->lower_usub_sat = true;
       new_options->lower_uniforms_to_ubo = true;
-      new_options->lower_vector_cmp = true;
       new_options->lower_fsqrt = lower_fsqrt;
       new_options->has_rotate8 = false;
       new_options->has_rotate16 = false;
@@ -3891,7 +3893,7 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
    struct ntt_compile *c;
    const void *tgsi_tokens;
    nir_variable_mode no_indirects_mask = ntt_no_indirects_mask(s, screen);
-   bool native_integers = screen->shader_caps[pipe_shader_type_from_mesa(s->info.stage)].integers;
+   bool native_integers = screen->shader_caps[s->info.stage].integers;
    const struct nir_shader_compiler_options *original_options = s->options;
 
    ntt_fix_nir_options(screen, s, options);
@@ -3906,7 +3908,8 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
     * having matching declarations.
     */
    if (s->info.stage == MESA_SHADER_FRAGMENT) {
-      NIR_PASS(_, s, nir_lower_indirect_derefs, nir_var_shader_in, UINT32_MAX);
+      NIR_PASS(_, s, nir_lower_indirect_derefs_to_if_else_trees,
+               nir_var_shader_in, UINT32_MAX);
       NIR_PASS(_, s, nir_remove_dead_variables, nir_var_shader_in, NULL);
    }
 
@@ -3916,7 +3919,7 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
     */
    if (s->info.stage == MESA_SHADER_TESS_CTRL ||
        s->info.stage == MESA_SHADER_TESS_EVAL) {
-      NIR_PASS(_, s, nir_lower_indirect_derefs, 0 , UINT32_MAX);
+      NIR_PASS(_, s, nir_lower_indirect_derefs_to_if_else_trees, 0, UINT32_MAX);
    }
 
    NIR_PASS(_, s, nir_lower_io, nir_var_shader_in | nir_var_shader_out,
@@ -3945,7 +3948,7 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
     * TGSI stores up to a vec2 in each slot, so to avoid a whole bunch of op
     * duplication logic we just make it so that we only see vec2s.
     */
-   NIR_PASS(_, s, nir_lower_alu_to_scalar, scalarize_64bit, NULL);
+   NIR_PASS(_, s, nir_lower_alu_to_scalar, ntt_scalarize_cb, NULL);
    NIR_PASS(_, s, nir_to_tgsi_lower_64bit_to_vec2);
 
    if (!screen->caps.load_constbuf)
@@ -3953,7 +3956,8 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
 
    ntt_optimize_nir(s, screen, options);
 
-   NIR_PASS(_, s, nir_lower_indirect_derefs, no_indirects_mask, UINT32_MAX);
+   NIR_PASS(_, s, nir_lower_indirect_derefs_to_if_else_trees,
+            no_indirects_mask, UINT32_MAX);
 
    /* Lower demote_if to if (cond) { demote } because TGSI doesn't have a DEMOTE_IF. */
    NIR_PASS(_, s, nir_lower_discard_if, nir_lower_demote_if_to_cf);
@@ -3965,7 +3969,7 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
       progress = false;
       NIR_PASS(progress, s, nir_opt_algebraic_late);
       if (progress) {
-         NIR_PASS(_, s, nir_copy_prop);
+         NIR_PASS(_, s, nir_opt_copy_prop);
          NIR_PASS(_, s, nir_opt_dce);
          NIR_PASS(_, s, nir_opt_cse);
       }
@@ -3973,19 +3977,19 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
 
    NIR_PASS(_, s, nir_opt_combine_barriers, NULL, NULL);
 
-   if (screen->shader_caps[pipe_shader_type_from_mesa(s->info.stage)].integers) {
+   if (screen->shader_caps[s->info.stage].integers) {
       NIR_PASS(_, s, nir_lower_bool_to_int32);
    } else {
       NIR_PASS(_, s, nir_lower_int_to_float);
       NIR_PASS(_, s, nir_lower_bool_to_float,
                !options->lower_cmp && !options->lower_fabs);
       /* bool_to_float generates MOVs for b2f32 that we want to clean up. */
-      NIR_PASS(_, s, nir_copy_prop);
+      NIR_PASS(_, s, nir_opt_copy_prop);
       NIR_PASS(_, s, nir_opt_dce);
    }
 
    nir_move_options move_all =
-       nir_move_const_undef | nir_move_load_ubo | nir_move_load_input |
+       nir_move_const_undef | nir_move_load_ubo | nir_move_load_input | nir_move_load_frag_coord |
        nir_move_comparisons | nir_move_copies | nir_move_load_ssbo;
 
    NIR_PASS(_, s, nir_opt_move, move_all);
@@ -4012,12 +4016,10 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
 
    c->needs_texcoord_semantic =
       screen->caps.tgsi_texcoord;
-   c->has_txf_lz =
-      screen->caps.tgsi_tex_txf_lz;
 
    c->s = s;
    c->native_integers = native_integers;
-   c->ureg = ureg_create(pipe_shader_type_from_mesa(s->info.stage));
+   c->ureg = ureg_create(s->info.stage);
    ureg_setup_shader_info(c->ureg, &s->info);
    if (s->info.use_legacy_math_rules && screen->caps.legacy_math_rules)
       ureg_property(c->ureg, TGSI_PROPERTY_LEGACY_MATH_RULES, 1);
@@ -4061,7 +4063,7 @@ const void *nir_to_tgsi_options(struct nir_shader *s,
    return tgsi_tokens;
 }
 
-static const nir_shader_compiler_options nir_to_tgsi_compiler_options = {
+const nir_shader_compiler_options nir_to_tgsi_compiler_options = {
    .fdot_replicates = true,
    .fuse_ffma32 = true,
    .fuse_ffma64 = true,
@@ -4077,7 +4079,6 @@ static const nir_shader_compiler_options nir_to_tgsi_compiler_options = {
    .lower_usub_borrow = true,
    .lower_uadd_sat = true,
    .lower_usub_sat = true,
-   .lower_vector_cmp = true,
    .lower_int64_options = nir_lower_imul_2x32_64,
 
    /* TGSI doesn't have a semantic for local or global index, just local and
@@ -4085,18 +4086,6 @@ static const nir_shader_compiler_options nir_to_tgsi_compiler_options = {
     */
    .lower_cs_local_index_to_id = true,
 };
-
-/* Returns a default compiler options for drivers with only nir-to-tgsi-based
- * NIR support.
- */
-const void *
-nir_to_tgsi_get_compiler_options(struct pipe_screen *pscreen,
-                                 enum pipe_shader_ir ir,
-                                 unsigned shader)
-{
-   assert(ir == PIPE_SHADER_IR_NIR);
-   return &nir_to_tgsi_compiler_options;
-}
 
 /** Helper for getting TGSI tokens to store for a pipe_shader_state CSO. */
 const void *
