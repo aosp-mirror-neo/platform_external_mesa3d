@@ -49,6 +49,9 @@ cc_binary(
         "src/util/u_endian.h",
         "src/util/xmlconfig.h",
     ],
+    additional_linker_inputs = [
+        "src/vulkan/vulkan.sym",
+    ],
     copts = [
         "-Wno-implicit-function-declaration",
         "-fno-rtti",
@@ -191,6 +194,7 @@ cc_binary(
         "-Wl,-rpath,$$ORIGIN/../lib64",
         "-Wl,-rpath,$$ORIGIN/../../lib64",
         "-Wl,-rpath,$$ORIGIN/../../../lib64",
+        "-Wl,--version-script=$(location src/vulkan/vulkan.sym)",
     ],
     linkshared = True,
     visibility = ["//visibility:public"],
