@@ -240,7 +240,7 @@ aspect_format(VkFormat fmt, VkImageAspectFlags aspect)
       case VK_IMAGE_ASPECT_PLANE_2_BIT:
          return ycbcr_info->planes[2].format;
       default:
-         unreachable("invalid ycbcr aspect");
+         UNREACHABLE("invalid ycbcr aspect");
       }
    }
 
@@ -377,7 +377,7 @@ is_format_native(enum pipe_format format)
    case PIPE_FORMAT_B5G5R5A1_UNORM:
       return false;
    default:
-      unreachable("expected canonical");
+      UNREACHABLE("expected canonical");
    }
 }
 
@@ -416,12 +416,11 @@ load_store_formatted(nir_builder *b, nir_def *base, nir_def *index,
             raw = nir_trim_vector(b, raw, blocksize_B / 4);
          }
 
-         nir_store_global(b, addr, blocksize_B, raw,
-                          nir_component_mask(raw->num_components));
+         nir_store_global(b, raw, addr, .align_mul = blocksize_B);
       } else {
-         nir_def *raw =
-            nir_load_global(b, addr, blocksize_B, DIV_ROUND_UP(blocksize_B, 4),
-                            MIN2(32, blocksize_B * 8));
+         nir_def *raw = nir_load_global(b, DIV_ROUND_UP(blocksize_B, 4),
+                                        MIN2(32, blocksize_B * 8), addr,
+                                        .align_mul = blocksize_B);
 
          return nir_format_unpack_rgba(b, raw, format);
       }
@@ -490,7 +489,7 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key)
       assert(isa_format != PIPE_FORMAT_NONE);
    }
 
-   nir_def *local_offset = nir_imm_intN_t(b, 0, 16);
+   nir_def *local_offset = nir_imm_int(b, 0);
    nir_def *lid = nir_trim_vector(b, nir_load_local_invocation_id(b), 2);
    lid = nir_u2u16(b, lid);
 
@@ -542,14 +541,9 @@ build_image_copy_shader(const struct vk_meta_image_copy_key *key)
             value1 = load_store_formatted(b, get_push(b, buffer), src_coord,
                                           NULL, key->dst_format);
          } else {
-            if (msaa) {
-               value1 = nir_txf_ms_deref(b, deref, src_coord, ms_index);
-            } else {
-               value1 = nir_txf_deref(b, deref, src_coord, NULL);
-            }
-
-            nir_instr_as_tex(value1->parent_instr)->backend_flags =
-               AGX_TEXTURE_FLAG_NO_CLAMP;
+            value1 = nir_txf(b, src_coord, .texture_deref = deref,
+                             .ms_index = msaa ? ms_index : NULL);
+            nir_def_as_tex(value1)->backend_flags = AGX_TEXTURE_FLAG_NO_CLAMP;
 
             /* Munge according to the implicit conversions so we get a bit copy */
             if (key->src_format != key->dst_format) {
@@ -1318,7 +1312,7 @@ hk_meta_copy_get_image_properties(struct hk_image *img)
          props.depth.component_mask = BITFIELD_BIT(0);
          break;
       default:
-         unreachable("Invalid ZS format");
+         UNREACHABLE("Invalid ZS format");
       }
    }
 
@@ -1499,7 +1493,12 @@ hk_CmdFillBuffer(VkCommandBuffer commandBuffer, VkBuffer dstBuffer,
    uint64_t addr =
       vk_meta_buffer_address(&dev->vk, dstBuffer, dstOffset, dstRange);
 
-   libagx_fill(cmd, agx_1d(range / 4), AGX_BARRIER_ALL, addr, data);
+   if (util_is_aligned(addr, 16) && util_is_aligned(range, 16)) {
+      libagx_fill_uint4(cmd, agx_2d(range / 16, 1), AGX_BARRIER_ALL,
+                        addr, 0, data, data, data, data);
+   } else {
+      libagx_fill(cmd, agx_1d(range / 4), AGX_BARRIER_ALL, addr, data);
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL

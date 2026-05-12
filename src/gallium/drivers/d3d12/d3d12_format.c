@@ -87,11 +87,11 @@
     * will only choose RGB (not RGBA) configs. \
     */ \
    MAP_FORMAT_X8(R8G8B8, UNORM) \
+   MAP_FORMAT_X8(B8G8R8, UNORM) \
    MAP_FORMAT_X8(R8G8B8, SNORM) \
    MAP_FORMAT_X8(R8G8B8, UINT) \
    MAP_FORMAT_X8(R8G8B8, SINT) \
 \
-   MAP_FORMAT(B8G8R8X8, UNORM) \
    MAP_FORMAT(B8G8R8A8, UNORM) \
 \
    MAP_FORMAT_SRGB(B8G8R8A8) \
@@ -641,7 +641,7 @@ d3d12_convert_pipe_video_profile_to_dxgi_format(enum pipe_video_profile profile)
          return DXGI_FORMAT_Y210;
       default:
       {
-         unreachable("Unsupported pipe video profile");
+         UNREACHABLE("Unsupported pipe video profile");
       } break;
    }
 }

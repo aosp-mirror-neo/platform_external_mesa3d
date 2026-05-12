@@ -190,7 +190,6 @@ vc4_nir_lower_vertex_attr(struct vc4_compile *c, nir_builder *b,
                                               .base = nir_intrinsic_base(intr),
                                               .component = i);
 
-        bool format_warned = false;
         const struct util_format_description *desc =
                 util_format_description(format);
 
@@ -201,12 +200,8 @@ vc4_nir_lower_vertex_attr(struct vc4_compile *c, nir_builder *b,
                                                          desc);
 
                 if (!dests[i]) {
-                        if (!format_warned) {
-                                fprintf(stderr,
-                                        "vtx element %d unsupported type: %s\n",
-                                        attr, util_format_name(format));
-                                format_warned = true;
-                        }
+                        mesa_logw_once("vtx element %d unsupported type: %s",
+                                       attr, util_format_name(format));
                         dests[i] = nir_imm_float(b, 0.0);
                 }
         }
@@ -252,9 +247,7 @@ vc4_nir_lower_fs_input(struct vc4_compile *c, nir_builder *b,
                         result = nir_fsub_imm(b, 1.0, result);
 
                 if (result != &intr->def) {
-                        nir_def_rewrite_uses_after(&intr->def,
-                                                       result,
-                                                       result->parent_instr);
+                        nir_def_rewrite_uses_after(&intr->def, result);
                 }
         }
 }

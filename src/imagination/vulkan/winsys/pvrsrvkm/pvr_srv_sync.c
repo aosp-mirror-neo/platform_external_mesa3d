@@ -28,7 +28,7 @@
 #include <poll.h>
 #include <vulkan/vulkan.h>
 
-#include "pvr_private.h"
+#include "pvr_device.h"
 #include "pvr_srv.h"
 #include "pvr_srv_sync.h"
 #include "util/libsync.h"
@@ -99,26 +99,6 @@ static VkResult pvr_srv_sync_reset(struct vk_device *device,
    pvr_set_sync_state(srv_sync, false);
 
    return VK_SUCCESS;
-}
-
-/* Careful, timeout might overflow. */
-static inline void pvr_start_timeout(struct timespec *timeout,
-                                     uint64_t timeout_ns)
-{
-   clock_gettime(CLOCK_MONOTONIC, timeout);
-   timespec_add_nsec(timeout, timeout, timeout_ns);
-}
-
-/* Careful, a negative value might be returned. */
-static inline struct timespec
-pvr_get_remaining_time(const struct timespec *timeout)
-{
-   struct timespec time;
-
-   clock_gettime(CLOCK_MONOTONIC, &time);
-   timespec_sub(&time, timeout, &time);
-
-   return time;
 }
 
 static inline int pvr_get_relative_time_ms(uint64_t abs_timeout_ns)
@@ -224,7 +204,7 @@ static VkResult pvr_srv_sync_move(struct vk_device *device,
       return VK_SUCCESS;
    }
 
-   unreachable("srv_sync doesn't support move for shared sync objects.");
+   UNREACHABLE("srv_sync doesn't support move for shared sync objects.");
    return VK_ERROR_UNKNOWN;
 }
 

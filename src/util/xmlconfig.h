@@ -30,7 +30,7 @@
 #ifndef __XMLCONFIG_H
 #define __XMLCONFIG_H
 
-#include "util/mesa-sha1.h"
+#include "util/mesa-blake3.h"
 #include "util/ralloc.h"
 #include <stdint.h>
 #include <string.h>
@@ -107,7 +107,7 @@ typedef struct driOptionDescription {
 
    driOptionInfo info;
    driOptionValue value;
-   driEnumDescription enums[5];
+   driEnumDescription enums[20];
 } driOptionDescription;
 
 /** Returns an XML string describing the options for the driver. */
@@ -169,7 +169,7 @@ void driInjectExecName(const char *exec);
  * Returns a hash of the options for this application.
  */
 static inline void
-driComputeOptionsSha1(const driOptionCache *cache, unsigned char *sha1)
+driComputeOptionsBlake3(const driOptionCache *cache, unsigned char *blake3)
 {
    void *ctx = ralloc_context(NULL);
    char *dri_options = ralloc_strdup(ctx, "");
@@ -207,7 +207,7 @@ driComputeOptionsSha1(const driOptionCache *cache, unsigned char *sha1)
                                       cache->values[i]._string);
          break;
       default:
-         unreachable("unsupported dri config type!");
+         UNREACHABLE("unsupported dri config type!");
       }
 
       if (!ret) {
@@ -215,7 +215,7 @@ driComputeOptionsSha1(const driOptionCache *cache, unsigned char *sha1)
       }
    }
 
-   _mesa_sha1_compute(dri_options, strlen(dri_options), sha1);
+   _mesa_blake3_compute(dri_options, strlen(dri_options), blake3);
    ralloc_free(ctx);
 }
 

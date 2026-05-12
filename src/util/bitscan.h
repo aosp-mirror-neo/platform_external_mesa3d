@@ -42,7 +42,9 @@
 #include <popcntintrin.h>
 #endif
 
-#include "macros.h"
+#include "util/detect_arch.h"
+#include "util/detect_cc.h"
+#include "util/macros.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -104,10 +106,11 @@ u_bit_scan(unsigned *mask)
    return i;
 }
 
-#define u_foreach_bit(b, dword)                          \
+#define u_foreach_bit(b, dword)                            \
    for (uint32_t __dword = (dword), b;                     \
-        ((b) = ffs(__dword) - 1, __dword);      \
-        __dword &= ~(1 << (b)))
+        ((b) = ffs(__dword) - 1, __dword);                 \
+        /* See util_bitcount below. */                     \
+        __dword &= __dword - 1)
 
 static inline int
 u_bit_scan64(uint64_t *mask)
@@ -119,8 +122,9 @@ u_bit_scan64(uint64_t *mask)
 
 #define u_foreach_bit64(b, dword)                          \
    for (uint64_t __dword = (dword), b;                     \
-        ((b) = ffsll(__dword) - 1, __dword);      \
-        __dword &= ~(1ull << (b)))
+        ((b) = ffsll(__dword) - 1, __dword);               \
+        /* See util_bitcount below. */                     \
+        __dword &= __dword - 1)
 
 /* Given two bitmasks, loop over all bits of both of them.
  * Bits of mask1 are: b = scan_bit(mask1);
@@ -363,7 +367,7 @@ util_bitcount(unsigned n)
 static inline unsigned
 util_popcnt_inline_asm(unsigned n)
 {
-#if defined(USE_X86_64_ASM) || defined(USE_X86_ASM)
+#if (DETECT_ARCH_X86 || DETECT_ARCH_X86_64) && DETECT_CC_GCC
    uint32_t out;
    __asm volatile("popcnt %1, %0" : "=r"(out) : "r"(n));
    return out;

@@ -1,24 +1,6 @@
 /*
  * Copyright © 2011 Intel Corporation
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
- * IN THE SOFTWARE.
+ * SPDX-License-Identifier: MIT
  */
 
 #include "elk_vec4.h"
@@ -294,13 +276,11 @@ vec4_instruction::can_do_writemask(const struct intel_device_info *devinfo)
    case ELK_FS_OPCODE_TXB:
    case ELK_SHADER_OPCODE_TXD:
    case ELK_SHADER_OPCODE_TXF:
-   case ELK_SHADER_OPCODE_TXF_LZ:
    case ELK_SHADER_OPCODE_TXF_CMS:
    case ELK_SHADER_OPCODE_TXF_CMS_W:
    case ELK_SHADER_OPCODE_TXF_UMS:
    case ELK_SHADER_OPCODE_TXF_MCS:
    case ELK_SHADER_OPCODE_TXL:
-   case ELK_SHADER_OPCODE_TXL_LZ:
    case ELK_SHADER_OPCODE_TXS:
    case ELK_SHADER_OPCODE_LOD:
    case ELK_SHADER_OPCODE_TG4:
@@ -387,7 +367,7 @@ vec4_instruction::implied_mrf_writes() const
    case ELK_SHADER_OPCODE_GET_BUFFER_SIZE:
       return header_size;
    default:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
 }
 
@@ -648,7 +628,7 @@ vec4_visitor::opt_algebraic()
             if (inst->dst.type != inst->src[0].type &&
                 inst->dst.type != ELK_REGISTER_TYPE_DF &&
                 inst->src[0].type != ELK_REGISTER_TYPE_F)
-               unreachable("unimplemented: saturate mixed types");
+               UNREACHABLE("unimplemented: saturate mixed types");
 
             if (elk_saturate_immediate(inst->src[0].type,
                                        &inst->src[0].as_elk_reg())) {
@@ -701,7 +681,7 @@ vec4_visitor::opt_algebraic()
 	       inst->src[0] = elk_imm_ud(0u);
 	       break;
 	    default:
-	       unreachable("not reached");
+	       UNREACHABLE("not reached");
 	    }
 	    inst->src[1] = src_reg();
 	    progress = true;
@@ -1388,7 +1368,7 @@ vec4_visitor::dump_instruction_to_file(const elk_backend_instruction *be_inst, F
    case IMM:
    case ATTR:
    case UNIFORM:
-      unreachable("not reached");
+      UNREACHABLE("not reached");
    }
    if (inst->dst.offset ||
        (inst->dst.file == VGRF &&
@@ -1480,7 +1460,7 @@ vec4_visitor::dump_instruction_to_file(const elk_backend_instruction *be_inst, F
          fprintf(file, "(null)");
          break;
       case MRF:
-         unreachable("not reached");
+         UNREACHABLE("not reached");
       }
 
       if (inst->src[i].offset ||
@@ -1785,7 +1765,7 @@ vec4_visitor::convert_to_hw_regs()
 
          case MRF:
          case ATTR:
-            unreachable("not reached");
+            UNREACHABLE("not reached");
          }
 
          apply_logical_swizzle(&reg, inst, i);
@@ -1851,7 +1831,7 @@ vec4_visitor::convert_to_hw_regs()
       case IMM:
       case ATTR:
       case UNIFORM:
-         unreachable("not reached");
+         UNREACHABLE("not reached");
       }
 
       dst = reg;
@@ -2082,7 +2062,7 @@ scalarize_predicate(elk_predicate predicate, unsigned writemask)
    case WRITEMASK_W:
       return ELK_PREDICATE_ALIGN16_REPLICATE_W;
    default:
-      unreachable("invalid writemask");
+      UNREACHABLE("invalid writemask");
    }
 }
 

@@ -35,8 +35,6 @@ files_libfreedreno = files(
   'freedreno_screen.h',
   'freedreno_state.c',
   'freedreno_state.h',
-  'freedreno_surface.c',
-  'freedreno_surface.h',
   'freedreno_texture.c',
   'freedreno_texture.h',
   'freedreno_util.c',
@@ -223,7 +221,6 @@ freedreno_tracepoints = custom_target(
 files_libfreedreno += freedreno_tracepoints
 
 freedreno_includes = [
-  inc_mesa, inc_mapi,
   inc_src, inc_include, inc_gallium, inc_gallium_aux,
   inc_freedreno, include_directories('ir3'),
 ]
@@ -236,6 +233,7 @@ freedreno_c_args += cc.get_supported_arguments([
 
 freedreno_cpp_args = []
 freedreno_cpp_args += cpp.get_supported_arguments([
+  '-DFD_BO_NO_HARDPIN=1',
   '-fno-exceptions',
   '-fno-rtti',
   '-Wno-address-of-packed-member',
@@ -297,32 +295,12 @@ driver_freedreno = declare_dependency(
   ],
 )
 
-ir3_compiler = executable(
-  'ir3_compiler',
-  ['ir3/ir3_cmdline.c', freedreno_xml_header_files],
-  include_directories : freedreno_includes,
-  dependencies : [
-    idep_nir,
-    idep_vtn,
-    idep_mesautil,
-  ],
-  link_with : [
-    libfreedreno,
-    libfreedreno_drm,
-    libfreedreno_ir3,
-    libfreedreno_layout,
-    libgallium,
-    libglsl_standalone,
-  ],
-  build_by_default : with_tools.contains('freedreno'),
-  install : false,
-)
-
 gmemtool = executable(
   'gmemtool',
   [
     'gmemtool.c',
-    freedreno_tracepoints[1]
+    freedreno_tracepoints[1],
+    freedreno_xml_header_files,
   ],
   include_directories : freedreno_includes,
   dependencies : [

@@ -35,7 +35,6 @@
  * with our #define in include/c99_compat.h
  */
 
-#include "ac_binary.h"
 #include "ac_llvm_util.h"
 #include "ac_llvm_build.h"
 #include "util/macros.h"
@@ -415,7 +414,7 @@ LLVMValueRef ac_build_atomic_rmw(struct ac_llvm_context *ctx, LLVMAtomicRMWBinOp
       binop = AtomicRMWInst::FAdd;
       break;
    default:
-      unreachable("invalid LLVMAtomicRMWBinOp");
+      UNREACHABLE("invalid LLVMAtomicRMWBinOp");
       break;
    }
    unsigned SSID = unwrap(ctx->context)->getOrInsertSyncScopeID(sync_scope);

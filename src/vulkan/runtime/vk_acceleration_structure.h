@@ -29,6 +29,8 @@
 #include "vk_meta.h"
 #include "vk_object.h"
 #include "radix_sort/radix_sort_vk.h"
+#include "radix_sort/common/vk/barrier.h"
+#include "radix_sort/shaders/push.h"
 
 #include "bvh/vk_bvh.h"
 
@@ -43,7 +45,25 @@ enum vk_acceleration_structure_build_step {
    VK_ACCELERATION_STRUCTURE_BUILD_STEP_MORTON_SORT,
    VK_ACCELERATION_STRUCTURE_BUILD_STEP_LBVH_BUILD_INTERNAL,
    VK_ACCELERATION_STRUCTURE_BUILD_STEP_PLOC_BUILD_INTERNAL,
+   VK_ACCELERATION_STRUCTURE_BUILD_STEP_HPLOC_BUILD_INTERNAL,
    VK_ACCELERATION_STRUCTURE_BUILD_STEP_ENCODE,
+   VK_ACCELERATION_STRUCTURE_BUILD_STEP_UPDATE,
+};
+
+struct vk_acceleration_structure_build_marker {
+   enum vk_acceleration_structure_build_step step;
+   union {
+      struct {
+         uint32_t blas_count;
+         uint32_t tlas_count;
+      } top; /* Used for VK_ACCELERATION_STRUCTURE_BUILD_STEP_TOP */
+      struct {
+         uint32_t pass;
+         uint32_t key;
+         uint32_t leaf_node_count;
+         uint32_t internal_node_count;
+      } encode; /* Used for VK_ACCELERATION_STRUCTURE_BUILD_STEP_ENCODE, VK_ACCELERATION_STRUCTURE_BUILD_STEP_UPDATE */
+   };
 };
 
 struct vk_acceleration_structure {
@@ -51,6 +71,7 @@ struct vk_acceleration_structure {
 
    struct vk_buffer *buffer;
 
+   uint64_t addr;
    uint64_t offset;
    uint64_t size;
 };
@@ -58,19 +79,24 @@ struct vk_acceleration_structure {
 static inline VkDeviceAddress
 vk_acceleration_structure_get_va(const struct vk_acceleration_structure *accel_struct)
 {
-   assert(accel_struct->buffer != NULL);
-   return vk_buffer_address(accel_struct->buffer, accel_struct->offset);
+   if (accel_struct->buffer) {
+      return vk_buffer_address(accel_struct->buffer, accel_struct->offset);
+   } else {
+      assert(accel_struct->addr != 0);
+      return accel_struct->addr;
+   }
 }
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(vk_acceleration_structure, base, VkAccelerationStructureKHR,
                                VK_OBJECT_TYPE_ACCELERATION_STRUCTURE_KHR)
 
-#define MAX_ENCODE_PASSES 2
+#define MAX_ENCODE_PASSES 5
 #define MAX_UPDATE_PASSES 2
 
 enum vk_internal_build_type {
    VK_INTERNAL_BUILD_TYPE_LBVH,
    VK_INTERNAL_BUILD_TYPE_PLOC,
+   VK_INTERNAL_BUILD_TYPE_HPLOC,
    VK_INTERNAL_BUILD_TYPE_UPDATE,
 };
 
@@ -94,6 +120,7 @@ struct vk_scratch_layout {
 
    uint32_t ploc_prefix_sum_partition_offset;
    uint32_t lbvh_node_offset;
+   uint32_t hploc_ranges_offset;
 
    uint32_t ir_offset;
    uint32_t internal_node_offset;
@@ -103,15 +130,30 @@ struct vk_acceleration_structure_build_state {
    const VkAccelerationStructureBuildGeometryInfoKHR *build_info;
    const VkAccelerationStructureBuildRangeInfoKHR *build_range_infos;
    uint32_t leaf_node_count;
+   uint32_t internal_node_count;
    struct vk_scratch_layout scratch;
    struct vk_build_config config;
+
+   /* Internal state of vk_acceleration_structure.c */
+   uint32_t build_flags;
+
+   uint32_t scratch_offset;
+
+   /* Radix sort state */
+   uint32_t scatter_blocks;
+   uint32_t count_ru_scatter;
+   uint32_t histo_blocks;
+   uint32_t count_ru_histo;
+   struct rs_push_scatter push_scatter;
+
+   uint32_t last_encode_pass;
 };
 
 struct vk_acceleration_structure_build_ops {
    void (*begin_debug_marker)(VkCommandBuffer commandBuffer,
-                              enum vk_acceleration_structure_build_step step,
-                              const char *format, ...);
-   void (*end_debug_marker)(VkCommandBuffer commandBuffer);
+                              struct vk_acceleration_structure_build_marker *marker);
+   void (*end_debug_marker)(VkCommandBuffer commandBuffer,
+                            struct vk_acceleration_structure_build_marker *marker);
 
    void (*get_build_config)(VkDevice device, struct vk_acceleration_structure_build_state *state);
 
@@ -119,11 +161,12 @@ struct vk_acceleration_structure_build_ops {
    VkDeviceSize (*get_encode_scratch_size)(VkDevice device, const struct vk_acceleration_structure_build_state *state);
    VkDeviceSize (*get_update_scratch_size)(VkDevice device, const struct vk_acceleration_structure_build_state *state);
 
-   VkResult (*encode_bind_pipeline[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
+   VkResult (*encode_prepare[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
    void (*encode_as[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
 
-   void (*init_update_scratch)(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
-   void (*update_bind_pipeline[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
+   void (*init_update_scratch)(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *states, uint32_t build_count);
+   void (*update_prepare[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state,
+                                             bool flushed_cp_after_init_update_scratch, bool flushed_compute_after_init_update_scratch);
    void (*update_as[MAX_ENCODE_PASSES])(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state);
 
    const uint32_t *leaf_spirv_override;
@@ -146,7 +189,8 @@ VkResult vk_get_bvh_build_pipeline_spv(struct vk_device *device, struct vk_meta_
                                        enum vk_meta_object_key_type type, const uint32_t *spv,
                                        uint32_t spv_size, unsigned push_constant_size,
                                        const struct vk_acceleration_structure_build_args *args,
-                                       uint32_t flags, VkPipeline *pipeline);
+                                       uint32_t flags, VkPipeline *pipeline,
+                                       bool unaligned_dispatch);
 
 void vk_cmd_build_acceleration_structures(VkCommandBuffer cmdbuf,
                                           struct vk_device *device,
@@ -186,10 +230,10 @@ vk_fill_geometry_data(VkAccelerationStructureTypeKHR type, uint32_t first_id, ui
                       const VkAccelerationStructureBuildRangeInfoKHR *build_range_info);
 
 void vk_accel_struct_cmd_begin_debug_marker(VkCommandBuffer commandBuffer,
-                                            enum vk_acceleration_structure_build_step step,
-                                            const char *format, ...);
+                                            struct vk_acceleration_structure_build_marker *marker);
 
-void vk_accel_struct_cmd_end_debug_marker(VkCommandBuffer commandBuffer);
+void vk_accel_struct_cmd_end_debug_marker(VkCommandBuffer commandBuffer,
+                                          struct vk_acceleration_structure_build_marker *marker);
 
 #ifdef __cplusplus
 }

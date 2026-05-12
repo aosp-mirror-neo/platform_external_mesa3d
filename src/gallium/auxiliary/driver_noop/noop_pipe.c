@@ -277,7 +277,9 @@ static void noop_texture_subdata(struct pipe_context *pipe,
 /*
  * clear/copy
  */
-static void noop_clear(struct pipe_context *ctx, unsigned buffers, const struct pipe_scissor_state *scissor_state,
+static void noop_clear(struct pipe_context *ctx, unsigned buffers,
+                       uint32_t color_clear_mask, uint8_t stencil_clear_mask,
+                       const struct pipe_scissor_state *scissor_state,
                        const union pipe_color_union *color, double depth, unsigned stencil)
 {
 }
@@ -414,6 +416,12 @@ static bool noop_is_resource_busy(struct pipe_screen *screen,
    return false;
 }
 
+static void
+noop_resource_release(struct pipe_context *ctx, struct pipe_resource *resource)
+{
+   pipe_resource_reference(&resource, NULL);
+}
+
 static struct pipe_context *noop_create_context(struct pipe_screen *screen,
                                                 void *priv, unsigned flags)
 {
@@ -458,6 +466,7 @@ static struct pipe_context *noop_create_context(struct pipe_screen *screen,
    ctx->invalidate_resource = noop_invalidate_resource;
    ctx->set_context_param = noop_set_context_param;
    ctx->set_frontend_noop = noop_set_frontend_noop;
+   ctx->resource_release = noop_resource_release;
    noop_init_state_functions(ctx);
 
    p_atomic_inc(&screen->num_contexts);
@@ -571,19 +580,12 @@ static struct disk_cache *noop_get_disk_shader_cache(struct pipe_screen *pscreen
    return screen->get_disk_shader_cache(screen);
 }
 
-static const struct nir_shader_compiler_options *noop_get_compiler_options(
-   struct pipe_screen *pscreen, enum pipe_shader_type shader)
+static void noop_finalize_nir(struct pipe_screen *pscreen, struct nir_shader *nir,
+                              bool optimize)
 {
    struct pipe_screen *screen = ((struct noop_pipe_screen*)pscreen)->oscreen;
 
-   return screen->get_compiler_options(screen, shader);
-}
-
-static char *noop_finalize_nir(struct pipe_screen *pscreen, struct nir_shader *nir)
-{
-   struct pipe_screen *screen = ((struct noop_pipe_screen*)pscreen)->oscreen;
-
-   return screen->finalize_nir(screen, nir);
+   screen->finalize_nir(screen, nir,  optimize);
 }
 
 static bool noop_check_resource_capability(struct pipe_screen *screen,
@@ -611,7 +613,7 @@ static void noop_set_max_shader_compiler_threads(struct pipe_screen *screen,
 
 static bool noop_is_parallel_shader_compilation_finished(struct pipe_screen *screen,
                                                          void *shader,
-                                                         enum pipe_shader_type shader_type)
+                                                         mesa_shader_stage shader_type)
 {
    return true;
 }
@@ -744,6 +746,14 @@ static void noop_vertex_state_destroy(struct pipe_screen *screen,
    FREE(state);
 }
 
+static struct pipe_fence_handle *
+noop_semaphore_create(struct pipe_screen *screen)
+{
+   struct pipe_reference *f = MALLOC_STRUCT(pipe_reference);
+   f->count = 1;
+   return (struct pipe_fence_handle*)f;
+}
+
 static struct pipe_screen * noop_get_driver_pipe_screen(struct pipe_screen *_screen)
 {
    struct pipe_screen * screen = ((struct noop_pipe_screen*)_screen)->oscreen;
@@ -787,7 +797,6 @@ struct pipe_screen *noop_screen_create(struct pipe_screen *oscreen)
    screen->fence_finish = noop_fence_finish;
    screen->query_memory_info = noop_query_memory_info;
    screen->get_disk_shader_cache = noop_get_disk_shader_cache;
-   screen->get_compiler_options = noop_get_compiler_options;
    screen->finalize_nir = noop_finalize_nir;
    if (screen->create_fence_win32)
       screen->create_fence_win32 = noop_create_fence_win32;
@@ -809,11 +818,14 @@ struct pipe_screen *noop_screen_create(struct pipe_screen *oscreen)
    screen->query_compression_rates = noop_query_compression_rates;
    screen->query_compression_modifiers = noop_query_compression_modifiers;
    screen->get_driver_pipe_screen = noop_get_driver_pipe_screen;
+   if (oscreen->semaphore_create)
+      screen->semaphore_create = noop_semaphore_create;
 
    /* copy all caps */
    *(struct pipe_caps *)&screen->caps = oscreen->caps;
    *(struct pipe_compute_caps *)&screen->compute_caps = oscreen->compute_caps;
    memcpy((void *)screen->shader_caps, oscreen->shader_caps, sizeof(screen->shader_caps));
+   memcpy((void *)screen->nir_options, oscreen->nir_options, sizeof(screen->nir_options));
 
    slab_create_parent(&noop_screen->pool_transfers,
                       sizeof(struct pipe_transfer), 64);

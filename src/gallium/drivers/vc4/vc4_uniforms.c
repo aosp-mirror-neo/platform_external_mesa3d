@@ -252,7 +252,7 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
                          * the GPU.
                         */
                         if (!cb->cb[0].buffer) {
-                                u_upload_data(vc4->uploader, 0,
+                                u_upload_data_ref(vc4->uploader, 0,
                                               cb->cb[0].buffer_size, 16,
                                               cb->cb[0].user_buffer,
                                               &cb->cb[0].buffer_offset,
@@ -351,8 +351,8 @@ vc4_write_uniforms(struct vc4_context *vc4, struct vc4_compiled_shader *shader,
                                                           uinfo->data[i],
                                                           gallium_uniforms);
 
-                        fprintf(stderr, "%p/%d: 0x%08x %s\n",
-                                shader, i, written_val, desc);
+                        mesa_logd("%p/%d: 0x%08x %s",
+                                  shader, i, written_val, desc);
 
                         ralloc_free(desc);
                 }

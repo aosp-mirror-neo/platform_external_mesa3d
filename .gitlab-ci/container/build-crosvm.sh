@@ -3,7 +3,7 @@
 
 # When changing this file, you need to bump the following
 # .gitlab-ci/image-tags.yml tags:
-# DEBIAN_BASE_TAG
+# DEBIAN_TEST_BASE_TAG
 
 # Do a very early check to make sure the tag is correct without the need of
 # setting up the environment variables locally
@@ -16,13 +16,13 @@ section_start crosvm "Building crosvm"
 git config --global user.email "mesa@example.com"
 git config --global user.name "Mesa CI"
 
-CROSVM_VERSION=e27efaf8f4bdc4a47d1e99cc44d2b6908b6f36bd
+CROSVM_VERSION=f58c8e685f3f21d733861a080a0857acafd0da56
 git clone --single-branch -b main --no-checkout https://chromium.googlesource.com/crosvm/crosvm /platform/crosvm
 pushd /platform/crosvm
 git checkout "$CROSVM_VERSION"
 git submodule update --init
 
-VIRGLRENDERER_VERSION=7570167549358ce77b8d4774041b4a77c72a021c
+VIRGLRENDERER_VERSION=95610d57da49d76617bd6d8d21b9bfb1bf360f64
 rm -rf third_party/virglrenderer
 git clone --single-branch -b main --no-checkout https://gitlab.freedesktop.org/virgl/virglrenderer.git third_party/virglrenderer
 pushd third_party/virglrenderer

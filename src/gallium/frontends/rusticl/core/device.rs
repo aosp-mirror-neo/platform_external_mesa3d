@@ -1,3 +1,6 @@
+// Copyright 2020 Red Hat.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::api::util::*;
 use crate::core::format::*;
@@ -27,17 +30,15 @@ use std::convert::TryInto;
 use std::env;
 use std::ffi::CStr;
 use std::fmt::Debug;
-use std::mem::transmute;
 use std::num::NonZeroU64;
 use std::ops::Deref;
 use std::os::raw::*;
-use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::MutexGuard;
 
 /// Contains basic stuff we need to partially initialize Device
 pub struct DeviceBase {
-    pub screen: Arc<PipeScreen>,
+    pub screen: PipeScreenWithLdev,
     pub cl_version: CLVersion,
     pub clc_version: CLVersion,
     pub clc_versions: Vec<cl_name_version>,
@@ -72,6 +73,7 @@ impl Deref for Device {
 #[derive(Default)]
 pub struct DeviceCaps {
     pub has_3d_image_writes: bool,
+    has_create_fence_fd: bool,
     pub has_depth_images: bool,
     pub has_image_unorm_int_2_101010: bool,
     pub has_images: bool,
@@ -84,7 +86,7 @@ pub struct DeviceCaps {
 }
 
 impl DeviceCaps {
-    fn new(screen: &PipeScreen) -> Self {
+    fn new(screen: &PipeScreen, ctx: &PipeContext) -> Self {
         let cap_timestamp = screen.caps().query_timestamp;
         let timer_resolution = screen.caps().timer_resolution;
 
@@ -104,16 +106,17 @@ impl DeviceCaps {
         Self {
             has_images: has_images,
             has_timestamp: cap_timestamp && timer_resolution > 0,
-            image_2d_size: has_images.then_some(image_2d_size).unwrap_or_default(),
-            max_read_images: has_images.then_some(max_read_images).unwrap_or_default(),
-            max_write_images: has_images.then_some(max_write_images).unwrap_or_default(),
+            image_2d_size: if has_images { image_2d_size } else { 0 },
+            max_read_images: if has_images { max_read_images } else { 0 },
+            max_write_images: if has_images { max_write_images } else { 0 },
             timer_resolution: timer_resolution,
+            has_create_fence_fd: ctx.is_create_fence_fd_supported(),
             ..Default::default()
         }
     }
 
     fn shader_caps(screen: &PipeScreen) -> &pipe_shader_caps {
-        screen.shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+        screen.shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
     }
 }
 
@@ -125,7 +128,7 @@ pub trait HelperContextWrapper {
 
     fn buffer_map(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -137,7 +140,7 @@ pub trait HelperContextWrapper {
 
     fn map_buffer_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -145,13 +148,12 @@ pub trait HelperContextWrapper {
 
     fn map_texture_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         rw: RWFlags,
     ) -> Option<PipeTransfer<'_>>;
 
-    fn is_create_fence_fd_supported(&self) -> bool;
-    fn import_fence(&self, fence_fd: &FenceFd) -> PipeFence;
+    fn import_fence(&self, fence_fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence>;
 }
 
 pub struct HelperContext<'a> {
@@ -161,7 +163,7 @@ pub struct HelperContext<'a> {
 impl HelperContext<'_> {
     pub fn buffer_subdata(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: c_uint,
         data: *const c_void,
         size: c_uint,
@@ -171,7 +173,7 @@ impl HelperContext<'_> {
 
     pub fn texture_subdata(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         data: *const c_void,
         stride: u32,
@@ -193,7 +195,7 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn buffer_map(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -219,7 +221,7 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn map_buffer_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         offset: i32,
         size: i32,
         rw: RWFlags,
@@ -234,7 +236,7 @@ impl HelperContextWrapper for HelperContext<'_> {
 
     fn map_texture_unsynchronized(
         &self,
-        res: &PipeResource,
+        res: &PipeResourceOwned,
         bx: &pipe_box,
         rw: RWFlags,
     ) -> Option<PipeTransfer<'_>> {
@@ -242,12 +244,10 @@ impl HelperContextWrapper for HelperContext<'_> {
             .texture_map_flags(res, bx, pipe_map_flags::PIPE_MAP_UNSYNCHRONIZED | rw.into())
     }
 
-    fn is_create_fence_fd_supported(&self) -> bool {
-        self.lock.is_create_fence_fd_supported()
-    }
-
-    fn import_fence(&self, fd: &FenceFd) -> PipeFence {
-        self.lock.import_fence(fd)
+    fn import_fence(&self, fd: &FenceFd, fence_type: pipe_fd_type) -> CLResult<PipeFence> {
+        self.lock
+            .import_fence(fd, fence_type)
+            .ok_or(CL_OUT_OF_HOST_MEMORY)
     }
 }
 
@@ -286,7 +286,7 @@ impl DeviceBase {
                     cl_mem_type_to_texture_target(t),
                     PIPE_BIND_SAMPLER_VIEW,
                 ) {
-                    flags |= CL_MEM_READ_ONLY;
+                    flags |= CL_MEM_READ_ONLY | CL_MEM_IMMUTABLE_EXT;
                 }
 
                 // TODO: cl_khr_srgb_image_writes
@@ -297,7 +297,7 @@ impl DeviceBase {
                         PIPE_BIND_SHADER_IMAGE,
                     )
                 {
-                    flags |= CL_MEM_WRITE_ONLY | CL_MEM_KERNEL_READ_AND_WRITE;
+                    flags |= CL_MEM_WRITE_ONLY;
                 }
 
                 // TODO: cl_khr_srgb_image_writes
@@ -308,7 +308,7 @@ impl DeviceBase {
                         PIPE_BIND_SAMPLER_VIEW | PIPE_BIND_SHADER_IMAGE,
                     )
                 {
-                    flags |= CL_MEM_READ_WRITE;
+                    flags |= CL_MEM_READ_WRITE | CL_MEM_KERNEL_READ_AND_WRITE;
                 }
 
                 fs.insert(t, flags as cl_mem_flags);
@@ -499,6 +499,7 @@ impl DeviceBase {
         let exts: Vec<&str> = self.extension_string.split(' ').collect();
         let mut res = CLVersion::Cl3_0;
 
+        #[allow(clippy::collapsible_if)]
         if self.embedded {
             if self.caps.has_images {
                 let supports_array_writes = !FORMATS
@@ -623,6 +624,7 @@ impl DeviceBase {
         add_ext(1, 0, 0, "cl_khr_spirv_no_integer_wrap_decoration");
         add_ext(1, 0, 0, "cl_khr_spirv_queries");
         add_ext(1, 0, 0, "cl_khr_suggested_local_work_size");
+        add_ext(1, 0, 0, "cl_ext_immutable_memory_objects");
 
         add_feat(2, 0, 0, "__opencl_c_integer_dot_product_input_4x8bit");
         add_feat(
@@ -738,17 +740,50 @@ impl DeviceBase {
         }
 
         if self.subgroups_supported() {
-            add_cap(SpvCapability::SpvCapabilityGroupNonUniformShuffle);
-            add_cap(SpvCapability::SpvCapabilityGroupNonUniformShuffleRelative);
             add_cap(SpvCapability::SpvCapabilityGroups);
             add_cap(SpvCapability::SpvCapabilitySubgroupDispatch);
             // requires CL_DEVICE_SUB_GROUP_INDEPENDENT_FORWARD_PROGRESS
             //add_ext(1, 0, 0, "cl_khr_subgroups");
+            add_ext(1, 0, 0, "cl_khr_subgroup_extended_types");
             add_feat(1, 0, 0, "__opencl_c_subgroups");
 
-            // we have lowering in `nir_lower_subgroups`, drivers can just use that
-            add_ext(1, 0, 0, "cl_khr_subgroup_shuffle");
-            add_ext(1, 0, 0, "cl_khr_subgroup_shuffle_relative");
+            if self.subgroup_ballot_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformBallot);
+                add_ext(1, 0, 0, "cl_khr_subgroup_ballot");
+            }
+
+            if self.subgroup_clustered_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformClustered);
+                add_ext(1, 0, 0, "cl_khr_subgroup_clustered_reduce");
+            }
+
+            if self.subgroup_non_uniform_arithmetic_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformArithmetic);
+                add_ext(1, 0, 0, "cl_khr_subgroup_non_uniform_arithmetic");
+            }
+
+            if self.subgroup_non_uniform_vote_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniform);
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformVote);
+                add_ext(1, 0, 0, "cl_khr_subgroup_non_uniform_vote");
+            }
+
+            if self.subgroup_rotate_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformRotateKHR);
+                add_ext(1, 0, 0, "cl_khr_subgroup_rotate");
+                add_spirv(c"SPV_KHR_subgroup_rotate");
+            }
+
+            if self.subgroup_shuffle_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformShuffle);
+                add_ext(1, 0, 0, "cl_khr_subgroup_shuffle");
+            }
+
+            if self.subgroup_shuffle_relative_supported() {
+                add_cap(SpvCapability::SpvCapabilityGroupNonUniformShuffleRelative);
+                add_ext(1, 0, 0, "cl_khr_subgroup_shuffle_relative");
+            }
+
             if self.intel_subgroups_supported() {
                 // add_cap(SpvCapability::SpvCapabilitySubgroupBufferBlockIOINTEL);
                 // add_cap(SpvCapability::SpvCapabilitySubgroupImageBlockIOINTEL);
@@ -767,6 +802,14 @@ impl DeviceBase {
             add_ext(1, 0, 2, "cl_ext_buffer_device_address");
         }
 
+        if self.are_semaphores_supported() {
+            if self.are_external_semaphores_supported() {
+                add_ext(1, 0, 1, "cl_khr_external_semaphore");
+                add_ext(1, 0, 1, "cl_khr_external_semaphore_sync_fd");
+            }
+            add_ext(1, 0, 1, "cl_khr_semaphore");
+        }
+
         self.extensions = exts;
         self.clc_features = feats;
         self.extension_string = exts_str.join(" ");
@@ -777,7 +820,7 @@ impl DeviceBase {
 
     fn shader_caps(&self) -> &pipe_shader_caps {
         self.screen
-            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
     }
 
     pub fn address_bits(&self) -> cl_uint {
@@ -881,7 +924,7 @@ impl DeviceBase {
             && !self.is_device_software()
             && self.screen.is_res_handle_supported()
             && self.screen.device_uuid().is_some()
-            && self.helper_ctx().is_create_fence_fd_supported()
+            && self.caps.has_create_fence_fd
     }
 
     pub fn is_device_software(&self) -> bool {
@@ -892,7 +935,7 @@ impl DeviceBase {
         unsafe {
             *self
                 .screen
-                .nir_shader_compiler_options(pipe_shader_type::PIPE_SHADER_COMPUTE)
+                .nir_shader_compiler_options(mesa_shader_stage::MESA_SHADER_COMPUTE)
         }
     }
 
@@ -956,11 +999,19 @@ impl DeviceBase {
 
     pub fn global_mem_size(&self) -> cl_ulong {
         if let Some(memory_info) = self.screen.query_memory_info() {
-            let memory: cl_ulong = if memory_info.total_device_memory != 0 {
-                memory_info.total_device_memory.into()
+            let device_memory: cl_ulong = memory_info.total_device_memory.into();
+            let staging_memory: cl_ulong = memory_info.total_staging_memory.into();
+
+            // In case some driver doesn't set uma correctly.
+            let memory = if device_memory == 0 {
+                staging_memory
+            } else if self.unified_memory() {
+                // For UMA devices we expose both.
+                staging_memory + device_memory
             } else {
-                memory_info.total_staging_memory.into()
+                device_memory
             };
+
             memory * 1024
         } else {
             self.screen.compute_caps().max_global_size
@@ -1120,7 +1171,7 @@ impl DeviceBase {
         self.reusable_ctx.lock().unwrap()
     }
 
-    pub fn screen(&self) -> &Arc<PipeScreen> {
+    pub fn screen(&self) -> &PipeScreen {
         &self.screen
     }
 
@@ -1129,7 +1180,7 @@ impl DeviceBase {
         let res = (prio == PipeContextPrio::Med)
             .then(|| self.reusable_ctx().pop())
             .flatten()
-            .or_else(|| self.screen.create_context(prio))?;
+            .or_else(|| PipeContext::new(prio, &self.screen))?;
 
         debug_assert_eq!(res.prio, prio);
 
@@ -1142,7 +1193,7 @@ impl DeviceBase {
         }
     }
 
-    pub fn subgroup_sizes(&self) -> impl ExactSizeIterator<Item = usize> {
+    pub fn subgroup_sizes(&self) -> impl ExactSizeIterator<Item = usize> + use<> {
         let subgroup_size = self.screen.compute_caps().subgroup_sizes;
 
         SetBitIndices::from_msb(subgroup_size).map(|bit| 1 << bit)
@@ -1163,6 +1214,58 @@ impl DeviceBase {
         // supported, doing it without shareable shaders isn't practical
         self.max_subgroups() > 0
             && (subgroup_sizes == 1 || (subgroup_sizes > 1 && self.shareable_shaders()))
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_BASIC
+                != 0
+    }
+
+    pub fn subgroup_ballot_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_BALLOT
+                != 0
+    }
+
+    pub fn subgroup_clustered_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_CLUSTERED
+                != 0
+    }
+
+    pub fn subgroup_non_uniform_arithmetic_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_ARITHMETIC
+                != 0
+    }
+
+    pub fn subgroup_non_uniform_vote_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_VOTE
+                != 0
+    }
+
+    pub fn subgroup_rotate_supported(&self) -> bool {
+        let mask =
+            PIPE_SHADER_SUBGROUP_FEATURE_ROTATE | PIPE_SHADER_SUBGROUP_FEATURE_ROTATE_CLUSTERED;
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features & mask == mask
+    }
+
+    pub fn subgroup_shuffle_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_SHUFFLE
+                != 0
+    }
+
+    pub fn subgroup_shuffle_relative_supported(&self) -> bool {
+        self.subgroups_supported()
+            && self.screen().caps().shader_subgroup_supported_features
+                & PIPE_SHADER_SUBGROUP_FEATURE_SHUFFLE_RELATIVE
+                != 0
     }
 
     pub fn system_svm_supported(&self) -> bool {
@@ -1245,25 +1348,48 @@ impl DeviceBase {
             intel_subgroups: self.intel_subgroups_supported(),
             kernel_clock: self.kernel_clock_supported(),
             subgroups: subgroups_supported,
-            subgroups_shuffle: subgroups_supported,
-            subgroups_shuffle_relative: subgroups_supported,
+            subgroups_ballot: self.subgroup_ballot_supported(),
+            subgroups_clustered: self.subgroup_clustered_supported(),
+            subgroups_extended_types: subgroups_supported,
+            subgroups_non_uniform_arithmetic: self.subgroup_non_uniform_arithmetic_supported(),
+            subgroups_non_uniform_vote: self.subgroup_non_uniform_vote_supported(),
+            subgroups_rotate: self.subgroup_rotate_supported(),
+            subgroups_shuffle: self.subgroup_shuffle_supported(),
+            subgroups_shuffle_relative: self.subgroup_shuffle_relative_supported(),
             ..Default::default()
         }
+    }
+
+    pub fn are_external_semaphores_supported(&self) -> bool {
+        self.caps.has_create_fence_fd && self.screen().has_fence_get_fd()
+    }
+
+    pub fn are_semaphores_supported(&self) -> bool {
+        self.screen().caps().fence_signal && self.screen().has_semaphore_create()
     }
 }
 
 impl Device {
-    fn new(screen: PipeScreen) -> Option<Device> {
+    pub fn mem_base_addr_align_bytes(&self) -> usize {
+        // TODO: proper retrieval from the underlying device/screen
+        0x200
+    }
+
+    pub fn mem_base_addr_align_bits(&self) -> u32 {
+        const BITS_PER_BYTE: u32 = 8;
+        (self.mem_base_addr_align_bytes() as u32) * BITS_PER_BYTE
+    }
+
+    fn new(screen: PipeScreenWithLdev) -> Option<Device> {
         if !Self::check_valid(&screen) {
             return None;
         }
 
-        let screen = Arc::new(screen);
         // Create before loading libclc as llvmpipe only creates the shader cache with the first
         // context being created.
-        let helper_ctx = screen.create_context(PipeContextPrio::Med)?;
+        let helper_ctx = PipeContext::new(PipeContextPrio::Med, &screen)?;
         let mut dev_base = DeviceBase {
-            caps: DeviceCaps::new(&screen),
+            caps: DeviceCaps::new(&screen, &helper_ctx),
             helper_ctx: Mutex::new(helper_ctx),
             screen: screen,
             cl_version: CLVersion::Cl3_0,
@@ -1313,7 +1439,11 @@ impl Device {
     }
 
     pub fn all() -> Vec<Device> {
+        #[cfg(not(test))]
         let mut devs: Vec<_> = load_screens().filter_map(Device::new).collect();
+
+        #[cfg(test)]
+        let mut devs: Vec<Device> = Vec::default();
 
         // Pick a default device. One must be the default one no matter what. And custom devices can
         // only be that one if they are the only devices available.
@@ -1351,7 +1481,7 @@ impl Device {
     fn check_valid(screen: &PipeScreen) -> bool {
         if !screen.caps().compute
             || screen
-                .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+                .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
                 .supported_irs
                 & (1 << (pipe_shader_ir::PIPE_SHADER_IR_NIR as i32))
                 == 0
@@ -1362,7 +1492,7 @@ impl Device {
         // CL_DEVICE_MAX_PARAMETER_SIZE
         // For this minimum value, only a maximum of 128 arguments can be passed to a kernel
         if screen
-            .shader_caps(pipe_shader_type::PIPE_SHADER_COMPUTE)
+            .shader_caps(mesa_shader_stage::MESA_SHADER_COMPUTE)
             .max_const_buffer0_size
             < 128
         {
@@ -1399,7 +1529,7 @@ pub fn get_devs_for_type(device_type: cl_device_type) -> Vec<&'static Device> {
 
 pub fn get_dev_for_uuid(uuid: [c_char; UUID_SIZE]) -> Option<&'static Device> {
     devs().iter().find(|d| {
-        let uuid: [c_uchar; UUID_SIZE] = unsafe { transmute(uuid) };
+        let uuid: [c_uchar; UUID_SIZE] = uuid.map(|val| val as c_uchar);
         uuid == d.screen().device_uuid().unwrap()
     })
 }

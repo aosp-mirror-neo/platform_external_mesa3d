@@ -15,7 +15,6 @@
 
 struct radv_cmd_buffer;
 struct radv_device;
-enum radv_queue_family;
 
 struct radv_indirect_command_layout {
    struct vk_indirect_command_layout vk;
@@ -40,8 +39,16 @@ struct radv_indirect_execution_set {
 
    uint32_t stride;
 
+   uint32_t cs_num_dw;
+   bool uses_grid_base_sgpr;
+   bool uses_upload_sgpr;
+   bool uses_indirect_descriptors_sgpr;
+   uint16_t push_constant_size;
+
    uint32_t compute_scratch_size_per_wave;
    uint32_t compute_scratch_waves;
+
+   bool descriptor_heap;
 };
 
 VK_DEFINE_NONDISP_HANDLE_CASTS(radv_indirect_execution_set, base, VkIndirectExecutionSetEXT,
@@ -65,6 +72,6 @@ bool radv_use_dgc_predication(struct radv_cmd_buffer *cmd_buffer,
                               const VkGeneratedCommandsInfoEXT *pGeneratedCommandsInfo);
 
 struct radv_shader *radv_dgc_get_shader(const VkGeneratedCommandsPipelineInfoEXT *pipeline_info,
-                                        const VkGeneratedCommandsShaderInfoEXT *eso_info, gl_shader_stage stage);
+                                        const VkGeneratedCommandsShaderInfoEXT *eso_info, mesa_shader_stage stage);
 
 #endif /* RADV_DGC_H */

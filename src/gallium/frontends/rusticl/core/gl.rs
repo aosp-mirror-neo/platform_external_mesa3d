@@ -1,3 +1,6 @@
+// Copyright 2023 Antonio Gomes.
+// SPDX-License-Identifier: MIT
+
 use crate::api::icd::*;
 use crate::api::types::*;
 use crate::core::context::*;
@@ -9,6 +12,7 @@ use crate::core::util::*;
 
 use libc_rust_gen::{close, dlsym};
 use mesa_rust::pipe::context::RWFlags;
+use mesa_rust_gen::pipe_fd_type;
 use rusticl_opencl_gen::*;
 
 use mesa_rust::pipe::fence::*;
@@ -23,7 +27,7 @@ use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
 
-type CLGLMappings = Option<HashMap<PipeResource, PipeResource>>;
+type CLGLMappings = Option<HashMap<PipeResourceOwned, PipeResourceOwned>>;
 
 pub struct XPlatManager {
     #[cfg(glx)]
@@ -284,10 +288,12 @@ impl GLCtxManager {
         };
 
         if let Some(fence_fd) = self.do_flush(&mut [export_in])? {
-            cl_ctx.devs.iter().for_each(|dev| {
-                let fence = dev.helper_ctx().import_fence(&fence_fd);
+            for dev in &cl_ctx.devs {
+                let fence = dev
+                    .helper_ctx()
+                    .import_fence(&fence_fd, pipe_fd_type::PIPE_FD_TYPE_NATIVE_SYNC)?;
                 fence.wait();
-            });
+            }
         }
 
         let err = unsafe {
@@ -338,7 +344,7 @@ impl GLCtxManager {
 
 #[derive(Clone)]
 pub struct GLMemProps {
-    pub height: u16,
+    pub height: u32,
     pub depth: u16,
     pub width: u32,
     pub offset: u32,
@@ -373,7 +379,7 @@ impl GLExportManager {
                 .unwrap()
         };
 
-        let mut height = self.export_out.height as u16;
+        let mut height = self.export_out.height;
         let mut depth = self.export_out.depth as u16;
         let mut width = self.export_out.width;
         let mut array_size = 1;
@@ -382,7 +388,7 @@ impl GLExportManager {
         // some fixups
         match self.export_in.target {
             GL_TEXTURE_1D_ARRAY => {
-                array_size = height;
+                array_size = height as u16;
                 height = 1;
                 depth = 1;
             }
@@ -472,9 +478,9 @@ impl GLObject {
 }
 
 pub fn create_shadow_slice(
-    cube_map: &HashMap<&'static Device, PipeResource>,
+    cube_map: &HashMap<&'static Device, PipeResourceOwned>,
     image_format: cl_image_format,
-) -> CLResult<HashMap<&'static Device, PipeResource>> {
+) -> CLResult<HashMap<&'static Device, PipeResourceOwned>> {
     let mut slice = HashMap::new();
 
     for (dev, imported_gl_res) in cube_map {

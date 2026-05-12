@@ -8,9 +8,10 @@
 #include "ac_nir.h"
 #include "ac_nir_helpers.h"
 #include "nir_builder.h"
+#include "nir_intrinsics.h"
 
 /* Set NIR options shared by ACO, LLVM, RADV, and radeonsi. */
-void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
+void ac_nir_set_options(const struct ac_compiler_info *info, bool use_llvm,
                         nir_shader_compiler_options *options)
 {
    /*        |---------------------------------- Performance & Availability --------------------------------|
@@ -64,7 +65,8 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
    options->lower_iadd_sat = info->gfx_level <= GFX8;
    options->lower_hadd = true;
    options->lower_mul_32x16 = true;
-   options->lower_bfloat16_conversions = true,
+   options->lower_bfloat16_conversions = true;
+   options->has_ldexp = true;
    options->has_bfe = true;
    options->has_bfm = true;
    options->has_bitfield_select = true;
@@ -88,11 +90,17 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
    options->has_msad = true;
    options->has_shfr32 = true;
    options->has_mul24_relaxed = true;
-   options->has_f2e4m3fn_satfn = !use_llvm && info->gfx_level >= GFX12;
+   options->has_f2e4m3fn_satfn = !use_llvm && info->gfx_level >= GFX11_7;
+   options->has_atomic_isub = true;
+   options->has_atomic_load_store = true;
    options->lower_int64_options = nir_lower_imul64 | nir_lower_imul_high64 | nir_lower_imul_2x32_64 | nir_lower_divmod64 |
                                   nir_lower_minmax64 | nir_lower_iabs64 | nir_lower_iadd_sat64 | nir_lower_conv64 |
                                   nir_lower_bitfield_extract64;
    options->divergence_analysis_options = nir_divergence_view_index_uniform;
+   options->support_indirect_inputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
+                                      BITFIELD_BIT(MESA_SHADER_TESS_EVAL);
+   options->support_indirect_outputs = BITFIELD_BIT(MESA_SHADER_TESS_CTRL) |
+                                       BITFIELD_BIT(MESA_SHADER_MESH);
    options->optimize_quad_vote_to_reduce = !use_llvm;
    options->lower_fisnormal = true;
    options->support_16bit_alu = info->gfx_level >= GFX8;
@@ -105,15 +113,24 @@ void ac_nir_set_options(struct radeon_info *info, bool use_llvm,
                          nir_io_prefer_scalar_fs_inputs |
                          nir_io_mix_convergent_flat_with_interpolated |
                          nir_io_vectorizer_ignores_types |
-                         nir_io_compaction_rotates_color_channels;
+                         nir_io_compaction_rotates_color_channels |
+                         nir_io_assign_color_input_bases_after_all_other_inputs |
+                         nir_io_use_frag_result_dual_src_blend  |
+                         nir_io_compact_to_higher_16;
    options->lower_layer_fs_input_to_sysval = true;
    options->scalarize_ddx = true;
+   options->coarse_ddx = true;
    options->skip_lower_packing_ops =
       BITFIELD_BIT(nir_lower_packing_op_unpack_64_2x32) |
       BITFIELD_BIT(nir_lower_packing_op_unpack_64_4x16) |
       BITFIELD_BIT(nir_lower_packing_op_unpack_32_2x16) |
       BITFIELD_BIT(nir_lower_packing_op_pack_32_4x8) |
       BITFIELD_BIT(nir_lower_packing_op_unpack_32_4x8);
+   options->max_workgroup_invocations = 1024;
+   options->max_workgroup_count[0] = UINT32_MAX;
+   options->max_workgroup_count[1] = UINT16_MAX;
+   options->max_workgroup_count[2] = UINT16_MAX;
+   options->max_samples = 8;
 }
 
 /* Sleep for the given number of clock cycles. */
@@ -163,7 +180,7 @@ ac_nir_load_arg_upper_bound(nir_builder *b, const struct ac_shader_args *ac_args
                             unsigned upper_bound)
 {
    nir_def *value = ac_nir_load_arg_at_offset(b, ac_args, arg, 0);
-   nir_intrinsic_set_arg_upper_bound_u32_amd(nir_instr_as_intrinsic(value->parent_instr),
+   nir_intrinsic_set_arg_upper_bound_u32_amd(nir_def_as_intrinsic(value),
                                              upper_bound);
    return value;
 }
@@ -201,9 +218,41 @@ ac_nir_unpack_arg(nir_builder *b, const struct ac_shader_args *ac_args, struct a
    return ac_nir_unpack_value(b, value, rshift, bitwidth);
 }
 
+/* This lowers small indirect array derefs to if-else trees. We might want to do this before
+ * ac_nir_lower_indirect_derefs() to lower small array derefs to if-else trees earlier than
+ * lowering large array derefs to scratch. This is because we want to do the scratch lowering
+ * as late as possible (because scratch access isn't very optimizable), but the if-else tree
+ * lowering can be optimized. For example, an indirect access where we can know that all
+ * elements that might be accessed are equal could be replaced with a use of that element, or
+ * nir_opt_peephole_select() can flatten some of the if-else tree. */
 bool
-ac_nir_lower_indirect_derefs(nir_shader *shader,
-                             enum amd_gfx_level gfx_level)
+ac_nir_lower_indirect_derefs_early(nir_shader *shader)
+{
+   struct set vars;
+   _mesa_pointer_set_init(&vars, NULL);
+   nir_foreach_function_impl(impl, shader) {
+      nir_foreach_function_temp_variable(var, impl) {
+         unsigned var_size, var_align;
+         glsl_get_natural_size_align_bytes(var->type, &var_size, &var_align);
+         if (var_size < 256)
+            _mesa_set_add(&vars, var);
+      }
+   }
+
+   bool progress = false;
+   if (vars.entries)
+      NIR_PASS(progress, shader, nir_lower_indirect_var_derefs_to_if_else_trees, &vars);
+
+   _mesa_set_fini(&vars, NULL);
+
+   return progress;
+}
+
+/* This lowers all indirect array derefs to either scratch adccess or if-else trees, ensuring
+ * that none remains.
+ */
+bool
+ac_nir_lower_indirect_derefs(nir_shader *shader)
 {
    bool progress = false;
 
@@ -212,11 +261,12 @@ ac_nir_lower_indirect_derefs(nir_shader *shader,
    /* Lower large variables to scratch first so that we won't bloat the
     * shader by generating large if ladders for them.
     */
-   NIR_PASS(progress, shader, nir_lower_vars_to_scratch, nir_var_function_temp, 256,
+   NIR_PASS(progress, shader, nir_lower_vars_to_scratch, 256,
             glsl_get_natural_size_align_bytes, glsl_get_natural_size_align_bytes);
 
    /* This lowers indirect indexing to if-else ladders. */
-   NIR_PASS(progress, shader, nir_lower_indirect_derefs, nir_var_function_temp, UINT32_MAX);
+   NIR_PASS(progress, shader, nir_lower_indirect_derefs_to_if_else_trees,
+            nir_var_function_temp, UINT32_MAX);
    return progress;
 }
 
@@ -309,6 +359,23 @@ ac_get_global_ids(nir_builder *b, unsigned num_components, unsigned bit_size)
    return nir_iadd(b, nir_imul(b, block_ids, block_size), local_ids);
 }
 
+nir_def *
+ac_nir_load_smem(nir_builder *b, unsigned num_components, nir_def *addr, nir_def *offset,
+                 unsigned align_mul, enum gl_access_qualifier access)
+{
+   /* Only 1 flag is allowed. */
+   assert(!(access & ~ACCESS_CAN_SPECULATE));
+   assert(align_mul >= 4 && util_is_power_of_two_nonzero(align_mul));
+   if (addr->bit_size == 32)
+      addr = nir_iadd_nuw(b, addr, offset);
+   else
+      addr = nir_iadd(b, addr, nir_u2u64(b, offset));
+
+   return nir_load_global(b, num_components, 32, addr,
+                            .align_mul = align_mul,
+                            .access = access | ACCESS_CAN_REORDER | ACCESS_NON_WRITEABLE | ACCESS_SMEM_AMD);
+}
+
 unsigned
 ac_nir_varying_expression_max_cost(nir_shader *producer, nir_shader *consumer)
 {
@@ -332,7 +399,7 @@ ac_nir_varying_expression_max_cost(nir_shader *producer, nir_shader *consumer)
       return 12;
 
    default:
-      unreachable("unexpected shader stage");
+      UNREACHABLE("unexpected shader stage");
    }
 }
 
@@ -361,7 +428,6 @@ lower_bit_size_callback(const nir_instr *instr, enum amd_gfx_level chip, bool di
    if (alu->def.bit_size & (8 | 16)) {
       unsigned bit_size = alu->def.bit_size;
       switch (alu->op) {
-      case nir_op_bitfield_select:
       case nir_op_imul_high:
       case nir_op_umul_high:
       case nir_op_uadd_carry:
@@ -468,7 +534,6 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
    bool uses_smem = (nir_intrinsic_has_access(low) &&
                      nir_intrinsic_access(low) & ACCESS_SMEM_AMD) ||
                     /* These don't have the "access" field. */
-                    low->intrinsic == nir_intrinsic_load_smem_amd ||
                     low->intrinsic == nir_intrinsic_load_push_constant;
    bool is_store = !nir_intrinsic_infos[low->intrinsic].has_dest;
    bool swizzled = low->intrinsic == nir_intrinsic_load_stack ||
@@ -491,12 +556,11 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
           nir_deref_mode_is(nir_src_as_deref(low->src[0]), nir_var_mem_shared));
 
    /* Don't vectorize descriptor loads for LLVM due to excessive SGPR and VGPR spilling. */
-   if (!config->uses_aco && low->intrinsic == nir_intrinsic_load_smem_amd)
+   if (!config->uses_aco && low->intrinsic == nir_intrinsic_load_global && uses_smem)
       return false;
 
    /* Reject opcodes we don't vectorize. */
    switch (low->intrinsic) {
-   case nir_intrinsic_load_smem_amd:
    case nir_intrinsic_load_push_constant:
    case nir_intrinsic_load_ubo:
    case nir_intrinsic_load_stack:
@@ -521,8 +585,9 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
 
    /* Align the size to what the hw supports. */
    unsigned unaligned_new_size = num_components * bit_size;
-   unsigned aligned_new_size = align_load_store_size(config->gfx_level, unaligned_new_size,
-                                                     uses_smem, is_shared);
+   unsigned aligned_new_size = nir_round_up_components(num_components) * bit_size;
+   aligned_new_size = align_load_store_size(config->gfx_level, aligned_new_size,
+                                            uses_smem, is_shared);
 
    if (uses_smem) {
       /* Maximize SMEM vectorization except for LLVM, which suffers from SGPR and VGPR spilling.
@@ -551,8 +616,8 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
                                    low->intrinsic == nir_intrinsic_load_global ? NIR_ALIGN_MUL_MAX : 4;
          uint32_t page_size = 4096;
          uint32_t mul = MIN3(align_mul, page_size, resource_align);
-         unsigned end = (align_offset + unaligned_new_size / 8u) & (mul - 1);
-         if ((aligned_new_size - unaligned_new_size) / 8u > (mul - end))
+         unsigned end = (align_offset + unaligned_new_size / 8u);
+         if ((aligned_new_size - unaligned_new_size) / 8u > (align(end, mul) - end))
             return false;
       }
 
@@ -595,11 +660,7 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
          return false;
    }
 
-   uint32_t align;
-   if (align_offset)
-      align = 1 << (ffs(align_offset) - 1);
-   else
-      align = align_mul;
+   uint32_t align = nir_combined_align(align_mul, align_offset);
 
    /* Don't cross swizzle elements. stack/scratch intrinsics use scratch_* instructions, which
     * seem to work fine.
@@ -614,22 +675,29 @@ ac_nir_mem_vectorize_callback(unsigned align_mul, unsigned align_offset, unsigne
    if (!is_shared) {
       return (align % (bit_size / 8u)) == 0 && num_components <= NIR_MAX_VEC_COMPONENTS;
    } else {
+      /* Due to NIR limitations, we can't efficiently bitcast 8-bit vectors into 16-bit.
+       * We don't do this check for VMEM/SMEM because those are just later lowered to 16/32-bit
+       * loads instead.
+       */
+      if (!is_store && bit_size == 8 && (low->def.bit_size == 16 || high->def.bit_size == 16))
+         return false;
+
+      /* 96-bit and 128-bit LDS loads are slow. Don't use them. */
+      if (!is_store && bit_size * num_components > 64)
+         return false;
       if (bit_size >= 32 && num_components == 3) {
          /* AMD hardware can't do 3-component loads except for 96-bit loads. */
          return bit_size == 32 && align % 16 == 0;
       }
-      unsigned req = bit_size >= 32 ? bit_size * num_components : bit_size;
-      if (req == 64 || req == 128) /* 64-bit and 128-bit loads can use ds_read2_b{32,64} */
-         req /= 2u;
-      return align % (req / 8u) == 0;
+
+      /* DS loads and stores require the alignment of the size. */
+      return align % (aligned_new_size / 8u) == 0;
    }
    return false;
 }
 
-bool ac_nir_scalarize_overfetching_loads_callback(const nir_instr *instr, const void *data)
+bool ac_nir_scalarize_overfetching_loads_callback(const nir_intrinsic_instr *intr, const void *data)
 {
-   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
-
    /* Reject opcodes we don't scalarize. */
    switch (intr->intrinsic) {
    case nir_intrinsic_load_ubo:
@@ -658,37 +726,24 @@ bool ac_nir_scalarize_overfetching_loads_callback(const nir_instr *instr, const 
    return used_load_size < align_load_store_size(gfx_level, load_size, uses_smem, is_shared);
 }
 
-/* Get chip-agnostic memory instruction access flags (as opposed to chip-specific GLC/DLC/SLC)
- * from a NIR memory intrinsic.
- */
-enum gl_access_qualifier ac_nir_get_mem_access_flags(const nir_intrinsic_instr *instr)
+/* Determine if the store can be subdword (for the GFX6 TC L1 bug workaround) */
+bool ac_nir_store_may_be_subdword(const nir_intrinsic_instr *instr)
 {
-   enum gl_access_qualifier access =
-      nir_intrinsic_has_access(instr) ? nir_intrinsic_access(instr) : 0;
+   assert(!nir_intrinsic_infos[instr->intrinsic].has_dest);
+   switch (instr->intrinsic) {
+   case nir_intrinsic_store_ssbo:
+   case nir_intrinsic_store_buffer_amd:
+   case nir_intrinsic_store_global:
+   case nir_intrinsic_store_global_amd:
+      return (nir_intrinsic_has_align_offset(instr) && nir_intrinsic_align(instr) % 4 != 0) ||
+             ((instr->src[0].ssa->bit_size / 8) * instr->src[0].ssa->num_components) % 4 != 0;
 
-   /* Determine ACCESS_MAY_STORE_SUBDWORD. (for the GFX6 TC L1 bug workaround) */
-   if (!nir_intrinsic_infos[instr->intrinsic].has_dest) {
-      switch (instr->intrinsic) {
-      case nir_intrinsic_bindless_image_store:
-         access |= ACCESS_MAY_STORE_SUBDWORD;
-         break;
 
-      case nir_intrinsic_store_ssbo:
-      case nir_intrinsic_store_buffer_amd:
-      case nir_intrinsic_store_global:
-      case nir_intrinsic_store_global_amd:
-         if (access & ACCESS_USES_FORMAT_AMD ||
-             (nir_intrinsic_has_align_offset(instr) && nir_intrinsic_align(instr) % 4 != 0) ||
-             ((instr->src[0].ssa->bit_size / 8) * instr->src[0].ssa->num_components) % 4 != 0)
-            access |= ACCESS_MAY_STORE_SUBDWORD;
-         break;
-
-      default:
-         unreachable("unexpected store instruction");
-      }
+   default:
+      UNREACHABLE("unexpected store instruction");
    }
 
-   return access;
+   return false;
 }
 
 /**
@@ -760,7 +815,7 @@ summarize_repack(nir_builder *b, nir_def *packed_counts, bool mask_lane_id, unsi
          return nir_msad_4x8(b, nir_unpack_64_2x32_split_y(b, sad_op), nir_imm_int(b, 0), sum);
       }
    } else {
-      unreachable("Unimplemented NGG wave count");
+      UNREACHABLE("Unimplemented NGG wave count");
    }
 }
 
@@ -827,12 +882,12 @@ ac_nir_repack_invocations_in_workgroup(nir_builder *b, nir_def **input_bool,
    nir_def *dont_care = nir_undef(b, 1, num_lds_dwords * 32);
    nir_def *packed_counts = NULL;
 
-   nir_if *if_use_lds = nir_push_if(b, nir_inverse_ballot(b, 1, nir_imm_intN_t(b, ballot, wave_size)));
+   nir_if *if_use_lds = nir_push_if(b, nir_inverse_ballot_imm(b, ballot, wave_size));
    {
       nir_def *store_val = surviving_invocations_in_current_wave[0];
 
       if (num_repacks == 2) {
-         nir_def *lane_id_0 = nir_inverse_ballot(b, 1, nir_imm_intN_t(b, 1, wave_size));
+         nir_def *lane_id_0 = nir_inverse_ballot_imm(b, 1, wave_size);
          nir_def *off = nir_bcsel(b, lane_id_0, nir_imm_int(b, 0), nir_imm_int(b, num_lds_dwords * 4));
          lds_addr_base = nir_iadd_nuw(b, lds_addr_base, off);
          store_val = nir_bcsel(b, lane_id_0, store_val, surviving_invocations_in_current_wave[1]);
@@ -891,4 +946,267 @@ ac_nir_lower_phis_to_scalar_cb(const nir_instr *instr, const void *_)
       return 1;
 
    return 32 / phi->def.bit_size;
+}
+
+bool
+ac_nir_allow_offset_wrap_cb(nir_intrinsic_instr *instr, const void *data)
+{
+   /* GFX6 uses a 16-bit adder and can't handle unsigned wrap. */
+   enum amd_gfx_level gfx_level = *(enum amd_gfx_level *)data;
+   return nir_is_shared_access(instr) && gfx_level >= GFX7;
+}
+
+/* This only applies to ACO, not LLVM, but it's not part of ACO because it's used by this shared
+ * code that doesn't always link with ACO like tests.
+ */
+bool
+ac_nir_op_supports_packed_math_16bit(const nir_alu_instr* alu)
+{
+   switch (alu->op) {
+   case nir_op_f2f16: {
+      nir_shader* shader = nir_cf_node_get_function(&alu->instr.block->cf_node)->function->shader;
+      unsigned execution_mode = shader->info.float_controls_execution_mode;
+      return (shader->options->force_f2f16_rtz && !nir_is_rounding_mode_rtne(execution_mode, 16)) ||
+             nir_is_rounding_mode_rtz(execution_mode, 16);
+   }
+   case nir_op_fadd:
+   case nir_op_fsub:
+   case nir_op_fmul:
+   case nir_op_ffma:
+   case nir_op_fdiv:
+   case nir_op_flrp:
+   case nir_op_fabs:
+   case nir_op_fneg:
+   case nir_op_fsat:
+   case nir_op_fmin:
+   case nir_op_fmax:
+   case nir_op_f2f16_rtz:
+   case nir_op_iabs:
+   case nir_op_iadd:
+   case nir_op_iadd_sat:
+   case nir_op_uadd_sat:
+   case nir_op_isub:
+   case nir_op_isub_sat:
+   case nir_op_usub_sat:
+   case nir_op_ineg:
+   case nir_op_imul:
+   case nir_op_imin:
+   case nir_op_imax:
+   case nir_op_umin:
+   case nir_op_umax:
+   case nir_op_extract_u8:
+   case nir_op_extract_i8:
+   case nir_op_ishl:
+   case nir_op_ishr:
+   case nir_op_ushr: return true;
+   case nir_op_u2u16:
+   case nir_op_i2i16: return alu->src[0].src.ssa->bit_size == 8;
+   default: return false;
+   }
+}
+
+static uint8_t
+max_alu_src_identity_swizzle(const nir_alu_instr *alu, const nir_alu_src *src)
+{
+   uint8_t max_vector = 32 / alu->def.bit_size;
+   if (nir_src_is_const(src->src))
+      return max_vector;
+
+   /* Return the number of correctly swizzled components. */
+   for (unsigned i = 1; i < alu->def.num_components; i++) {
+      if (src->swizzle[i] != src->swizzle[0] + i)
+         /* Ensure that the result is a power of 2. */
+         return MAX2(i & 0x6, 1);
+   }
+
+   return max_vector;
+}
+
+uint8_t
+ac_nir_opt_vectorize_cb(const nir_instr *instr, const void *data)
+{
+   if (instr->type != nir_instr_type_alu)
+      return 0;
+
+   enum amd_gfx_level gfx_level = *(enum amd_gfx_level*)data;
+   if (gfx_level < GFX9)
+      return 1;
+
+   const nir_alu_instr *alu = nir_instr_as_alu(instr);
+
+   switch (alu->op) {
+   case nir_op_f2e4m3fn:
+   case nir_op_f2e4m3fn_sat:
+   case nir_op_f2e4m3fn_satfn:
+   case nir_op_f2e5m2:
+   case nir_op_f2e5m2_sat:
+   case nir_op_e4m3fn2f:
+   case nir_op_e5m22f:
+      return 2;
+   default:
+      break;
+   }
+
+   const unsigned bit_size = alu->def.bit_size;
+   if (bit_size == 16 && ac_nir_op_supports_packed_math_16bit(alu))
+      return 2;
+
+   if (bit_size != 8 && bit_size != 16)
+      return 1;
+
+   /* Keep some opcodes vectorized if the operation can be performed as
+    * 32-bit instruction with packed sources. The condition is that the
+    * sources must have identity swizzles. */
+   uint8_t target_width = 32 / bit_size;
+   switch (alu->op) {
+   case nir_op_bcsel:
+      /* Must have scalar condition. */
+      for (unsigned i = 1; i < alu->def.num_components; i++) {
+         if (alu->src[0].swizzle[i] != alu->src[0].swizzle[0])
+            return 1;
+      }
+      for (unsigned idx = 1; idx < 3; idx++)
+         target_width = MIN2(target_width, max_alu_src_identity_swizzle(alu, &alu->src[idx]));
+      break;
+   case nir_op_iand:
+   case nir_op_ior:
+   case nir_op_ixor:
+   case nir_op_inot:
+   case nir_op_bitfield_select:
+      for (unsigned idx = 0; idx < nir_op_infos[alu->op].num_inputs; idx++)
+         target_width = MIN2(target_width, max_alu_src_identity_swizzle(alu, &alu->src[idx]));
+      break;
+   default:
+      return 1;
+   }
+
+   return target_width;
+}
+
+/* The IO driver location is computed from shader_info masks using a prefix bitcount.
+ * Used by FS inputs, and radeonsi+LLVM also uses this for LS outputs to VGPRs and FS outputs.
+ *
+ * driver_location == nir_intrinsic_base == nir_variable::data::driver_location.
+ */
+unsigned
+ac_nir_get_io_driver_location(const nir_shader *nir, unsigned location, bool is_input)
+{
+   assert((nir->info.stage == MESA_SHADER_VERTEX && !is_input) ||
+          nir->info.stage == MESA_SHADER_FRAGMENT);
+   /* All "read" bits should also be set in "written" bits. */
+   assert(!(nir->info.outputs_read & ~nir->info.outputs_written));
+   assert(!(nir->info.outputs_read_16bit & nir->info.outputs_written_16bit));
+
+   /* Per-vertex masks. */
+   uint64_t mask = is_input ? nir->info.inputs_read : nir->info.outputs_written;
+   uint16_t mask16 = is_input ? nir->info.inputs_read_16bit : nir->info.outputs_written_16bit;
+   uint64_t back_color_mask = 0;
+
+   /* Handle FS outputs first. */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT && !is_input) {
+      assert(mask & BITFIELD64_BIT(location));
+      return util_bitcount64(mask & BITFIELD64_MASK(location));
+   }
+
+   /* Per-primitive masks. */
+   uint64_t mask_maybe_per_prim = 0;
+   uint64_t mask_per_prim = 0;
+   uint16_t mask16_per_prim = 0;
+   bool maybe_per_primitive = false;
+   bool per_primitive = false;
+
+   /* Fragment shader input locations must be in this order: per-vertex, maybe per-prim, per-prim. */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT && is_input) {
+      if (BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_COLOR0_AMD))
+         mask |= VARYING_BIT_COL0;
+      if (BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_COLOR1_AMD))
+         mask |= VARYING_BIT_COL1;
+
+      /* TODO: back colors are broken with mesh shaders because they are always after per-primitive
+       * inputs.
+       */
+      back_color_mask = mask & (VARYING_BIT_BFC0 | VARYING_BIT_BFC1);
+
+      assert(!(mask & VARYING_BIT_LAYER)); /* This should have been lowered. */
+      mask_maybe_per_prim = mask & (VARYING_BIT_PRIMITIVE_ID | VARYING_BIT_VIEWPORT);
+      mask_per_prim = mask & nir->info.per_primitive_inputs &
+                      ~(VARYING_BIT_PRIMITIVE_ID | VARYING_BIT_VIEWPORT);
+
+      /* TODO: Add shader_info::per_primitive_inputs_16bit for separate GLES mesh shaders + mediump. */
+      /*mask16_per_prim = mask & nir->info.per_primitive_inputs_16bit;*/
+
+      /* Make the masks disjoint. */
+      mask &= ~(back_color_mask | mask_maybe_per_prim | mask_per_prim);
+      mask16 &= ~mask16_per_prim;
+
+      if (location == VARYING_SLOT_PRIMITIVE_ID || location == VARYING_SLOT_VIEWPORT) {
+         maybe_per_primitive = true;
+      } else if (location >= VARYING_SLOT_VAR0_16BIT) {
+         /* TODO: Add shader_info::per_primitive_inputs_16bit. */
+         /*per_primitive = nir->info.per_primitive_inputs_16bit &
+                         BITFIELD_BIT(location - VARYING_SLOT_VAR0_16BIT);*/
+      } else {
+         assert(location <= VARYING_SLOT_VAR31);
+         per_primitive = nir->info.per_primitive_inputs & BITFIELD64_BIT(location);
+      }
+   }
+
+   enum {
+      MASK,
+      MASK16,
+      MASK_MAYBE_PRIM_PRIM, /* always after per-vertex varyings (NUM_INTERP) */
+      MASK_PER_PRIM,
+      MASK16_PER_PRIM,
+      BACK_COLOR_MASK, /* always after all other varyings */
+      PARAM_GEN_MASK, /* PARAM_GEN is loaded at location (NUM_INTERP + NUM_PRIM_INTERP). */
+   };
+
+   /* We'll compute a prefix bitcount from this bitset. */
+   const uint64_t masks[] = {
+      [MASK] = mask,
+      [MASK16] = mask16,
+      [MASK_MAYBE_PRIM_PRIM] = mask_maybe_per_prim,
+      [MASK_PER_PRIM] = mask_per_prim,
+      [MASK16_PER_PRIM] = mask16_per_prim,
+      [BACK_COLOR_MASK] = back_color_mask,
+      [PARAM_GEN_MASK] = 0,
+   };
+   unsigned location_mask_index;
+
+   /* Assign a mask index to the location, and make "location" relative to the beginning of its mask. */
+   if (nir->info.stage == MESA_SHADER_FRAGMENT && is_input && location == VARYING_SLOT_PARAM_GEN_AMD)
+      location_mask_index = PARAM_GEN_MASK;
+   else if (nir->info.stage == MESA_SHADER_FRAGMENT && is_input &&
+            (location == VARYING_SLOT_BFC0 || location == VARYING_SLOT_BFC1))
+      location_mask_index = BACK_COLOR_MASK;
+   else if (per_primitive)
+      location_mask_index = location >= VARYING_SLOT_VAR0_16BIT ? MASK16_PER_PRIM : MASK_PER_PRIM;
+   else if (maybe_per_primitive)
+      location_mask_index = MASK_MAYBE_PRIM_PRIM;
+   else
+      location_mask_index = location >= VARYING_SLOT_VAR0_16BIT ? MASK16 : MASK;
+
+   /* Make "location" relative to its mask. */
+   if (location >= VARYING_SLOT_VAR0_16BIT)
+      location -= VARYING_SLOT_VAR0_16BIT;
+
+   /* Compute the prefix bitcount. */
+   unsigned index = 0;
+
+   for (unsigned i = 0; i < location_mask_index; i++)
+      index += util_bitcount64(masks[i]);
+
+   index += util_bitcount64(masks[location_mask_index] & BITFIELD64_MASK(location));
+
+#if 0 /* useful debug code */
+   printf("location_mask_index=%u\n", location_mask_index);
+   for (unsigned i = 0; i <= location_mask_index; i++)
+      printf("mask[%u] = 0x%lx\n", i, masks[i]);
+
+   printf("index=%u, location=%u, %s, num=%u\n",
+          index, location, is_input ? "input" : "output",
+          is_input ? nir->num_inputs : nir->num_outputs);
+#endif
+
+   return index;
 }

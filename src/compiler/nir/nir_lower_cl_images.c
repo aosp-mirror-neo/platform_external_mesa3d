@@ -45,7 +45,7 @@ find_identical_inline_sampler(nir_shader *nir,
       exec_list_push_tail(inline_samplers, &var->node);
       return var;
    }
-   unreachable("Should have at least found the input sampler");
+   UNREACHABLE("Should have at least found the input sampler");
 }
 
 static bool
@@ -144,12 +144,10 @@ nir_lower_cl_images(nir_shader *shader, bool lower_image_derefs, bool lower_samp
    }
    shader->info.num_textures = num_rd_images;
    BITSET_ZERO(shader->info.textures_used);
-   if (num_rd_images)
-      BITSET_SET_RANGE(shader->info.textures_used, 0, num_rd_images - 1);
+   BITSET_SET_COUNT(shader->info.textures_used, 0, num_rd_images);
 
    BITSET_ZERO(shader->info.images_used);
-   if (num_wr_images)
-      BITSET_SET_RANGE(shader->info.images_used, 0, num_wr_images - 1);
+   BITSET_SET_COUNT(shader->info.images_used, 0, num_wr_images);
    shader->info.num_images = num_wr_images;
 
    last_loc = -1;
@@ -167,8 +165,7 @@ nir_lower_cl_images(nir_shader *shader, bool lower_image_derefs, bool lower_samp
       }
    }
    BITSET_ZERO(shader->info.samplers_used);
-   if (num_samplers)
-      BITSET_SET_RANGE(shader->info.samplers_used, 0, num_samplers - 1);
+   BITSET_SET_COUNT(shader->info.samplers_used, 0, num_samplers);
 
    nir_builder b = nir_builder_create(impl);
 
@@ -264,7 +261,7 @@ nir_lower_cl_images(nir_shader *shader, bool lower_image_derefs, bool lower_samp
                   intrin->num_components = 4;
                   intrin->def.num_components = 4;
                   nir_def *scalar = nir_channel(&b, &intrin->def, 0);
-                  nir_def_rewrite_uses_after(&intrin->def, scalar, scalar->parent_instr);
+                  nir_def_rewrite_uses_after(&intrin->def, scalar);
                   progress = true;
                }
 
@@ -274,7 +271,7 @@ nir_lower_cl_images(nir_shader *shader, bool lower_image_derefs, bool lower_samp
                b.cursor = nir_before_instr(&intrin->instr);
                /* Back-ends expect a 32-bit thing, not 64-bit */
                nir_def *offset = nir_u2u32(&b, intrin->src[0].ssa);
-               nir_rewrite_image_intrinsic(intrin, offset, false);
+               nir_rewrite_image_intrinsic(intrin, offset, nir_image_intrinsic_type_default);
                progress = true;
                break;
             }

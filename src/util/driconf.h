@@ -207,6 +207,10 @@
    DRI_CONF_OPT_B(allow_glsl_120_subset_in_110, def, \
                   "Allow a subset of GLSL 1.20 in GLSL 1.10 as needed by SPECviewperf13")
 
+#define DRI_CONF_ALLOW_GLSL_EMBEDDED_STRUCTURE_DECLARATIONS(def) \
+   DRI_CONF_OPT_B(allow_glsl_embedded_structure_declarations, def, \
+                  "Allow embedded structure declarations again in GLSL 1.20+")
+
 #define DRI_CONF_ALLOW_GLSL_BUILTIN_CONST_EXPRESSION(def) \
    DRI_CONF_OPT_B(allow_glsl_builtin_const_expression, def, \
                   "Allow builtins as part of constant expressions")
@@ -254,6 +258,9 @@
 #define DRI_CONF_GLTHREAD_NOP_CHECK_FRAMEBUFFER_STATUS(def) \
    DRI_CONF_OPT_B(glthread_nop_check_framebuffer_status, def, \
                   "glthread always returns GL_FRAMEBUFFER_COMPLETE to prevent synchronization.")
+
+#define DRI_CONF_FORCE_EXPLICIT_UNIFORM_LOC_ZERO() \
+   DRI_CONF_OPT_S_NODEF(force_explicit_uniform_loc_zero, "Forces an explicit uniform location of zero for the uniform.")
 
 #define DRI_CONF_FORCE_GL_VENDOR() \
    DRI_CONF_OPT_S_NODEF(force_gl_vendor, "Override GPU vendor string.")
@@ -308,6 +315,9 @@
    DRI_CONF_OPT_S_NODEF(glx_extension_override, \
                   "Allow enabling/disabling a list of GLX extensions")
 
+#define DRI_CONF_GLX_CLEAR_CONTEXT_RESET_ISOLATION_BIT(def) \
+   DRI_CONF_OPT_B(glx_clear_context_reset_isolation_bit, def, "Clear context reset isolation bit before creating context")
+
 #define DRI_CONF_INDIRECT_GL_EXTENSION_OVERRIDE() \
    DRI_CONF_OPT_S_NODEF(indirect_gl_extension_override, \
                   "Allow enabling/disabling a list of indirect-GL extensions")
@@ -347,8 +357,20 @@
    DRI_CONF_OPT_B(fake_sparse, def, \
                   "Advertise support for sparse binding of textures regardless of real support")
 
+#define DRI_CONF_INTEL_BINDING_TABLE_BLOCK_SIZE(def,min,max) \
+   DRI_CONF_OPT_I(intel_binding_table_block_size, def, min, max, \
+                  "Intel binding table block allocation size (3DSTATE_BINDING_TABLE_POOL_ALLOC)")
+
 #define DRI_CONFIG_INTEL_TBIMR(def) \
    DRI_CONF_OPT_B(intel_tbimr, def, "Enable TBIMR tiled rendering")
+
+#define DRI_CONFIG_INTEL_FORCE_COMPUTE_SURFACE_PREFETCH(def) \
+   DRI_CONF_OPT_B(intel_force_compute_surface_prefetch, def, \
+                  "Enable binding table surface prefteching for compute shaders")
+
+#define DRI_CONFIG_INTEL_FORCE_SAMPLER_PREFETCH(def) \
+   DRI_CONF_OPT_B(intel_force_sampler_prefetch, def, \
+                  "Enable binding table sampler prefteching")
 
 #define DRI_CONFIG_INTEL_VF_DISTRIBUTION(def) \
    DRI_CONF_OPT_B(intel_vf_distribution, def, "Enable geometry distribution")
@@ -363,9 +385,16 @@
    DRI_CONF_OPT_B(intel_enable_wa_14018912822, def, \
                   "Intel workaround for using zero blend constants")
 
+#define DRI_CONF_INTEL_ENABLE_WA_14024015672_MSAA(def) \
+   DRI_CONF_OPT_B(intel_enable_wa_14024015672_msaa, def, \
+                  "Intel workaround for RHWO MSAA")
+
 #define DRI_CONF_INTEL_SAMPLER_ROUTE_TO_LSC(def) \
    DRI_CONF_OPT_B(intel_sampler_route_to_lsc, def, \
                   "Intel specific toggle to enable sampler route to LSC")
+
+#define DRI_CONF_INTEL_DISABLE_THREADED_CONTEXT(def) \
+   DRI_CONF_OPT_B(intel_disable_threaded_context, def, "Disable threaded context")
 
 #define DRI_CONF_VK_REQUIRE_ETC2(def) \
   DRI_CONF_OPT_B(vk_require_etc2, def, \
@@ -383,34 +412,6 @@
 #define DRI_CONF_PRECISE_TRIG(def) \
    DRI_CONF_OPT_B(precise_trig, def, \
                   "Prefer accuracy over performance in trig functions")
-
-#define DRI_CONF_PP_CELSHADE(def) \
-   DRI_CONF_OPT_E(pp_celshade, def, 0, 1, \
-                  "A post-processing filter to cel-shade the output", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NORED(def) \
-   DRI_CONF_OPT_E(pp_nored, def, 0, 1, \
-                  "A post-processing filter to remove the red channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NOGREEN(def) \
-   DRI_CONF_OPT_E(pp_nogreen, def, 0, 1, \
-                  "A post-processing filter to remove the green channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_NOBLUE(def) \
-   DRI_CONF_OPT_E(pp_noblue, def, 0, 1, \
-                  "A post-processing filter to remove the blue channel", \
-                  { 0 } )
-
-#define DRI_CONF_PP_JIMENEZMLAA(def,min,max) \
-   DRI_CONF_OPT_I(pp_jimenezmlaa, def, min, max, \
-                  "Morphological anti-aliasing based on Jimenez' MLAA. 0 to disable, 8 for default quality")
-
-#define DRI_CONF_PP_JIMENEZMLAA_COLOR(def,min,max) \
-   DRI_CONF_OPT_I(pp_jimenezmlaa_color, def, min, max, \
-                  "Morphological anti-aliasing based on Jimenez' MLAA. 0 to disable, 8 for default quality. Color version, usable with 2d GL apps")
 
 #define DRI_CONF_PP_LOWER_DEPTH_RANGE_RATE() \
    DRI_CONF_OPT_F(lower_depth_range_rate, 1.0, 0.0, 1.0, \
@@ -449,6 +450,10 @@
    DRI_CONF_OPT_B(vk_wsi_force_swapchain_to_current_extent, def, \
                   "Force VkSwapchainCreateInfoKHR::imageExtent to be VkSurfaceCapabilities2KHR::currentExtent")
 
+#define DRI_CONF_VK_WSI_DISABLE_UNORDERED_SUBMITS(def) \
+   DRI_CONF_OPT_B(vk_wsi_disable_unordered_submits, def, \
+                  "Disable unordered WSI submits to workaround application synchronization bugs")
+
 #define DRI_CONF_VK_X11_OVERRIDE_MIN_IMAGE_COUNT(def) \
    DRI_CONF_OPT_I(vk_x11_override_min_image_count, def, 0, 999, \
                   "Override the VkSurfaceCapabilitiesKHR::minImageCount (0 = no override)")
@@ -464,10 +469,6 @@
 #define DRI_CONF_VK_X11_IGNORE_SUBOPTIMAL(def) \
    DRI_CONF_OPT_B(vk_x11_ignore_suboptimal, def, \
                   "Force the X11 WSI to never report VK_SUBOPTIMAL_KHR")
-
-#define DRI_CONF_VK_KHR_PRESENT_WAIT(def) \
-   DRI_CONF_OPT_B(vk_khr_present_wait, def, \
-                  "Expose VK_KHR_present_wait and id extensions despite them not being implemented for all supported surface types")
 
 #define DRI_CONF_VK_XWAYLAND_WAIT_READY(def) \
    DRI_CONF_OPT_B(vk_xwayland_wait_ready, def, \
@@ -509,6 +510,10 @@
    DRI_CONF_OPT_B(allow_rgb10_configs, def, \
                   "Allow exposure of visuals and fbconfigs with rgb10a2 formats")
 
+#define DRI_CONF_ALLOW_RGB16_CONFIGS(def) \
+   DRI_CONF_OPT_B(allow_rgb16_configs, def, \
+                  "Allow exposure of visuals and fbconfigs with rgb16 and rgba16 formats")
+
 #define DRI_CONF_ALLOW_RGB565_CONFIGS(def) \
    DRI_CONF_OPT_B(allow_rgb565_configs, def, \
                   "Allow exposure of visuals and fbconfigs with rgb565 formats")
@@ -523,6 +528,10 @@
 #define DRI_CONF_ALLOW_MULTISAMPLED_COPYTEXIMAGE(def) \
    DRI_CONF_OPT_B(allow_multisampled_copyteximage, def, \
                   "Allow CopyTexSubImage and other to copy sampled framebuffer")
+
+#define DRI_CONF_VERTEX_PROGRAM_DEFAULT_OUT(def) \
+   DRI_CONF_OPT_B(vertex_program_default_out, def, \
+                  "Initialize outputs of vertex program to a default value vec4(0, 0, 0, 1)")
 
 #define DRI_CONF_CUSTOM_BORDER_COLORS_WITHOUT_FORMAT(def) \
    DRI_CONF_OPT_B(custom_border_colors_without_format, def, \
@@ -563,6 +572,10 @@
    DRI_CONF_OPT_I(wgl_swap_interval, def, 1, 4, \
                   "Override default swap interval")
 
+#define DRI_CONF_WGL_REQUIRE_GDI_COMPAT(def) \
+   DRI_CONF_OPT_B(wgl_require_gdi_compat, def, \
+                  "Require all pixel formats to have PFD_SUPPORT_GDI flag")
+
 /**
  * \brief virgl specific configuration options
  */
@@ -594,6 +607,10 @@
 #define DRI_CONF_DISABLE_CONSERVATIVE_LRZ(def) \
    DRI_CONF_OPT_B(disable_conservative_lrz, def, \
                   "Disable conservative LRZ")
+
+#define DRI_CONF_DISABLE_EXPLICIT_SYNC_HEURISTIC(def) \
+   DRI_CONF_OPT_B(disable_explicit_sync_heuristic, def, \
+                  "Disable Explicit-sync heuristic")
 
 /**
  * \brief panfrost specific configuration options
@@ -639,6 +656,18 @@
    DRI_CONF_OPT_B(tu_ignore_frag_depth_direction, def, \
                   "Ignore direction specified for gl_FragDepth output")
 
+#define DRI_CONF_TU_ENABLE_SOFTFLOAT32(def) \
+   DRI_CONF_OPT_B(tu_enable_softfloat32, def, \
+                  "Enable softfloat emulation for float32 denormals")
+
+#define DRI_CONF_TU_EMULATE_ALPHA_TO_COVERAGE(def) \
+   DRI_CONF_OPT_B(tu_emulate_alpha_to_coverage, def, \
+                  "Enable emulation of alpha-to-coverage")
+
+#define DRI_CONF_TU_AUTOTUNE_ALGORITHM() \
+   DRI_CONF_OPT_S_NODEF(tu_autotune_algorithm, \
+                        "Set the preferred autotune algorithm")
+
 /**
  * \brief Honeykrisp specific configuration options
  */
@@ -650,6 +679,14 @@
 #define DRI_CONF_HK_FAKE_MINMAX(def) \
    DRI_CONF_OPT_B(hk_fake_minmax, def, \
                   "Fake support for min/max filtering")
+
+#define DRI_CONF_HK_IMAGE_VIEW_MIN_LOD(def) \
+   DRI_CONF_OPT_B(hk_image_view_min_lod, def, \
+                  "Emulate VK_EXT_image_view_min_lod (conformant but slower)")
+
+#define DRI_CONF_HK_ENABLE_VERTEX_PIPELINE_STORES_ATOMICS(def) \
+   DRI_CONF_OPT_B(hk_enable_vertex_pipeline_stores_atomics, def, \
+                  "Enable vertexPipelineStoresAndAtomics")
 
 /**
  * \brief venus specific configuration options
@@ -704,11 +741,11 @@
 
 #define DRI_CONF_RADV_DISABLE_DCC(def) \
    DRI_CONF_OPT_B(radv_disable_dcc, def, \
-                  "Disable DCC for color images")
+                  "Disable DCC for color images on GFX8-GFX11.5")
 
 #define DRI_CONF_RADV_DISABLE_DCC_MIPS(def) \
    DRI_CONF_OPT_B(radv_disable_dcc_mips, def, \
-                  "Disable DCC for color images with mips")
+                  "Disable DCC for color images with mips on GFX8-GFX11.5")
 
 #define DRI_CONF_RADV_DISABLE_DCC_STORES(def) \
    DRI_CONF_OPT_B(radv_disable_dcc_stores, def, \
@@ -725,10 +762,6 @@
 #define DRI_CONF_RADV_DISABLE_SINKING_LOAD_INPUT_FS(def) \
    DRI_CONF_OPT_B(radv_disable_sinking_load_input_fs, def, \
                   "Disable sinking load inputs for fragment shaders")
-
-#define DRI_CONF_RADV_DISABLE_DEPTH_STORAGE(def) \
-  DRI_CONF_OPT_B(radv_disable_depth_storage, def, \
-                 "Hides support for storage access to depth formats")
 
 #define DRI_CONF_RADV_FLUSH_BEFORE_QUERY_COPY(def) \
   DRI_CONF_OPT_B( \
@@ -754,6 +787,18 @@
 #define DRI_CONF_RADV_RT_WAVE64(def) \
    DRI_CONF_OPT_B(radv_rt_wave64, def, \
                   "Force wave64 in RT shaders")
+
+#define DRI_CONF_RADV_WAIT_FOR_VM_MAP_UPDATES(def) \
+   DRI_CONF_OPT_B(radv_wait_for_vm_map_updates, def, \
+                  "Wait for VM MAP updates at allocation time to mitigate use-before-alloc")
+
+#define DRI_CONF_RADV_NO_IMPLICIT_VARYING_SUBGROUP_SIZE(def) \
+   DRI_CONF_OPT_B(radv_no_implicit_varying_subgroup_size, def, \
+                  "Do not assume VK_PIPELINE_SHADER_STAGE_CREATE_ALLOW_VARYING_SUBGROUP_SIZE for SPIR-V 1.6.")
+
+#define DRI_CONF_RADV_PREFER_2D_SWIZZLE_FOR_3D_STORAGE(def) \
+   DRI_CONF_OPT_B(radv_prefer_2d_swizzle_for_3d_storage, def, \
+                  "Prefer 2D swizzle mode for 3D storage images.")
 
 /**
  * Overrides for forcing re-compilation of pipelines when RADV_BUILD_ID_OVERRIDE is enabled.
@@ -788,13 +833,22 @@
    DRI_CONF_OPT_B(radv_enable_float16_gfx8, def, \
                   "Expose float16 on GFX8, where it's supported but usually not beneficial.")
 
-#define DRI_CONF_RADV_DISABLE_HIZ_HIS_GFX12(def) \
-   DRI_CONF_OPT_B(radv_disable_hiz_his_gfx12, def, \
-                  "Disable HiZ/HiS on GFX12 (RDNA4) to workaround a hw bug that causes random GPU hangs")
-
 #define DRI_CONF_RADV_COOPERATIVE_MATRIX2_NV(def) \
    DRI_CONF_OPT_B(radv_cooperative_matrix2_nv, def, \
                   "Expose VK_NV_cooperative_matrix2 on supported hardware.")
+
+#define DRI_CONF_RADV_ALLOW_DGC_MULTIVIEW(def) \
+   DRI_CONF_OPT_B(radv_allow_dgc_multiview, def, \
+                  "Allow to use DGC with multiview for DX12 emulation.")
+
+#define DRI_CONF_RADV_GFX12_HIZ_WA() \
+   DRI_CONF_OPT_S_NODEF(radv_gfx12_hiz_wa, \
+                        "Choose the specific HiZ workaround to apply on GFX12 (RDNA4). " \
+                        "Accepted values are: disabled, partial or full")
+
+#define DRI_CONF_RADV_HIDE_REBAR_ON_DGPU(def) \
+   DRI_CONF_OPT_B(radv_hide_rebar_on_dgpu, def, \
+                  "Hide resizable bar on dGPUs by exposing a fake carveout of 256MiB.")
 
 /**
  * \brief ANV specific configuration options
@@ -859,6 +913,14 @@
 #define DRI_CONF_ANV_EXTERNAL_MEMORY_IMPLICIT_SYNC(def) \
    DRI_CONF_OPT_B(anv_external_memory_implicit_sync, def, "Implicit sync on external BOs")
 
+#define DRI_CONF_ANV_PROMOTE_CBV_TO_PUSH_BUFFERS(def) \
+   DRI_CONF_OPT_B(anv_promote_cbv_to_push_buffers, def, \
+                  "Promote CBV 64bit pointers in push constant data to push buffers")
+
+#define DRI_CONF_ANV_STATE_CACHE_PERF_FIX(def) \
+   DRI_CONF_OPT_B(anv_state_cache_perf_fix, def, \
+                  "Whether COMMON_SLICE_CHICKEN3 bit13 should be programmed to enable BTP+BTI RCC keying")
+
 #define DRI_CONF_ANV_COMPRESSION_CONTROL_ENABLED(def) \
    DRI_CONF_OPT_B(compression_control_enabled, def, "Enable VK_EXT_image_compression_control support")
 
@@ -878,6 +940,34 @@
    DRI_CONF_OPT_B(anv_large_workgroup_non_coherent_image_workaround, def, \
                   "Fixup image coherency qualifier for certain shaders.")
 
+#define DRI_CONF_ANV_FORCE_GUC_LOW_LATENCY(def) \
+   DRI_CONF_OPT_B(force_guc_low_latency, def, \
+                  "Enable low latency GuC strategy.")
+
+#define DRI_CONF_ANV_DISABLE_DRM_AUX_MODIFIERS(def) \
+   DRI_CONF_OPT_B(anv_disable_drm_ccs_modifiers, def, \
+                  "Disable DRM CCS modifier usage")
+
+#define DRI_CONF_ANV_DISABLE_LINK_TIME_OPTIMIZATION(def) \
+   DRI_CONF_OPT_B(anv_disable_link_time_optimization, def, \
+                  "Disable linking of graphics pipeline shaders")
+
+#define DRI_CONF_ANV_BARRIER_POST_UNTYPED_CLEAR_SHADER(def) \
+   DRI_CONF_OPT_B(anv_barrier_post_untyped_clear_shader, def, \
+                  "Insert pipeline barriers post clearing shader on untyped data")
+
+#define DRI_CONF_ANV_BARRIER_POST_TYPED_CLEAR_SHADER(def) \
+   DRI_CONF_OPT_B(anv_barrier_post_typed_clear_shader, def, \
+                  "Insert pipeline barriers post clearing shader on typed data")
+
+#define DRI_CONF_ANV_ENABLE_OPT_DIVERGENT_ATOMICS(def) \
+   DRI_CONF_OPT_I(anv_enable_opt_divergent_atomics, def, 0, 3,\
+                  "Enable fusion of divergent atomics (see brw_divergent_atomics_flags)")
+
+#define DRI_CONF_ANV_BRW_DISABLE_SUBGROUP_SIZE_CONTROL(def) \
+   DRI_CONF_OPT_B(anv_brw_disable_subgroup_size_control, def, \
+                  "Disable EXT_subgroup_size_control support when using brw compiler.")
+
 /**
  * \brief HASVK specific configuration options
  */
@@ -885,10 +975,6 @@
 #define DRI_CONF_HASVK_OVERRIDE_API_VERSION(def) \
    DRI_CONF_OPT_B(hasvk_report_vk_1_3_version, def, \
                   "Override intel_hasvk API version")
-
-#define DRI_CONF_ANV_FORCE_GUC_LOW_LATENCY(def) \
-   DRI_CONF_OPT_B(force_guc_low_latency, def, \
-                  "Enable low latency GuC strategy. Only supported on i915.")
 
 /**
  * \brief DZN specific configuration options
@@ -902,5 +988,11 @@
 
 #define DRI_CONF_DZN_DISABLE(def) \
    DRI_CONF_OPT_B(dzn_disable, def, "Fail instance creation")
+
+/**
+ * \brief NVK specific configuration options
+ */
+
+ #define DRI_CONF_NVK_APP_LAYER() DRI_CONF_OPT_S_NODEF(nvk_app_layer, "Select an application layer.")
 
 #endif

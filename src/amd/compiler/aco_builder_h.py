@@ -213,7 +213,8 @@ public:
 
    std::vector<aco_ptr<Instruction>> *instructions;
    std::vector<aco_ptr<Instruction>>::iterator it;
-   bool is_precise = false;
+   bool is_no_contract = false;
+   bool is_no_reassoc = false;
    bool is_sz_preserve = false;
    bool is_inf_preserve = false;
    bool is_nan_preserve = false;
@@ -225,7 +226,8 @@ public:
 
    Builder precise() const {
       Builder res = *this;
-      res.is_precise = true;
+      res.is_no_contract = true;
+      res.is_no_reassoc = true;
       return res;
    };
 
@@ -358,7 +360,7 @@ public:
       case s_lshl:
          return aco_opcode::s_lshl_b32;
       default:
-         unreachable("Unsupported wave specific opcode.");
+         UNREACHABLE("Unsupported wave specific opcode.");
       }
    }
 
@@ -488,12 +490,14 @@ public:
       if (!post_ra && (!b.op.hasRegClass() || b.op.regClass().type() == RegType::sgpr))
          b = copy(def(v1), b);
 
+      carry_out |= program->gfx_level < GFX9 || !carry_in.op.isUndefined();
+      Definition carry = carry_out ? (post_ra ? vcc(def(lm)) : def(lm)) : Definition();
       if (!carry_in.op.isUndefined())
-         return vop2(aco_opcode::v_addc_co_u32, Definition(dst), def(lm), a, b, carry_in);
+         return vop2(aco_opcode::v_addc_co_u32, Definition(dst), carry, a, b, carry_in);
       else if (program->gfx_level >= GFX10 && carry_out)
-         return vop3(aco_opcode::v_add_co_u32_e64, Definition(dst), def(lm), a, b);
-      else if (program->gfx_level < GFX9 || carry_out)
-         return vop2(aco_opcode::v_add_co_u32, Definition(dst), def(lm), a, b);
+         return vop3(aco_opcode::v_add_co_u32_e64, Definition(dst), carry, a, b);
+      else if (carry_out)
+         return vop2(aco_opcode::v_add_co_u32, Definition(dst), carry, a, b);
       else
          return vop2(aco_opcode::v_add_u32, Definition(dst), a, b);
    }
@@ -563,13 +567,13 @@ public:
 <%
 import itertools
 formats = [("pseudo", [Format.PSEUDO], list(itertools.product(range(5), range(7))) + [(8, 1), (1, 8), (1, 7)]),
-           ("sop1", [Format.SOP1], [(0, 1), (1, 0), (1, 1), (2, 1), (3, 2)]),
+           ("sop1", [Format.SOP1], [(0, 1), (1, 0), (1, 1), (1, 2), (2, 1), (3, 2)]),
            ("sop2", [Format.SOP2], itertools.product([1, 2], [2, 3])),
            ("sopk", [Format.SOPK], itertools.product([0, 1, 2], [0, 1])),
            ("sopp", [Format.SOPP], [(0, 0), (0, 1)]),
            ("sopc", [Format.SOPC], [(1, 2)]),
            ("smem", [Format.SMEM], [(0, 4), (0, 3), (1, 0), (1, 3), (1, 2), (1, 1), (0, 0)]),
-           ("ds", [Format.DS], [(1, 0), (1, 1), (1, 2), (1, 3), (0, 3), (0, 4), (2, 3)]),
+           ("ds", [Format.DS], [(1, 0), (1, 1), (1, 2), (1, 3), (0, 2), (0, 3), (0, 4), (2, 3)]),
            ("ldsdir", [Format.LDSDIR], [(1, 1)]),
            ("mubuf", [Format.MUBUF], [(0, 4), (1, 3), (1, 4)]),
            ("mtbuf", [Format.MTBUF], [(0, 4), (1, 3)]),
@@ -578,6 +582,7 @@ formats = [("pseudo", [Format.PSEUDO], list(itertools.product(range(5), range(7)
            ("branch", [Format.PSEUDO_BRANCH], [(0, 0), (0, 1)]),
            ("barrier", [Format.PSEUDO_BARRIER], [(0, 0)]),
            ("reduction", [Format.PSEUDO_REDUCTION], [(3, 3)]),
+           ("call", [Format.PSEUDO_CALL], [(0, 0)]),
            ("vop1", [Format.VOP1], [(0, 0), (1, 1), (1, 2), (2, 2)]),
            ("vop1_sdwa", [Format.VOP1, Format.SDWA], [(1, 1)]),
            ("vop2", [Format.VOP2], itertools.product([1, 2], [2, 3])),
@@ -617,20 +622,27 @@ formats = [(f if len(f) == 5 else f + ('',)) for f in formats]
     % for num_definitions, num_operands in shapes:
         <%
         args = ['aco_opcode opcode']
+        has_disable_wqm = False
         for i in range(num_definitions):
             args.append('Definition def%d' % i)
         for i in range(num_operands):
             args.append('Op op%d' % i)
         for f in formats:
             args += f.get_builder_field_decls()
+            has_disable_wqm |= f.has_disable_wqm()
         %>\\
 
    Result ${name}(${', '.join(args)})
    {
-      Instruction* instr = create_instruction(opcode, (Format)(${'|'.join('(int)Format::%s' % f.name for f in formats)}), ${num_operands}, ${num_definitions});
+      unsigned num_ops = ${num_operands};
+      % if has_disable_wqm:
+      num_ops += disable_wqm * 2;
+      %endif
+      Instruction* instr = create_instruction(opcode, (Format)(${'|'.join('(int)Format::%s' % f.name for f in formats)}), num_ops, ${num_definitions});
         % for i in range(num_definitions):
             instr->definitions[${i}] = def${i};
-            instr->definitions[${i}].setPrecise(is_precise);
+            instr->definitions[${i}].setNoContract(is_no_contract);
+            instr->definitions[${i}].setNoReassoc(is_no_reassoc);
             instr->definitions[${i}].setSZPreserve(is_sz_preserve);
             instr->definitions[${i}].setInfPreserve(is_inf_preserve);
             instr->definitions[${i}].setNaNPreserve(is_nan_preserve);
@@ -639,6 +651,14 @@ formats = [(f if len(f) == 5 else f + ('',)) for f in formats]
         % for i in range(num_operands):
             instr->operands[${i}] = op${i}.op;
         % endfor
+
+        % if has_disable_wqm:
+        if (disable_wqm) {
+           instr_exact_mask(instr) = Operand();
+           instr_wqm_mask(instr) = Operand();
+        }
+        %endif
+
         % for f in formats:
             % for dest, field_name in zip(f.get_builder_field_dests(), f.get_builder_field_names()):
       instr->${f.get_accessor()}().${dest} = ${field_name};

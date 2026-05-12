@@ -238,7 +238,7 @@ rewrite_cost(nir_def *def, const void *data)
          nir_intrinsic_instr *parent_intrin =
             nir_instr_as_intrinsic(parent_instr);
 
-         if (v->compiler->has_alias_rt && v->type == MESA_SHADER_FRAGMENT &&
+         if (v->compiler->info->props.has_alias_rt && v->type == MESA_SHADER_FRAGMENT &&
              parent_intrin->intrinsic == nir_intrinsic_store_output &&
              def->bit_size == 32) {
             /* For FS outputs, alias.rt can use const registers without a mov.
@@ -269,8 +269,18 @@ avoid_instr(const nir_instr *instr, const void *data)
 }
 
 static bool
-set_speculate(nir_builder *b, nir_intrinsic_instr *intr, UNUSED void *_)
+set_speculate(nir_builder *b, nir_instr *instr, UNUSED void *_)
 {
+   if (instr->type == nir_instr_type_tex) {
+      nir_instr_as_tex(instr)->can_speculate = true;
+      return true;
+   }
+
+   if (instr->type != nir_instr_type_intrinsic)
+      return false;
+
+   nir_intrinsic_instr *intr = nir_instr_as_intrinsic(instr);
+
    switch (intr->intrinsic) {
    /* These instructions go through bounds-checked hardware descriptors so
     * should be safe to speculate.
@@ -313,8 +323,8 @@ ir3_nir_opt_preamble(nir_shader *nir, struct ir3_shader_variant *v)
    if (max_size == 0)
       return false;
 
-   bool progress = nir_shader_intrinsics_pass(nir, set_speculate,
-                                              nir_metadata_control_flow, NULL);
+   bool progress = nir_shader_instructions_pass(nir, set_speculate,
+                                                nir_metadata_control_flow, NULL);
 
    nir_opt_preamble_options options = {
       .drawid_uniform = true,
@@ -349,18 +359,18 @@ bool
 ir3_def_is_rematerializable_for_preamble(nir_def *def,
                                          nir_def **preamble_defs)
 {
-   switch (def->parent_instr->type) {
+   switch (nir_def_instr_type(def)) {
    case nir_instr_type_load_const:
       return true;
    case nir_instr_type_intrinsic: {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(def->parent_instr);
+      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(def);
       switch (intrin->intrinsic) {
       case nir_intrinsic_load_ubo:
          return ir3_def_is_rematerializable_for_preamble(intrin->src[0].ssa,
                                                          preamble_defs) &&
             ir3_def_is_rematerializable_for_preamble(intrin->src[1].ssa,
                                                      preamble_defs) &&
-            (def->parent_instr->block->cf_node.parent->type ==
+            (nir_def_block(def)->cf_node.parent->type ==
              nir_cf_node_function ||
              (nir_intrinsic_access(intrin) & ACCESS_CAN_SPECULATE));
       case nir_intrinsic_bindless_resource_ir3:
@@ -373,7 +383,7 @@ ir3_def_is_rematerializable_for_preamble(nir_def *def,
       }
    }
    case nir_instr_type_alu: {
-      nir_alu_instr *alu = nir_instr_as_alu(def->parent_instr);
+      nir_alu_instr *alu = nir_def_as_alu(def);
       for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++) {
          if (!ir3_def_is_rematerializable_for_preamble(alu->src[i].src.ssa,
                                                        preamble_defs))
@@ -411,7 +421,7 @@ static bool
 find_dominated_src(nir_src *src, void *data)
 {
    struct find_insert_block_state *state = data;
-   nir_block *src_block = src->ssa->parent_instr->block;
+   nir_block *src_block = nir_def_block(src->ssa);
    return find_dominated_block(src_block, state);
 }
 
@@ -440,7 +450,7 @@ find_insert_block_for_defs(nir_def *defs[], unsigned n)
    };
 
    for (unsigned i = 0; i < n; i++) {
-      if (!find_dominated_block(defs[i]->parent_instr->block, &state)) {
+      if (!find_dominated_block(nir_def_block(defs[i]), &state)) {
          return NULL;
       }
    }
@@ -459,14 +469,14 @@ _rematerialize_def(nir_builder *b, struct hash_table *remap_ht,
                    struct set *instr_set, nir_def **preamble_defs,
                    nir_def *def)
 {
-   if (_mesa_hash_table_search(remap_ht, def->parent_instr))
+   if (_mesa_hash_table_search(remap_ht, nir_def_instr(def)))
       return NULL;
 
-   switch (def->parent_instr->type) {
+   switch (nir_def_instr_type(def)) {
    case nir_instr_type_load_const:
       break;
    case nir_instr_type_intrinsic: {
-      nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(def->parent_instr);
+      nir_intrinsic_instr *intrin = nir_def_as_intrinsic(def);
       if (intrin->intrinsic == nir_intrinsic_load_preamble) {
          _mesa_hash_table_insert(remap_ht, def,
                                  preamble_defs[nir_intrinsic_base(intrin)]);
@@ -480,17 +490,17 @@ _rematerialize_def(nir_builder *b, struct hash_table *remap_ht,
       break;
    }
    case nir_instr_type_alu: {
-      nir_alu_instr *alu = nir_instr_as_alu(def->parent_instr);
+      nir_alu_instr *alu = nir_def_as_alu(def);
       for (unsigned i = 0; i < nir_op_infos[alu->op].num_inputs; i++)
          _rematerialize_def(b, remap_ht, instr_set, preamble_defs,
                             alu->src[i].src.ssa);
       break;
    }
    default:
-      unreachable("should not get here");
+      UNREACHABLE("should not get here");
    }
 
-   nir_instr *instr = nir_instr_clone_deep(b->shader, def->parent_instr,
+   nir_instr *instr = nir_instr_clone_deep(b->shader, nir_def_instr(def),
                                            remap_ht);
 
    /* Find a legal place to insert the new instruction. We cannot simply put it
@@ -619,7 +629,7 @@ static bool
 emit_descriptor_prefetch(nir_builder *b, nir_instr *instr, nir_def **descs,
                          struct prefetch_state *state)
 {
-   nir_block *insert_block = descs[0]->parent_instr->block;
+   nir_block *insert_block = nir_def_block(descs[0]);
 
    if (descs[1]) {
       insert_block = find_insert_block_for_defs(descs, 2);
@@ -701,7 +711,7 @@ emit_descriptor_prefetch(nir_builder *b, nir_instr *instr, nir_def **descs,
 static unsigned
 get_preamble_offset(nir_def *def)
 {
-   return nir_intrinsic_base(nir_instr_as_intrinsic(def->parent_instr));
+   return nir_intrinsic_base(nir_def_as_intrinsic(def));
 }
 
 /* Prefetch descriptors in the preamble. This is an optimization introduced on
@@ -715,7 +725,9 @@ ir3_nir_opt_prefetch_descriptors(nir_shader *nir, struct ir3_shader_variant *v)
    const struct ir3_const_state *const_state = ir3_const_state(v);
 
    nir_function_impl *main = nir_shader_get_entrypoint(nir);
-   struct set *instr_set = nir_instr_set_create(NULL);
+   struct set instr_set;
+   nir_instr_set_init(&instr_set, NULL);
+
    nir_function_impl *preamble = main->preamble ? main->preamble->impl : NULL;
    nir_builder b;
    bool progress = false;
@@ -802,7 +814,7 @@ ir3_nir_opt_prefetch_descriptors(nir_shader *nir, struct ir3_shader_variant *v)
                continue;
 
             preamble_descs[i] =
-               ir3_rematerialize_def_for_preamble(&b, descs[i], instr_set,
+               ir3_rematerialize_def_for_preamble(&b, descs[i], &instr_set,
                                                   preamble_defs);
          }
 
@@ -822,7 +834,7 @@ finished:
                    nir_metadata_block_index | nir_metadata_dominance);
    }
 
-   nir_instr_set_destroy(instr_set);
+   nir_instr_set_fini(&instr_set);
    free(preamble_defs);
    return progress;
 }
@@ -844,8 +856,9 @@ ir3_nir_lower_preamble(nir_shader *nir, struct ir3_shader_variant *v)
    unsigned preamble_size =
       const_state->allocs.consts[IR3_CONST_ALLOC_PREAMBLE].size_vec4 * 4;
 
-   BITSET_DECLARE(promoted_to_float, preamble_size);
-   memset(promoted_to_float, 0, sizeof(promoted_to_float));
+   /* Avoid zero-size VLA. */
+   BITSET_DECLARE(promoted_to_float, preamble_size > 0 ? preamble_size : 1);
+   BITSET_ZERO(promoted_to_float);
 
    nir_builder builder_main = nir_builder_create(main);
    nir_builder *b = &builder_main;

@@ -222,10 +222,8 @@ multisync_set(struct v3d_context *v3d, struct drm_v3d_multi_sync *ms,
         return;
 
 out:
-        fprintf(stderr, "Multisync Set Failed\n");
-        if (in_syncs) {
-           free(in_syncs);
-        }
+        mesa_loge("Multisync Set Failed");
+        free(in_syncs);
 }
 
 static void
@@ -293,7 +291,7 @@ v3d_submit_timestamp_query(struct pipe_context *pctx, struct v3d_bo *bo,
 
         ret = v3d_ioctl(screen->fd, DRM_IOCTL_V3D_SUBMIT_CPU, &submit);
         if (ret)
-           fprintf(stderr, "Failed to submit cpu job: %s\n", strerror(errno));
+           mesa_loge("Failed to submit cpu job: %s", strerror(errno));
 
         multisync_free(&ms);
 }

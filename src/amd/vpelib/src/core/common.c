@@ -1,4 +1,4 @@
-/* Copyright 2022 Advanced Micro Devices, Inc.
+/* Copyright 2022-2025 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -53,6 +53,14 @@ bool vpe_is_dual_plane_format(enum vpe_surface_pixel_format format)
         // p010
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCrCb: /*  P016 */
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrCb:       /* YUV 422 */
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbCr:
         return true;
     default:
         return false;
@@ -83,15 +91,23 @@ bool vpe_is_32bit_packed_rgb(enum vpe_surface_pixel_format format)
 bool vpe_is_8bit(enum vpe_surface_pixel_format format) {
     return vpe_is_rgb8(format) ||
            vpe_is_yuv420_8(format) ||
+           vpe_is_yuv422_8(format) ||
+           (format == VPE_SURFACE_PIXEL_FORMAT_GRPH_R8) ||
     vpe_is_yuv444_8(format);
 }
 
 bool vpe_is_10bit(enum vpe_surface_pixel_format format) {
     return vpe_is_rgb10(format) ||
            vpe_is_yuv420_10(format) ||
+    vpe_is_yuv422_10(format) ||
     vpe_is_yuv444_10(format);
 }
 
+bool vpe_is_16bit(enum vpe_surface_pixel_format format)
+{
+    return vpe_is_fp16(format) || vpe_is_rgb16(format) ||
+           (format == VPE_SURFACE_PIXEL_FORMAT_GRPH_R16);
+}
 bool vpe_is_rgb8(enum vpe_surface_pixel_format format)
 {
     switch (format) {
@@ -103,6 +119,7 @@ bool vpe_is_rgb8(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRX8888:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_XRGB8888:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_XBGR8888:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_RGB:
         return true;
     default:
         return false;
@@ -121,6 +138,28 @@ bool vpe_is_rgb10(enum vpe_surface_pixel_format format)
         return false;
     }
 }
+bool vpe_is_rgb16(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_is_planar_format(enum vpe_surface_pixel_format format)
+{
+    return (format >= VPE_SURFACE_PIXEL_FORMAT_PLANAR_BEGIN) &&
+           (format <= VPE_SURFACE_PIXEL_FORMAT_PLANAR_END);
+}
 
 bool vpe_is_fp16(enum vpe_surface_pixel_format format)
 {
@@ -129,6 +168,7 @@ bool vpe_is_fp16(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616F:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB_FLOAT:
         return true;
     default:
         return false;
@@ -140,6 +180,7 @@ bool vpe_is_yuv420_8(enum vpe_surface_pixel_format format)
     switch (format) {
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ALPHA_THRU_LUMA:
         return true;
     default:
         return false;
@@ -159,8 +200,8 @@ bool vpe_is_yuv420_10(enum vpe_surface_pixel_format format)
 bool vpe_is_yuv420_16(enum vpe_surface_pixel_format format)
 {
     switch (format) {
-    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_16bpc_YCrCb:
-    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_16bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCbCr:
         return true;
     default:
         return false;
@@ -175,11 +216,13 @@ bool vpe_is_yuv420(enum vpe_surface_pixel_format format)
 bool vpe_is_yuv444_8(enum vpe_surface_pixel_format format)
 {
     switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrCbYA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCrCb8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_YCrCbA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCbCr8888:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_YCbCr:
         return true;
     default:
         return false;
@@ -196,36 +239,157 @@ bool vpe_is_yuv444_10(enum vpe_surface_pixel_format format)
         return false;
     }
 }
+bool vpe_is_yuv444_12(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb12121212:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA12121212:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_YCbCr:
+        return true;
+    default:
+        return false;
+    }
+}
 bool vpe_is_yuv444(enum vpe_surface_pixel_format format)
 {
     return (vpe_is_yuv444_8(format) ||
+            vpe_is_yuv444_12(format) ||
             vpe_is_yuv444_10(format));
+}
+
+bool vpe_is_yuv422_8(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbCr:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_is_yuv422_10(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbCr:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_is_yuv422_12(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbCr:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_is_yuv422(enum vpe_surface_pixel_format format)
+{
+    return (vpe_is_yuv422_8(format) || vpe_is_yuv422_10(format) || vpe_is_yuv422_12(format));
+}
+bool vpe_is_yuv_packed(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    // YUV 422 Packed
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+    // YUV 444 Packed
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrCbYA8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCrCb8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_YCrCbA8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCbCr8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb2101010:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA1010102:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb12121212:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA12121212:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_is_mono(enum vpe_surface_pixel_format format)
+{
+    switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R8:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R16:
+        return true;
+    default:
+        return false;
+    }
 }
 
 bool vpe_is_yuv8(enum vpe_surface_pixel_format format)
 {
     return (vpe_is_yuv420_8(format) ||
+            vpe_is_yuv422_8(format) ||
             vpe_is_yuv444_8(format));
 }
 
 bool vpe_is_yuv10(enum vpe_surface_pixel_format format)
 {
     return (vpe_is_yuv420_10(format) ||
+            vpe_is_yuv422_10(format) ||
             vpe_is_yuv444_10(format));
 }
 
+bool vpe_is_yuv12(enum vpe_surface_pixel_format format)
+{
+    return (vpe_is_yuv420_16(format)
+            || vpe_is_yuv422_12(format) || vpe_is_yuv444_12(format)
+    );
+}
 bool vpe_is_yuv(enum vpe_surface_pixel_format format)
 {
     return (vpe_is_yuv420(format) ||
+            vpe_is_yuv8(format) || vpe_is_yuv422(format) ||
             vpe_is_yuv444(format));
 }
 
 uint8_t vpe_get_element_size_in_bytes(enum vpe_surface_pixel_format format, int plane_idx)
 {
     switch (format) {
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R8:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_YCbCr:
+        return 1;
         // nv12/21
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ALPHA_THRU_LUMA:
         if (plane_idx == 0)
             return 1;
         else
@@ -233,16 +397,56 @@ uint8_t vpe_get_element_size_in_bytes(enum vpe_surface_pixel_format format, int 
         // P010
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCrCb:
+        // P016
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCrCb:
+        // P210
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbCr:
+        // P216
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbCr:
         if (plane_idx == 0)
             return 2;
         else
             return 4;
+        // YUY2/UYUV
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+        return 4;
+        // 16b Monochrome
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R16:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB_FLOAT:
+        return 2;
+        // Y210/Y216
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+        return 8;
+        break;
         // 64bpp
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616F:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb12121212:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA12121212:
         return 8;
     default:
         break;
@@ -268,6 +472,17 @@ enum color_depth vpe_get_color_depth(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_XBGR8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R8:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ALPHA_THRU_LUMA:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrCbYA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCrCb8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_YCrCbA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb8888:
@@ -281,16 +496,46 @@ enum color_depth vpe_get_color_depth(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA1010102:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb2101010:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA1010102:
         c_depth = COLOR_DEPTH_101010;
+        break;
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb12121212:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA12121212:
+        c_depth = COLOR_DEPTH_121212;
         break;
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ARGB16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616F:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616F:
-    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_16bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_UNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616_SNORM:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB_FLOAT:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_R16:
+    // RGBE is technically 9bpc per component + 5 shared, using 16 here instead of default 8
+    // c_depth only used in OPP/backend for clamping etc, rgbe is input only so no impact
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBE:
         c_depth = COLOR_DEPTH_161616;
         break;
     default:
@@ -326,6 +571,11 @@ bool vpe_has_per_pixel_alpha(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ACrYCb8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrYCbA8888:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_AYCbCr8888:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_CrCbYA8888:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_ABGR16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBA16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRA16161616:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_ALPHA_THRU_LUMA:
         alpha = true;
         break;
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGB565:
@@ -338,6 +588,31 @@ bool vpe_has_per_pixel_alpha(enum vpe_surface_pixel_format format)
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_YCrCb:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCbCr:
     case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_420_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrYCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbYCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CrYCbY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_CbYCrY:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_10bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCrCb:
+    case VPE_SURFACE_PIXEL_FORMAT_VIDEO_422_12bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_8bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_YCbCr:
+    case VPE_SURFACE_PIXEL_FORMAT_PLANAR_16bpc_RGB_FLOAT:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_RGBX8888:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_BGRX8888:
     case VPE_SURFACE_PIXEL_FORMAT_GRPH_XRGB8888:
@@ -374,7 +649,7 @@ enum vpe_status vpe_check_output_support(struct vpe *vpe, const struct vpe_build
     cdc_be = vpe_priv->resource.cdc_be[0];
 
     // swizzle mode
-    support = vpec->funcs->check_swmode_support(vpec, surface_info->swizzle);
+    support = vpec->funcs->check_output_swmode_support(vpec, surface_info);
     if (!support) {
         vpe_log("output swizzle mode not supported %d\n", surface_info->swizzle);
         return VPE_STATUS_SWIZZLE_NOT_SUPPORTED;
@@ -430,7 +705,7 @@ enum vpe_status vpe_check_output_support(struct vpe *vpe, const struct vpe_build
         params.format              = surface_info->format;
         params.swizzle_mode        = surface_info->swizzle;
         params.scan                = VPE_SCAN_PATTERN_0_DEGREE;
-        support = vpe->cap_funcs->get_dcc_compression_output_cap(vpe, &params, &cap);
+        support = vpe_priv->pub.check_funcs.get_dcc_compression_output_cap(&params, &cap);
         if (!support) {
             vpe_log("output dcc not supported\n");
             return VPE_STATUS_OUTPUT_DCC_NOT_SUPPORTED;
@@ -438,15 +713,15 @@ enum vpe_status vpe_check_output_support(struct vpe *vpe, const struct vpe_build
     }
 
     // pixel format
-    support = cdc_be->funcs->check_output_format(cdc_be, surface_info->format);
+    support = vpe_priv->pub.check_funcs.check_output_format(surface_info->format);
     if (!support) {
         vpe_log("output pixel format not supported %d\n", (int)surface_info->format);
         return VPE_STATUS_PIXEL_FORMAT_NOT_SUPPORTED;
     }
 
     // color space value
-    support = vpe_priv->resource.check_output_color_space(
-        vpe_priv, surface_info->format, &surface_info->cs);
+    support =
+        vpe_priv->pub.check_funcs.check_output_color_space(surface_info->format, &surface_info->cs);
     if (!support) {
         vpe_log("output color space not supported fmt: %d, "
                 "encoding: %d, cositing: %d, gamma: %d, range: %d, primaries: %d\n",
@@ -478,7 +753,7 @@ enum vpe_status vpe_check_input_support(struct vpe *vpe, const struct vpe_stream
     cdc_fe = vpe_priv->resource.cdc_fe[0];
 
     // swizzle mode
-    support = vpec->funcs->check_swmode_support(vpec, surface_info->swizzle);
+    support = vpec->funcs->check_input_swmode_support(vpec, surface_info);
     if (!support) {
         vpe_log("input swizzle mode not supported %d\n", surface_info->swizzle);
         return VPE_STATUS_SWIZZLE_NOT_SUPPORTED;
@@ -517,6 +792,23 @@ enum vpe_status vpe_check_input_support(struct vpe *vpe, const struct vpe_stream
                 return VPE_STATUS_PLANE_ADDR_NOT_SUPPORTED;
             }
         }
+    } else if (surface_info->address.type == VPE_PLN_ADDR_TYPE_PLANAR) {
+        uint32_t addr_check     = 0;
+        uint32_t caps_alignment = vpe->caps->plane_caps.addr_alignment;
+
+        addrloc = &surface_info->address.planar.y_g_addr;
+        addr_check |= (addrloc->u.low_part % caps_alignment);
+
+        addrloc = &surface_info->address.planar.cb_b_addr;
+        addr_check |= (addrloc->u.low_part % caps_alignment);
+
+        addrloc = &surface_info->address.planar.cr_r_addr;
+        addr_check |= (addrloc->u.low_part % caps_alignment);
+
+        if (addr_check) {
+            vpe_log("failed. addr not aligned to 256 bytes\n");
+            return VPE_STATUS_PLANE_ADDR_NOT_SUPPORTED;
+        }
     } else {
         addrloc = &surface_info->address.grph.addr;
         if (addrloc->u.low_part % vpe->caps->plane_caps.addr_alignment) {
@@ -533,7 +825,9 @@ enum vpe_status vpe_check_input_support(struct vpe *vpe, const struct vpe_stream
         params.format              = surface_info->format;
         params.swizzle_mode        = surface_info->swizzle;
 
-        support = vpe->cap_funcs->get_dcc_compression_input_cap(vpe, &params, &cap);
+        params.scan = vpe_get_scan_direction(
+            stream->rotation, stream->horizontal_mirror, stream->vertical_mirror);
+        support = vpe_priv->pub.check_funcs.get_dcc_compression_input_cap(&params, &cap);
         //only support non dual plane formats
         if (!support) {
             vpe_log("input internal dcc not supported\n");
@@ -542,15 +836,15 @@ enum vpe_status vpe_check_input_support(struct vpe *vpe, const struct vpe_stream
     }
 
     // pixel format
-    support = cdc_fe->funcs->check_input_format(cdc_fe, surface_info->format);
+    support = vpe_priv->pub.check_funcs.check_input_format(surface_info->format);
     if (!support) {
         vpe_log("input pixel format not supported %d\n", (int)surface_info->format);
         return VPE_STATUS_PIXEL_FORMAT_NOT_SUPPORTED;
     }
 
     // color space value
-    support = vpe_priv->resource.check_input_color_space(
-        vpe_priv, surface_info->format, &surface_info->cs);
+    support =
+        vpe_priv->pub.check_funcs.check_input_color_space(surface_info->format, &surface_info->cs);
     if (!support) {
         vpe_log("input color space not supported fmt: %d, "
                 "encoding: %d, cositing: %d, gamma: %d, range: %d, primaries: %d\n",
@@ -620,16 +914,231 @@ enum vpe_status vpe_check_tone_map_support(
             status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
         }
     } else {
-        if (is_hlg ||
-            (input_is_hdr && is_in_lum_greater_than_out_lum)) {
+        if ((is_hlg == true) ||
+            ((input_is_hdr == true) && (is_in_lum_greater_than_out_lum == true) &&
+                (stream->flags.geometric_scaling == false))) {
             status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
         }
     }
 
-    if (is_3D_lut_enabled && stream->tm_params.lut_dim != LUT_DIM_9 &&
-        stream->tm_params.lut_dim != LUT_DIM_17) { /* only support 9/17 cube */
-        status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+    if (is_3D_lut_enabled) {
+        /* check for 3D LUT dimension support */
+        switch (stream->tm_params.lut_dim) {
+        case LUT_DIM_9:
+            if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.data_dim_9)
+                status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+            break;
+        case LUT_DIM_17:
+            if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.data_dim_17)
+                status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+            break;
+        case LUT_DIM_33:
+            if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.data_dim_33)
+                status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+            break;
+        default:
+            status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+        }
+
+        if (stream->tm_params.lut_type > VPE_LUT_TYPE_CPU) { /* fast loading */
+            if (!vpe->caps->color_caps.mpc.dma_3d_lut ||     /* check capability support */
+                ((stream->dma_info.lut3d.data & 0xFF) != 0)) { /* must be 256 byte aligned */
+                status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+            } else if (!(vpe_is_rgb16(stream->dma_info.lut3d.format) ||
+                           vpe_is_fp16(stream->dma_info.lut3d
+                                           .format))) { /* check for 3D LUT format support */
+                status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+            } else {
+                // Check if the 3D LUT container dimension is supported for fast loading
+
+                switch (stream->tm_params.lut_container_dim) {
+                case LUT_DIM_INVALID:
+                    // unitialized lut_container_dim will be treated as 33 dimension
+                    if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.dma_dim_33)
+                        status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+                    break;
+                case LUT_DIM_17:
+                    // Verify if 17x17x17 LUT dimension is supported for fast loading
+                    if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.dma_dim_17)
+                        status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+                    break;
+                case LUT_DIM_33:
+                    // Verify if 33x33x33 LUT dimension is supported for fast loading
+                    if (!vpe->caps->color_caps.mpc.lut_caps.lut_3dlut_caps.dma_dim_33)
+                        status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+                    break;
+                default:
+                    // Unsupported LUT container dimension
+                    status = VPE_STATUS_BAD_TONE_MAP_PARAMS;
+                }
+            }
+        }
     }
     return status;
 }
 
+enum vpe_status vpe_check_blending_support(
+    struct vpe *vpe, const struct vpe_stream *stream, uint32_t stream_idx)
+{
+    enum vpe_status  result   = VPE_STATUS_OK;
+    struct vpe_priv *vpe_priv = container_of(vpe, struct vpe_priv, pub);
+
+    /* if top-bottom blending is not supported,
+     * the 1st stream still can support blending with background,
+     * however, the 2nd stream and onward can not enable blending.
+     */
+    if (stream_idx && stream->blend_info.blending &&
+        !vpe_priv->pub.caps->color_caps.mpc.top_bottom_blending) {
+        result = VPE_STATUS_ALPHA_BLENDING_NOT_SUPPORTED;
+    }
+    return result;
+}
+
+// Returns the smallest number greater than (or equal to) seg_size divisible by alignment
+uint32_t vpe_align_seg(uint32_t seg_size, uint32_t alignment)
+{
+    VPE_ASSERT(alignment != 0);
+
+    uint32_t aligned_size = seg_size;
+    if (alignment != 0) {
+        uint32_t rem = seg_size % alignment;
+        if (rem != 0) {
+            aligned_size = seg_size + alignment - rem;
+        }
+    }
+    return aligned_size;
+}
+
+enum vpe_scan_direction vpe_get_scan_direction(
+    enum vpe_rotation_angle rotation, bool horizontal_mirror, bool vertical_mirror)
+{
+    enum vpe_scan_direction scan = VPE_SCAN_PATTERN_0_DEGREE;
+    switch (rotation) {
+    case VPE_ROTATION_ANGLE_0:
+        if (!horizontal_mirror && !vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_0_DEGREE;
+        } else if (horizontal_mirror && vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_180_DEGREE;
+        } else if (horizontal_mirror) {
+            scan = VPE_SCAN_PATTERN_0_DEGREE_H_MIRROR;
+        } else {
+            scan = VPE_SCAN_PATTERN_180_DEGREE_H_MIRROR;
+        }
+        break;
+    case VPE_ROTATION_ANGLE_90:
+        if (!horizontal_mirror && !vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_90_DEGREE;
+        } else if (horizontal_mirror && vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_270_DEGREE;
+        } else if (horizontal_mirror) {
+            scan = VPE_SCAN_PATTERN_270_DEGREE_V_MIRROR;
+        } else {
+            scan = VPE_SCAN_PATTERN_90_DEGREE_V_MIRROR;
+        }
+        break;
+    case VPE_ROTATION_ANGLE_180:
+        if (!horizontal_mirror && !vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_180_DEGREE;
+        } else if (horizontal_mirror && vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_0_DEGREE;
+        } else if (horizontal_mirror) {
+            scan = VPE_SCAN_PATTERN_180_DEGREE_H_MIRROR;
+        } else {
+            scan = VPE_SCAN_PATTERN_0_DEGREE_H_MIRROR;
+        }
+        break;
+    case VPE_ROTATION_ANGLE_270:
+        if (!horizontal_mirror && !vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_270_DEGREE;
+        } else if (horizontal_mirror && vertical_mirror) {
+            scan = VPE_SCAN_PATTERN_90_DEGREE;
+        } else if (horizontal_mirror) {
+            scan = VPE_SCAN_PATTERN_90_DEGREE_V_MIRROR;
+        } else {
+            scan = VPE_SCAN_PATTERN_270_DEGREE_V_MIRROR;
+        }
+        break;
+    default:
+        scan = VPE_SCAN_PATTERN_0_DEGREE;
+        break;
+    }
+
+    return scan;
+}
+
+bool vpe_supported_linear_scan_pattern(enum vpe_scan_direction scan_dir)
+{
+    switch (scan_dir) {
+    case VPE_SCAN_PATTERN_90_DEGREE:
+    case VPE_SCAN_PATTERN_270_DEGREE:
+    case VPE_SCAN_PATTERN_90_DEGREE_V_MIRROR:
+    case VPE_SCAN_PATTERN_270_DEGREE_V_MIRROR:
+        return false;
+    case VPE_SCAN_PATTERN_0_DEGREE:
+    case VPE_SCAN_PATTERN_180_DEGREE:
+    case VPE_SCAN_PATTERN_0_DEGREE_H_MIRROR:
+    case VPE_SCAN_PATTERN_180_DEGREE_H_MIRROR:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool vpe_validate_hist_collection(struct vpe_stream *stream)
+{
+    uint16_t histIndex  = 0;
+    uint16_t valid_hist[hist_max_channel];
+    uint16_t hist_src   = 0;
+
+    memset(valid_hist, 0, sizeof(uint16_t) * hist_max_channel);
+    for (histIndex = 0; histIndex < hist_max_channel; histIndex++) {
+        if (stream->hist_params.hist_collection_param[histIndex].hist_types != VPE_HISTOGRAM_NONE) {
+            for (hist_src = 0; hist_src < hist_max_channel; hist_src++) {
+                if ( (stream->hist_params.hist_collection_param[histIndex].hist_types == channel_hist_allowed_mode[hist_src][0]) ||
+                     (stream->hist_params.hist_collection_param[histIndex].hist_types == channel_hist_allowed_mode[hist_src][1])) {
+                    valid_hist[hist_src]++;
+                    if (valid_hist[hist_src] > 1) {
+                        // two selected histograms set to the same source
+                        return false;
+                    }
+                }
+            }
+            if ( (histIndex > 0) &&
+                 (stream->hist_params.hist_collection_param[histIndex - 1].hist_types == VPE_HISTOGRAM_NONE)) {
+                return false; // the sequence of histogram cannot be "none, valid" or "valid, none, valid"
+            }                 // needs to be "valid, none, none" or "valid, valid, none" or valid all 3
+        }
+    }
+    return true;
+}
+
+enum vpe_status vpe_check_3dlut_compound(
+    struct vpe *vpe, const struct vpe_stream *stream, const struct vpe_build_param *param)
+{
+    struct vpe_priv *vpe_priv = container_of(vpe, struct vpe_priv, pub);
+
+    // not enabled, nothing to check, always ok
+    if (stream->lut_compound.enabled == false)
+        return VPE_STATUS_OK;
+
+    // no func ptr means no support at all, so cannot be enabled
+    if (!vpe_priv->resource.check_lut3d_compound)
+        return VPE_STATUS_LUT_COMPOUND_NOT_SUPPORTED;
+
+    return vpe_priv->resource.check_lut3d_compound(stream, param);
+}
+
+enum vpe_status vpe_check_histogram_support(struct vpe *vpe, const struct vpe_stream *stream)
+{
+    enum vpe_status result = VPE_STATUS_OK;
+
+    // not enabled, nothing to check, always ok
+    if (stream->hist_params.hist_dsets == false)
+        return VPE_STATUS_OK;
+
+    if (!vpe->caps->histogram_support) {
+        result = VPE_STATUS_HISTOGRAM_NOT_SUPPORTED;
+    }
+
+    return result;
+}

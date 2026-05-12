@@ -1,4 +1,4 @@
-/* Copyright 2022 Advanced Micro Devices, Inc.
+/* Copyright 2022-2025 Advanced Micro Devices, Inc.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -35,6 +35,18 @@ struct shaper_setup_out {
     int end_custom_0_6_10;
     int end_base_fixed_0_14;
 };
+
+enum vpe_shaper_index_mode vpe_get_shaper_index_mode(
+    uint32_t is_dma, enum lut_dimension lut_dim, enum lut_dimension lut_container_dim)
+{
+    // unitialized lut_container_dim will be treated as 33 dimension
+    if (is_dma && (lut_dim == LUT_DIM_17) &&
+        ((lut_container_dim == LUT_DIM_33) || (lut_container_dim == LUT_DIM_INVALID))) {
+        return SHAPER_INDEX_MODE_17IN33LUT;
+    } else {
+        return SHAPER_INDEX_MODE_DEFAULT;
+    }
+}
 
 static unsigned int vpe_computer_shaper_pq_14u(double x, struct fixed31_32 normalized_factor)
 {
@@ -216,6 +228,11 @@ enum vpe_status vpe_build_shaper(const struct vpe_shaper_setup_in *shaper_in,
     else if (!calculate_shaper_properties_variable_hdr_mult(shaper_in, &shaper_params))
         goto release;
 
+    if (shaper_in->index_mode == SHAPER_INDEX_MODE_17IN33LUT) {
+        normalized_factor = vpe_fixpt_mul_int(normalized_factor, 2);
+        d_norm /= 2;
+        shaper_params.end_base_fixed_0_14 /= 2;
+    }
     exp = shaper_params.exp_begin_raw;
 
     num_exp    = shaper_params.exp_end_raw - shaper_params.exp_begin_raw + 1;

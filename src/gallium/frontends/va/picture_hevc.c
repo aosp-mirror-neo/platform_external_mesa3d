@@ -28,7 +28,7 @@
 #include "util/macros.h"
 #include "util/u_qsort.h"
 #include "util/vl_rbsp.h"
-#include "vl/vl_zscan.h"
+#include "util/vl_zscan_data.h"
 #include "va_private.h"
 
 struct ref_cmp {
@@ -420,7 +420,9 @@ void vlVaDecoderHEVCBitstreamHeader(vlVaContext *context, vlVaBuffer *buf)
    /* We know the POCs for all LTRs from slice header, fill the LTR ref pic
     * set with them. */
    for (uint8_t i = 0; i < ltr_idx; i++) {
-      for (uint8_t j = 0; j < sizeof(pic->PicOrderCntVal); ++j) {
+      for (uint8_t j = 0; j < 15; ++j) {
+         if (!pic->ref[j])
+            continue;
          uint32_t refpoc = pic->PicOrderCntVal[j];
          if ((ltr_tmp[i].msb && ltr_tmp[i].poc == refpoc) ||
              (!ltr_tmp[i].msb && ltr_tmp[i].poc == refpoc % max_poc)) {

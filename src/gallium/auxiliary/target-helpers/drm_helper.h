@@ -51,6 +51,8 @@ const struct drm_driver_descriptor descriptor_name = {         \
 #undef GALLIUM_PANFROST
 #undef GALLIUM_LIMA
 #undef GALLIUM_ASAHI
+#undef GALLIUM_ROCKET
+#undef GALLIUM_ETHOSU
 #endif
 
 #ifdef GALLIUM_I915
@@ -90,7 +92,8 @@ pipe_iris_create_screen(int fd, const struct pipe_screen_config *config)
 const driOptionDescription iris_driconf[] = {
       #include "iris/driinfo_iris.h"
 };
-DRM_DRIVER_DESCRIPTOR(iris, iris_driconf, ARRAY_SIZE(iris_driconf))
+DRM_DRIVER_DESCRIPTOR(iris, iris_driconf, ARRAY_SIZE(iris_driconf),
+                      .probe_nctx = iris_drm_probe_nctx)
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(iris)
@@ -111,7 +114,8 @@ pipe_crocus_create_screen(int fd, const struct pipe_screen_config *config)
 const driOptionDescription crocus_driconf[] = {
       #include "crocus/driinfo_crocus.h"
 };
-DRM_DRIVER_DESCRIPTOR(crocus, crocus_driconf, ARRAY_SIZE(crocus_driconf))
+DRM_DRIVER_DESCRIPTOR(crocus, crocus_driconf, ARRAY_SIZE(crocus_driconf),
+                      .probe_nctx = crocus_drm_probe_nctx)
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(crocus)
 #endif
@@ -417,7 +421,7 @@ static struct pipe_screen *
 pipe_zink_create_screen(int fd, const struct pipe_screen_config *config)
 {
    struct pipe_screen *screen;
-   screen = zink_drm_create_screen(fd, config);
+   screen = zink_drm_create_screen(fd, config, NULL);
    return screen ? debug_screen_wrap(screen) : NULL;
 }
 
@@ -428,6 +432,54 @@ DRM_DRIVER_DESCRIPTOR(zink, zink_driconf, ARRAY_SIZE(zink_driconf))
 
 #else
 DRM_DRIVER_DESCRIPTOR_STUB(zink)
+#endif
+
+#ifdef GALLIUM_ROCKET
+#include "rocket/drm/rkt_drm_public.h"
+
+static struct pipe_screen *
+pipe_rknpu_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = rkt_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+DRM_DRIVER_DESCRIPTOR(rknpu, NULL, 0)
+
+static struct pipe_screen *
+pipe_rocket_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = rkt_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+DRM_DRIVER_DESCRIPTOR(rocket, NULL, 0)
+
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(rknpu)
+DRM_DRIVER_DESCRIPTOR_STUB(rocket)
+#endif
+
+#ifdef GALLIUM_ETHOSU
+#include "ethosu/drm/ethosu_drm_public.h"
+
+static struct pipe_screen *
+pipe_ethosu_create_screen(int fd, const struct pipe_screen_config *config)
+{
+   struct pipe_screen *screen;
+
+   screen = ethosu_drm_screen_create(fd, config);
+   return screen ? debug_screen_wrap(screen) : NULL;
+}
+
+DRM_DRIVER_DESCRIPTOR(ethosu, NULL, 0)
+
+#else
+DRM_DRIVER_DESCRIPTOR_STUB(ethosu)
 #endif
 
 #ifdef GALLIUM_KMSRO
@@ -456,6 +508,9 @@ const driOptionDescription kmsro_driconf[] = {
 #endif
 #ifdef GALLIUM_LIMA
       #include "lima/driinfo_lima.h"
+#endif
+#ifdef GALLIUM_ZINK
+      #include "zink/driinfo_zink.h"
 #endif
 };
 DRM_DRIVER_DESCRIPTOR(kmsro, kmsro_driconf, ARRAY_SIZE(kmsro_driconf))

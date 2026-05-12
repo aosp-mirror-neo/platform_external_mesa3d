@@ -453,7 +453,7 @@ lower_instr(struct ir3 *ir, struct ir3_block **block, struct ir3_instruction *in
          branch_flags = instr->flags & IR3_INSTR_NEEDS_HELPERS;
          break;
       default:
-         unreachable("bad opcode");
+         UNREACHABLE("bad opcode");
       }
 
       struct ir3_block *then_block =
@@ -497,7 +497,7 @@ lower_instr(struct ir3 *ir, struct ir3_block **block, struct ir3_instruction *in
       }
 
       default:
-         unreachable("bad opcode");
+         UNREACHABLE("bad opcode");
       }
    }
 
@@ -697,14 +697,14 @@ lower_scan_reduce(struct nir_builder *b, nir_instr *instr, void *data)
       return nir_exclusive_scan_clusters_ir3(b, inclusive, exclusive,
                                              .reduction_op = op);
    default:
-      unreachable("filtered intrinsic");
+      UNREACHABLE("filtered intrinsic");
    }
 }
 
 bool
 ir3_nir_opt_subgroups(nir_shader *nir, struct ir3_shader_variant *v)
 {
-   if (!v->compiler->has_getfiberid)
+   if (!v->compiler->info->props.has_getfiberid)
       return false;
 
    return nir_shader_lower_instructions(nir, filter_scan_reduce,
@@ -712,13 +712,8 @@ ir3_nir_opt_subgroups(nir_shader *nir, struct ir3_shader_variant *v)
 }
 
 bool
-ir3_nir_lower_subgroups_filter(const nir_instr *instr, const void *data)
+ir3_nir_lower_subgroups_filter(const nir_intrinsic_instr *intrin, const void *data)
 {
-   if (instr->type != nir_instr_type_intrinsic)
-      return false;
-
-   nir_intrinsic_instr *intrin = nir_instr_as_intrinsic(instr);
-
    const struct ir3_compiler *compiler = data;
 
    switch (intrin->intrinsic) {
@@ -726,7 +721,7 @@ ir3_nir_lower_subgroups_filter(const nir_instr *instr, const void *data)
       if (nir_intrinsic_cluster_size(intrin) == 1) {
          return true;
       }
-      if (nir_intrinsic_cluster_size(intrin) > 0 && !compiler->has_getfiberid) {
+      if (nir_intrinsic_cluster_size(intrin) > 0 && !compiler->info->props.has_getfiberid) {
          return true;
       }
       FALLTHROUGH;
@@ -746,7 +741,7 @@ ir3_nir_lower_subgroups_filter(const nir_instr *instr, const void *data)
          return intrin->def.num_components > 1;
       }
    case nir_intrinsic_read_invocation:
-      return !compiler->has_movs;
+      return !compiler->info->props.has_movs;
    default:
       return true;
    }
@@ -786,7 +781,7 @@ shuffle_to_uniform(nir_builder *b, nir_intrinsic_op op, struct nir_def *val,
    case nir_intrinsic_shuffle_xor:
       return nir_shuffle_xor_uniform_ir3(b, val, id);
    default:
-      unreachable("filtered intrinsic");
+      UNREACHABLE("filtered intrinsic");
    }
 }
 

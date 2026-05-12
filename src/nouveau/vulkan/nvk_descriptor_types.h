@@ -28,18 +28,10 @@ PRAGMA_DIAGNOSTIC_PUSH
 PRAGMA_DIAGNOSTIC_ERROR(-Wpadded)
 struct nvk_storage_image_descriptor {
    unsigned image_index:20;
-   unsigned sw_log2:2;
-   unsigned sh_log2:2;
-   unsigned _pad:8;
-
-   /* A 32-bit integer which acts as a map from sample index to x/y position
-    * within a pixel.  Each nibble is a sample with x in the low 2 bits and y
-    * in the high 2 bits.
-    */
-   unsigned sample_map:32;
+   unsigned _pad:12;
 };
 PRAGMA_DIAGNOSTIC_POP
-static_assert(sizeof(struct nvk_storage_image_descriptor) == 8,
+static_assert(sizeof(struct nvk_storage_image_descriptor) == 4,
               "nvk_storage_image_descriptor has no holes");
 
 struct nvk_kepler_storage_image_descriptor {
@@ -122,6 +114,7 @@ union nvk_buffer_descriptor {
    struct nvk_buffer_address addr;
    struct nvk_bindless_cbuf cbuf;
    struct nvk_bindless_cbuf_2 cbuf2;
+   uint32_t values[4];
 };
 
 static inline bool
