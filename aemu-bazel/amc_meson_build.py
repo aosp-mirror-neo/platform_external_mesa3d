@@ -66,7 +66,7 @@ def main():
         if args.shim:
             cmd += ["--shim", str(Path(args.shim).resolve())]
         cmd.append(str(output_dir))
-        
+
         try:
             subprocess.check_call(cmd, cwd=meson_project_dir)
         except subprocess.CalledProcessError as e:
