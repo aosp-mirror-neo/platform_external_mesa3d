@@ -58,7 +58,9 @@
 struct pipe_sampler_view *
 st_update_single_texture(struct st_context *st,
                          GLuint texUnit, bool glsl130_or_later,
-                         bool ignore_srgb_decode)
+                         bool ignore_srgb_decode,
+                         unsigned num_norelease_views,
+                         const struct pipe_sampler_view **norelease_views)
 {
    struct gl_context *ctx = st->ctx;
    struct gl_texture_object *texObj;
@@ -69,7 +71,7 @@ st_update_single_texture(struct st_context *st,
    GLenum target = texObj->Target;
 
    if (unlikely(target == GL_TEXTURE_BUFFER))
-      return st_get_buffer_sampler_view_from_stobj(st, texObj);
+      return st_get_buffer_sampler_view_from_stobj(st, texObj, num_norelease_views, norelease_views);
 
    if (!st_finalize_texture(ctx, st->pipe, texObj, 0) || !texObj->pt)
       return NULL; /* out of mem */
@@ -81,14 +83,15 @@ st_update_single_texture(struct st_context *st,
    return st_get_texture_sampler_view_from_stobj(st, texObj,
                                                  _mesa_get_samplerobj(ctx, texUnit),
                                                  glsl130_or_later,
-                                                 ignore_srgb_decode);
+                                                 ignore_srgb_decode,
+                                                 num_norelease_views, norelease_views);
 }
 
 
 
 unsigned
 st_get_sampler_views(struct st_context *st,
-                     enum pipe_shader_type shader_stage,
+                     mesa_shader_stage shader_stage,
                      const struct gl_program *prog,
                      struct pipe_sampler_view **sampler_views,
                      unsigned *extra_sampler_views)
@@ -147,7 +150,9 @@ st_get_sampler_views(struct st_context *st,
        */
       sampler_views[unit] =
          st_update_single_texture(st, prog->SamplerUnits[unit], glsl130,
-                                  texel_fetch_samplers & bit);
+                                  texel_fetch_samplers & bit,
+                                  /* prevent any of these views from being released */
+                                  unit, (const struct pipe_sampler_view **)sampler_views);
    }
 
    /* For any external samplers with multiplaner YUV, stuff the additional
@@ -207,6 +212,17 @@ st_get_sampler_views(struct st_context *st,
             /* no additional views needed */
             break;
 
+         /* we need one additional R8G8 view: */
+         tmpl.format = PIPE_FORMAT_RG88_UNORM;
+         tmpl.swizzle_g = PIPE_SWIZZLE_Y;   /* tmpl from Y plane is R8 */
+         extra = u_bit_scan(&free_slots);
+         sampler_views[extra] =
+               pipe->create_sampler_view(pipe, stObj->pt->next, &tmpl);
+         (*extra_sampler_views) |= 1 << extra;
+         break;
+      case PIPE_FORMAT_NV61:
+      case PIPE_FORMAT_NV24:
+      case PIPE_FORMAT_NV42:
          /* we need one additional R8G8 view: */
          tmpl.format = PIPE_FORMAT_RG88_UNORM;
          tmpl.swizzle_g = PIPE_SWIZZLE_Y;   /* tmpl from Y plane is R8 */
@@ -299,6 +315,11 @@ st_get_sampler_views(struct st_context *st,
       case PIPE_FORMAT_Y210:
       case PIPE_FORMAT_Y212:
       case PIPE_FORMAT_Y216:
+         if (stObj->pt->format == PIPE_FORMAT_R16G16_R16B16_422_UNORM ||
+             stObj->pt->format == PIPE_FORMAT_X6R10X6G10_X6R10X6B10_422_UNORM)
+            /* no additional views needed */
+            break;
+
          /* we need one additional R16G16B16A16 view: */
          tmpl.format = PIPE_FORMAT_R16G16B16A16_UNORM;
          tmpl.swizzle_b = PIPE_SWIZZLE_Z;
@@ -320,7 +341,7 @@ st_get_sampler_views(struct st_context *st,
 
 static void
 update_textures(struct st_context *st,
-                enum pipe_shader_type shader_stage,
+                mesa_shader_stage shader_stage,
                 const struct gl_program *prog)
 {
    struct pipe_sampler_view *sampler_views[PIPE_MAX_SAMPLERS];
@@ -351,7 +372,7 @@ st_update_vertex_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->Const.Program[MESA_SHADER_VERTEX].MaxTextureImageUnits > 0) {
-      update_textures(st, PIPE_SHADER_VERTEX,
+      update_textures(st, MESA_SHADER_VERTEX,
                             ctx->VertexProgram._Current);
    }
 }
@@ -362,7 +383,7 @@ st_update_fragment_textures(struct st_context *st)
 {
    const struct gl_context *ctx = st->ctx;
 
-   update_textures(st, PIPE_SHADER_FRAGMENT,
+   update_textures(st, MESA_SHADER_FRAGMENT,
                          ctx->FragmentProgram._Current);
 }
 
@@ -373,7 +394,7 @@ st_update_geometry_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->GeometryProgram._Current) {
-      update_textures(st, PIPE_SHADER_GEOMETRY,
+      update_textures(st, MESA_SHADER_GEOMETRY,
                             ctx->GeometryProgram._Current);
    }
 }
@@ -385,7 +406,7 @@ st_update_tessctrl_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->TessCtrlProgram._Current) {
-      update_textures(st, PIPE_SHADER_TESS_CTRL,
+      update_textures(st, MESA_SHADER_TESS_CTRL,
                             ctx->TessCtrlProgram._Current);
    }
 }
@@ -397,7 +418,7 @@ st_update_tesseval_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->TessEvalProgram._Current) {
-      update_textures(st, PIPE_SHADER_TESS_EVAL,
+      update_textures(st, MESA_SHADER_TESS_EVAL,
                             ctx->TessEvalProgram._Current);
    }
 }
@@ -409,7 +430,25 @@ st_update_compute_textures(struct st_context *st)
    const struct gl_context *ctx = st->ctx;
 
    if (ctx->ComputeProgram._Current) {
-      update_textures(st, PIPE_SHADER_COMPUTE,
+      update_textures(st, MESA_SHADER_COMPUTE,
                             ctx->ComputeProgram._Current);
    }
+}
+
+void
+st_update_task_textures(struct st_context *st)
+{
+   const struct gl_context *ctx = st->ctx;
+
+   if (ctx->TaskProgram._Current)
+      update_textures(st, MESA_SHADER_TASK, ctx->TaskProgram._Current);
+}
+
+void
+st_update_mesh_textures(struct st_context *st)
+{
+   const struct gl_context *ctx = st->ctx;
+
+   if (ctx->MeshProgram._Current)
+      update_textures(st, MESA_SHADER_MESH, ctx->MeshProgram._Current);
 }

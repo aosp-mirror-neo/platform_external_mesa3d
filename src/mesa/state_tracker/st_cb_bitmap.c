@@ -140,7 +140,7 @@ st_make_bitmap_texture(struct gl_context *ctx, GLsizei width, GLsizei height,
     * Create texture to hold bitmap pattern.
     */
    pt = st_texture_create(st, st->internal_target, st->bitmap.tex_format,
-                          0, width, height, 1, 1, 0,
+                          0, width, height, 1, 1, 0, PIPE_RESOURCE_FLAG_MAP_UNSYNCHRONIZED,
                           PIPE_BIND_SAMPLER_VIEW, false,
                           PIPE_COMPRESSION_FIXED_RATE_NONE);
    if (!pt) {
@@ -149,11 +149,11 @@ st_make_bitmap_texture(struct gl_context *ctx, GLsizei width, GLsizei height,
    }
 
    dest = pipe_texture_map(st->pipe, pt, 0, 0,
-                            PIPE_MAP_WRITE,
+                            PIPE_MAP_WRITE | PIPE_MAP_UNSYNCHRONIZED,
                             0, 0, width, height, &transfer);
 
    /* Put image into texture transfer */
-   memset(dest, 0xff, height * transfer->stride);
+   memset(dest, 0xff, height * (size_t)transfer->stride);
    unpack_bitmap(st, 0, 0, width, height, unpack, bitmap,
                  dest, transfer->stride);
 
@@ -204,12 +204,8 @@ setup_render_state(struct gl_context *ctx,
       COPY_4V(ctx->Current.Attrib[VERT_ATTRIB_COLOR0], colorSave);
    }
 
-   cso_save_state(cso, (CSO_BIT_RASTERIZER |
-                        CSO_BIT_FRAGMENT_SAMPLERS |
-                        CSO_BIT_VIEWPORT |
-                        CSO_BIT_STREAM_OUTPUTS |
-                        CSO_BIT_VERTEX_ELEMENTS |
-                        CSO_BITS_ALL_SHADERS));
+   /* Save only states that have no st_atom — they can't be re-derived. */
+   cso_save_state(cso, CSO_BIT_STREAM_OUTPUTS);
 
 
    /* rasterizer state: just scissor */
@@ -226,6 +222,7 @@ setup_render_state(struct gl_context *ctx,
    cso_set_tessctrl_shader_handle(cso, NULL);
    cso_set_tesseval_shader_handle(cso, NULL);
    cso_set_geometry_shader_handle(cso, NULL);
+   cso_set_mesh_shader_handle(cso, NULL);
 
    /* user samplers, plus our bitmap sampler */
    {
@@ -237,7 +234,7 @@ setup_render_state(struct gl_context *ctx,
          samplers[i] = &st->state.frag_samplers[i];
       }
       samplers[fpv->bitmap_sampler] = &st->bitmap.sampler;
-      cso_set_samplers(cso, PIPE_SHADER_FRAGMENT, num,
+      cso_set_samplers(cso, MESA_SHADER_FRAGMENT, num,
                        (const struct pipe_sampler_state **) samplers);
    }
 
@@ -246,15 +243,15 @@ setup_render_state(struct gl_context *ctx,
       unsigned extra_sampler_views = 0;
       struct pipe_sampler_view *sampler_views[PIPE_MAX_SAMPLERS];
       unsigned num_views =
-         st_get_sampler_views(st, PIPE_SHADER_FRAGMENT, fp, sampler_views, &extra_sampler_views);
+         st_get_sampler_views(st, MESA_SHADER_FRAGMENT, fp, sampler_views, &extra_sampler_views);
 
       num_views = MAX2(fpv->bitmap_sampler + 1, num_views);
       sampler_views[fpv->bitmap_sampler] = sv;
-      pipe->set_sampler_views(pipe, PIPE_SHADER_FRAGMENT, 0, num_views, 0,
+      pipe->set_sampler_views(pipe, MESA_SHADER_FRAGMENT, 0, num_views, 0,
                               sampler_views);
-      st->state.num_sampler_views[PIPE_SHADER_FRAGMENT] = num_views;
-
-      for (unsigned i = 0; i < num_views; i++)
+      st->state.num_sampler_views[MESA_SHADER_FRAGMENT] = num_views;
+      /* only free YUV samplerviews */
+      u_foreach_bit(i, extra_sampler_views)
          pipe->sampler_view_release(pipe, sampler_views[i]);
    }
 
@@ -279,15 +276,26 @@ restore_render_state(struct gl_context *ctx)
    struct st_context *st = st_context(ctx);
    struct cso_context *cso = st->cso_context;
 
-   /* Unbind all because st/mesa won't do it if the current shader doesn't
-    * use them.
+   /* Unbind sampler views that were bound directly on the pipe.
+    * Restore atomless states (stream outputs) via CSO.
     */
    cso_restore_state(cso, CSO_UNBIND_FS_SAMPLERVIEWS);
-   st->state.num_sampler_views[PIPE_SHADER_FRAGMENT] = 0;
+   st->state.num_sampler_views[MESA_SHADER_FRAGMENT] = 0;
 
-   ctx->Array.NewVertexElements = true;
-   ctx->NewDriverState |= ST_NEW_VERTEX_ARRAYS |
-                          ST_NEW_FS_SAMPLER_VIEWS;
+   /* Invalidate all states this meta-op modified. The atoms will
+    * re-derive them from GL state before the next draw.
+    */
+   st_context_invalidate_state(st,
+                               ST_INVALIDATE_RASTERIZER |
+                               ST_INVALIDATE_FS_SAMPLERS |
+                               ST_INVALIDATE_VIEWPORT |
+                               ST_INVALIDATE_VERTEX_BUFFERS |
+                               ST_INVALIDATE_VS_STATE |
+                               ST_INVALIDATE_FS_STATE |
+                               ST_INVALIDATE_GS_STATE |
+                               ST_INVALIDATE_TCS_STATE |
+                               ST_INVALIDATE_TES_STATE |
+                               ST_INVALIDATE_MESH_STATE);
 }
 
 
@@ -347,7 +355,7 @@ draw_bitmap_quad(struct gl_context *ctx, GLint x, GLint y, GLfloat z,
    restore_render_state(ctx);
 
    /* We uploaded modified constants, need to invalidate them. */
-   ctx->NewDriverState |= ST_NEW_FS_CONSTANTS;
+   ST_SET_STATE(ctx->NewDriverState, ST_NEW_FS_CONSTANTS);
 }
 
 
@@ -372,7 +380,7 @@ reset_cache(struct st_context *st)
    cache->texture = st_texture_create(st, st->internal_target,
                                       st->bitmap.tex_format, 0,
                                       BITMAP_CACHE_WIDTH, BITMAP_CACHE_HEIGHT,
-                                      1, 1, 0,
+                                      1, 1, 0, PIPE_RESOURCE_FLAG_MAP_UNSYNCHRONIZED,
                                       PIPE_BIND_SAMPLER_VIEW,
                                       false,
                                       PIPE_COMPRESSION_FIXED_RATE_NONE);
@@ -415,7 +423,7 @@ create_cache_trans(struct st_context *st)
     * Subsequent glBitmap calls will write into the texture image.
     */
    cache->buffer = pipe_texture_map(pipe, cache->texture, 0, 0,
-                                     PIPE_MAP_WRITE, 0, 0,
+                                     PIPE_MAP_WRITE | PIPE_MAP_UNSYNCHRONIZED, 0, 0,
                                      BITMAP_CACHE_WIDTH,
                                      BITMAP_CACHE_HEIGHT, &cache->trans);
 
@@ -467,6 +475,7 @@ st_flush_bitmap_cache(struct st_context *st)
                           cache->fp,
                           cache->scissor_enabled,
                           cache->clamp_frag_color);
+         pipe->sampler_view_release(pipe, sv);
       }
 
       /* release/free the texture */
@@ -639,7 +648,11 @@ st_Bitmap(struct gl_context *ctx, GLint x, GLint y,
     * for bitmap drawing uses no constants and the FS constants are
     * explicitly uploaded in the draw_bitmap_quad() function.
     */
-   st_validate_state(st, ST_PIPELINE_META_STATE_MASK & ~ST_NEW_CONSTANTS);
+   ST_PIPELINE_META_STATE_MASK(mask);
+   st_state_bitset constants = {0};
+   ST_SET_SHADER_STATES(constants, CONSTANTS);
+   BITSET_ANDNOT(mask, mask, constants);
+   st_validate_state(st, mask);
 
    struct pipe_sampler_view *view = NULL;
 

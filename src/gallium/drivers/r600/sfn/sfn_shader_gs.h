@@ -37,15 +37,11 @@ private:
 
    bool emit_indirect_vertex_at_index(nir_intrinsic_instr *instr);
 
-   bool emit_load_per_vertex_input_direct(nir_intrinsic_instr *instr);
-
-   bool emit_load_per_vertex_input_indirect(nir_intrinsic_instr *instr);
-
-   bool load_per_vertex_input_at_addr(nir_intrinsic_instr *instr, PRegister addr);
+   bool emit_load_per_vertex_input(nir_intrinsic_instr *instr);
 
    bool load_input(UNUSED nir_intrinsic_instr *intr) override
    {
-      unreachable("load_input must be lowered in GS");
+      UNREACHABLE("load_input must be lowered in GS");
    };
    bool store_output(nir_intrinsic_instr *instr) override;
    bool emit_vertex(nir_intrinsic_instr *instr, bool cut);

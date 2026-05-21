@@ -19,7 +19,6 @@
 #include "util/u_simple_shaders.h"
 #include "util/u_upload_mgr.h"
 #include "util/u_math.h"
-#include "vl/vl_decoder.h"
 #include "vl/vl_video_buffer.h"
 #include "radeon_video.h"
 #include "radeon_uvd.h"
@@ -52,8 +51,8 @@ static void r600_destroy_context(struct pipe_context *context)
 
 	if (rctx->append_fence)
 		pipe_resource_reference((struct pipe_resource**)&rctx->append_fence, NULL);
-	for (sh = 0; sh < PIPE_SHADER_TYPES; sh++) {
-		rctx->b.b.set_constant_buffer(&rctx->b.b, sh, R600_BUFFER_INFO_CONST_BUFFER, false, NULL);
+	for (sh = 0; sh < MESA_SHADER_STAGES; sh++) {
+		rctx->b.b.set_constant_buffer(&rctx->b.b, sh, R600_BUFFER_INFO_CONST_BUFFER, NULL);
 		free(rctx->driver_consts[sh].constants);
 	}
 
@@ -75,7 +74,6 @@ static void r600_destroy_context(struct pipe_context *context)
 	if (rctx->custom_blend_fastclear) {
 		rctx->b.b.delete_blend_state(&rctx->b.b, rctx->custom_blend_fastclear);
 	}
-	util_framebuffer_init(context, NULL, rctx->framebuffer.fb_cbufs, &rctx->framebuffer.fb_zsbuf);
 	util_unreference_framebuffer_state(&rctx->framebuffer.state);
 
 	if (rctx->gs_rings.gsvs_ring.buffer)
@@ -84,9 +82,9 @@ static void r600_destroy_context(struct pipe_context *context)
 	if (rctx->gs_rings.esgs_ring.buffer)
 		pipe_resource_reference(&rctx->gs_rings.esgs_ring.buffer, NULL);
 
-	for (sh = 0; sh < PIPE_SHADER_TYPES; ++sh)
+	for (sh = 0; sh < MESA_SHADER_STAGES; ++sh)
 		for (i = 0; i < PIPE_MAX_CONSTANT_BUFFERS; ++i)
-			rctx->b.b.set_constant_buffer(context, sh, i, false, NULL);
+			rctx->b.b.set_constant_buffer(context, sh, i, NULL);
 
 	if (rctx->blitter) {
 		util_blitter_destroy(rctx->blitter);
@@ -120,6 +118,14 @@ static void r600_destroy_context(struct pipe_context *context)
 			pipe_resource_reference(&rctx->atomic_buffer_state.buffer[i].buffer, NULL);
 		break;
 	default:
+		if (rctx->b.r600_pre_eg_cbzs) {
+			for (unsigned i = 0; i < PIPE_MAX_COLOR_BUFS; i++) {
+				r600_resource_reference(&rctx->b.r600_pre_eg_cbzs->cb_surface[i].cb_buffer_fmask, NULL);
+				r600_resource_reference(&rctx->b.r600_pre_eg_cbzs->cb_surface[i].cb_buffer_cmask, NULL);
+			}
+
+			FREE(rctx->b.r600_pre_eg_cbzs);
+		}
 		break;
 	}
 
@@ -153,12 +159,9 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen,
 	if (rscreen->b.info.ip[AMD_IP_UVD].num_queues) {
 		rctx->b.b.create_video_codec = r600_uvd_create_decoder;
 		rctx->b.b.create_video_buffer = r600_video_buffer_create;
-	} else {
-		rctx->b.b.create_video_codec = vl_create_decoder;
-		rctx->b.b.create_video_buffer = vl_video_buffer_create;
 	}
 
-	if (getenv("R600_TRACE"))
+	if (os_get_option("R600_TRACE"))
 		rctx->is_debug = true;
 	r600_init_common_state_functions(rctx);
 
@@ -176,6 +179,9 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen,
 					   rctx->b.family == CHIP_RS780 ||
 					   rctx->b.family == CHIP_RS880 ||
 					   rctx->b.family == CHIP_RV710);
+
+		rctx->b.r600_pre_eg_cbzs = CALLOC_STRUCT(r600_pre_eg_cbzs);
+		rctx->setup_buffer_constants = r600_setup_buffer_constants;
 		break;
 	case EVERGREEN:
 	case CAYMAN:
@@ -196,6 +202,9 @@ static struct pipe_context *r600_create_context(struct pipe_screen *screen,
 
 		rctx->append_fence = pipe_buffer_create(rctx->b.b.screen, PIPE_BIND_CUSTOM,
 							 PIPE_USAGE_DEFAULT, 32);
+		rctx->setup_buffer_constants = rctx->b.family >= CHIP_PALM ?
+		                               r600_palm_to_aruba_setup_buffer_constants :
+		                               r600_cedar_to_hemlock_setup_buffer_constants;
 		break;
 	default:
 		R600_ERR("Unsupported gfx level %d.\n", rctx->b.gfx_level);
@@ -264,14 +273,14 @@ fail:
 
 static void r600_init_shader_caps(struct r600_screen *rscreen)
 {
-	for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+	for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
 		struct pipe_shader_caps *caps =
 			(struct pipe_shader_caps *)&rscreen->b.b.shader_caps[i];
 
 		switch (i) {
-		case PIPE_SHADER_TESS_CTRL:
-		case PIPE_SHADER_TESS_EVAL:
-		case PIPE_SHADER_COMPUTE:
+		case MESA_SHADER_TESS_CTRL:
+		case MESA_SHADER_TESS_EVAL:
+		case MESA_SHADER_COMPUTE:
 			if (rscreen->b.family < CHIP_CEDAR)
 				continue;
 			break;
@@ -284,11 +293,11 @@ static void r600_init_shader_caps(struct r600_screen *rscreen)
 		caps->max_tex_instructions =
 		caps->max_tex_indirections = 16384;
 		caps->max_control_flow_depth = 32;
-		caps->max_inputs = i == PIPE_SHADER_VERTEX ? 16 : 32;
-		caps->max_outputs = i == PIPE_SHADER_FRAGMENT ? 8 : 32;
+		caps->max_inputs = i == MESA_SHADER_VERTEX ? 16 : 32;
+		caps->max_outputs = i == MESA_SHADER_FRAGMENT ? 8 : 32;
 		caps->max_temps = 256; /* Max native temporaries. */
 
-		caps->max_const_buffer0_size = i == PIPE_SHADER_COMPUTE ?
+		caps->max_const_buffer0_size = i == MESA_SHADER_COMPUTE ?
 			MIN2(rscreen->b.b.compute_caps.max_mem_alloc_size, INT_MAX) :
 			R600_MAX_CONST_BUFFER_SIZE;
 
@@ -307,7 +316,7 @@ static void r600_init_shader_caps(struct r600_screen *rscreen)
 		caps->max_shader_buffers =
 		caps->max_shader_images =
 			rscreen->b.family >= CHIP_CEDAR &&
-			(i == PIPE_SHADER_FRAGMENT || i == PIPE_SHADER_COMPUTE) ? 8 : 0;
+			(i == MESA_SHADER_FRAGMENT || i == MESA_SHADER_COMPUTE) ? 8 : 0;
 
 		if (rscreen->b.family >= CHIP_CEDAR &&
 		    rscreen->has_atomics) {
@@ -395,6 +404,7 @@ static void r600_init_screen_caps(struct r600_screen *rscreen)
 	enum radeon_family family = rscreen->b.family;
 
 	/* Supported features (boolean caps). */
+	caps->prefer_real_buffer_in_constbuf0 = true;
 	caps->npot_textures = true;
 	caps->mixed_framebuffer_sizes = true;
 	caps->mixed_color_depth_bits = true;
@@ -440,7 +450,8 @@ static void r600_init_screen_caps(struct r600_screen *rscreen)
 	caps->surface_reinterpret_blocks = true;
 	caps->compressed_surface_reinterpret_blocks_layered = true;
 	caps->query_memory_info = true;
-	caps->query_so_overflow = family >= CHIP_CEDAR;
+	caps->query_so_overflow =
+	caps->texture_shadow_lod = family >= CHIP_CEDAR;
 	caps->framebuffer_no_attachment = true;
 	caps->legacy_math_rules = true;
 	caps->can_bind_const_buffer_as_vertex = true;
@@ -496,6 +507,7 @@ static void r600_init_screen_caps(struct r600_screen *rscreen)
 	caps->sampler_view_target =
 	caps->shader_pack_half_float =
 	caps->shader_clock =
+	caps->shader_realtime_clock =
 	caps->shader_array_components =
 	caps->query_buffer_object =
 	caps->image_store_formatted =
@@ -744,7 +756,7 @@ struct pipe_screen *r600_screen_create(struct radeon_winsys *ws,
 	templ.format = PIPE_FORMAT_R8G8B8A8_UNORM;
 	templ.usage = PIPE_USAGE_DEFAULT;
 
-	struct r600_resource *res = r600_resource(rscreen->screen.resource_create(&rscreen->screen, &templ));
+	struct r600_resource *res = r600_as_resource(rscreen->screen.resource_create(&rscreen->screen, &templ));
 	unsigned char *map = ws->buffer_map(res->buf, NULL, PIPE_MAP_WRITE);
 
 	memset(map, 0, 256);

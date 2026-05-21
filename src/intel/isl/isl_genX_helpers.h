@@ -53,7 +53,7 @@ isl_encode_halign(uint8_t halign)
    case   4: return HALIGN_4;
    case   8: return HALIGN_8;
 #endif
-   default: unreachable("Invalid halign");
+   default: UNREACHABLE("Invalid halign");
    }
 }
 
@@ -69,7 +69,7 @@ isl_encode_valign(uint8_t valign)
    case   2: return VALIGN_2;
    case   4: return VALIGN_4;
 #endif
-   default: unreachable("Invalid valign");
+   default: UNREACHABLE("Invalid valign");
    }
 }
 
@@ -81,6 +81,13 @@ isl_encode_valign(uint8_t valign)
 UNUSED static struct isl_extent3d
 isl_get_image_alignment(const struct isl_surf *surf)
 {
+   if (surf->levels == 1 &&
+       surf->logical_level0_px.depth == 1 &&
+       surf->logical_level0_px.array_len == 1) {
+      /* This alignment value is unused for single slice surfaces. */
+      return isl_extent3d(GFX_VERx10 >= 125 ? 128 : 4, 4, 1);
+   }
+
    if (GFX_VERx10 >= 125) {
       if (isl_tiling_is_64(surf->tiling)) {
          /* The hardware ignores the alignment values. Anyway, the surface's
@@ -136,7 +143,7 @@ isl_get_qpitch(const struct isl_surf *surf)
 {
    switch (surf->dim_layout) {
    default:
-      unreachable("Bad isl_surf_dim");
+      UNREACHABLE("Bad isl_surf_dim");
    case ISL_DIM_LAYOUT_GFX4_2D:
       if (GFX_VER >= 9) {
          if (surf->dim == ISL_SURF_DIM_3D && surf->tiling == ISL_TILING_W) {
@@ -245,6 +252,10 @@ isl_get_render_compression_format(enum isl_format format)
    case ISL_FORMAT_B8G8R8A8_UNORM_SRGB:
    case ISL_FORMAT_B8G8R8A8_UNORM:
    case ISL_FORMAT_B8G8R8X8_UNORM:
+   case ISL_FORMAT_YCRCB_NORMAL:
+   case ISL_FORMAT_YCRCB_SWAPUVY:
+   case ISL_FORMAT_YCRCB_SWAPUV:
+   case ISL_FORMAT_YCRCB_SWAPY:
       return CMF_R8_G8_B8_A8;
    case ISL_FORMAT_R10G10B10A2_UNORM:
    case ISL_FORMAT_R10G10B10A2_UNORM_SRGB:
@@ -331,7 +342,7 @@ isl_get_render_compression_format(enum isl_format format)
    case ISL_FORMAT_R9G9B9E5_SHAREDEXP:
       return CMF_R11_G11_B10;
    default:
-      unreachable("Unsupported render compression format!");
+      UNREACHABLE("Unsupported render compression format!");
       return 0;
    }
 }
@@ -433,7 +444,7 @@ isl_get_render_compression_format(enum isl_format format)
    case ISL_FORMAT_R8_SINT:
       return 0x19;
    default:
-      unreachable("Unsupported render compression format!");
+      UNREACHABLE("Unsupported render compression format!");
       return 0;
    }
 }

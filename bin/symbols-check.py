@@ -43,6 +43,7 @@ PLATFORM_SYMBOLS = [
     '__cxa_uncaught_exceptions',
     '__cxa_unexpected_handler',
     '__deregister_frame_info',
+    '__deregister_frame_info_bases',
     '__dynamic_cast',
     '__emutls_get_address',
     '__end__',
@@ -51,6 +52,7 @@ PLATFORM_SYMBOLS = [
     '__odr_asan._glapi_Context',
     '__odr_asan._glapi_Dispatch',
     '__register_frame_info',
+    '__register_frame_info_bases',
     '_bss_end__',
     '_edata',
     '_end',
@@ -78,7 +80,7 @@ def get_symbols_nm(nm, lib):
         if line.startswith(' '):
             continue
         fields = line.split()
-        if len(fields) == 2 and fields[1] == 'U':
+        if len(fields) >= 2 and fields[1] == 'U':
             continue
         symbol_name = fields[0]
         if platform_name == 'Linux' or platform_name == 'GNU' or platform_name.startswith('GNU/'):
@@ -119,6 +121,23 @@ def get_symbols_dumpbin(dumpbin, lib):
         symbols.append(symbol_name)
     return symbols
 
+def get_symbols_gendef(gendef, lib):
+    '''
+    List all the (non platform-specific) symbols exported by the library
+    using `gendef -`
+    '''
+    symbols = []
+    output = subprocess.check_output([gendef, '-', lib],
+                                     stderr=open(os.devnull, 'w')).decode("ascii")
+    ordinal_table_found = False
+    for line in output.splitlines():
+        if not ordinal_table_found:
+            if line.strip() == 'EXPORTS':
+                ordinal_table_found = True
+            continue
+
+        symbols.append(line.strip())
+    return symbols
 
 def main():
     parser = argparse.ArgumentParser()
@@ -136,15 +155,21 @@ def main():
     parser.add_argument('--dumpbin',
                         action='store',
                         help='path to binary (or name in $PATH)')
+    parser.add_argument('--gendef',
+                        action='store',
+                        help='path to binary (or name in $PATH)')
     parser.add_argument('--ignore-symbol',
                         action='append',
                         help='do not process this symbol')
     args = parser.parse_args()
 
     if platform.system() == 'Windows':
-        if not args.dumpbin:
-            parser.error('--dumpbin is mandatory')
-        lib_symbols = get_symbols_dumpbin(args.dumpbin, args.lib)
+        if args.dumpbin:
+            lib_symbols = get_symbols_dumpbin(args.dumpbin, args.lib)
+        elif args.gendef:
+            lib_symbols = get_symbols_gendef(args.gendef, args.lib)
+        else:
+            parser.error('--dumpbin is mandatory for msvc, --gendef is mandatory for mingw')
     else:
         if not args.nm:
             parser.error('--nm is mandatory')

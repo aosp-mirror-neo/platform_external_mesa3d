@@ -17,19 +17,15 @@ RESOURCE_TRACKER_ENTRIES = [
     "vkDestroyImage",
     "vkGetImageMemoryRequirements",
     "vkGetImageMemoryRequirements2",
-    "vkGetImageMemoryRequirements2KHR",
     "vkGetImageDrmFormatModifierPropertiesEXT",
     "vkBindImageMemory",
     "vkBindImageMemory2",
-    "vkBindImageMemory2KHR",
     "vkCreateBuffer",
     "vkDestroyBuffer",
     "vkGetBufferMemoryRequirements",
     "vkGetBufferMemoryRequirements2",
-    "vkGetBufferMemoryRequirements2KHR",
-    "vkBindBufferMemory",
-    "vkBindBufferMemory2",
-    "vkBindBufferMemory2KHR",
+    "vkGetPhysicalDeviceProperties2",
+    "vkGetPhysicalDeviceProperties2KHR",
     "vkCreateSemaphore",
     "vkDestroySemaphore",
     "vkQueueSubmit",
@@ -49,23 +45,16 @@ RESOURCE_TRACKER_ENTRIES = [
     "vkGetMemoryFdPropertiesKHR",
     "vkCreateSamplerYcbcrConversion",
     "vkDestroySamplerYcbcrConversion",
-    "vkCreateSamplerYcbcrConversionKHR",
-    "vkDestroySamplerYcbcrConversionKHR",
     "vkUpdateDescriptorSetWithTemplate",
-    "vkUpdateDescriptorSetWithTemplateKHR",
     "vkGetPhysicalDeviceFormatProperties2",
-    "vkGetPhysicalDeviceFormatProperties2KHR",
     "vkGetPhysicalDeviceImageFormatProperties2",
-    "vkGetPhysicalDeviceImageFormatProperties2KHR",
     "vkBeginCommandBuffer",
     "vkEndCommandBuffer",
     "vkResetCommandBuffer",
     "vkCreateImageView",
     "vkCreateSampler",
     "vkGetPhysicalDeviceExternalFenceProperties",
-    "vkGetPhysicalDeviceExternalFencePropertiesKHR",
     "vkGetPhysicalDeviceExternalBufferProperties",
-    "vkGetPhysicalDeviceExternalBufferPropertiesKHR",
     "vkCreateFence",
     "vkResetFences",
     "vkImportFenceFdKHR",
@@ -110,7 +99,9 @@ SUCCESS_VAL = {
     "VkResult" : ["VK_SUCCESS"],
 }
 
-HANDWRITTEN_ENTRY_POINTS = [
+# These could be entrypoints that are custom-written for gfxstream, or ones that
+# are meant fall back to the vk_common_* entrypoints
+NON_AUTOGEN_ENTRYPOINTS = [
     # Instance/device/physical-device special-handling, dispatch tables, etc..
     "vkCreateInstance",
     "vkDestroyInstance",
@@ -125,8 +116,6 @@ HANDWRITTEN_ENTRY_POINTS = [
     "vkCreateDevice",
     "vkDestroyDevice",
     # Manual alloc/free + vk_*_init/free() call w/ special params
-    "vkGetDeviceQueue",
-    "vkGetDeviceQueue2",
     # Command pool/buffer handling
     "vkCreateCommandPool",
     "vkDestroyCommandPool",
@@ -140,6 +129,40 @@ HANDWRITTEN_ENTRY_POINTS = [
     # TODO: Make a codegen module (use deepcopy as reference) to make this more robust
     "vkAllocateMemory",
     "vkUpdateDescriptorSets",
+
+    # Use vk_common_* entrypoints; usually just dispatches to the "vk*2()" API variant
+    "vkGetDeviceQueue",
+    "vkGetDeviceQueue2",
+    "vkGetPhysicalDeviceProperties",
+    # Custom gfxstream functions
+    "vkMapMemoryIntoAddressSpaceGOOGLE",
+    "vkUpdateDescriptorSetWithTemplateSizedGOOGLE",
+    "vkBeginCommandBufferAsyncGOOGLE",
+    "vkEndCommandBufferAsyncGOOGLE",
+    "vkResetCommandBufferAsyncGOOGLE",
+    "vkCommandBufferHostSyncGOOGLE",
+    "vkCreateImageWithRequirementsGOOGLE",
+    "vkCreateBufferWithRequirementsGOOGLE",
+    "vkGetMemoryHostAddressInfoGOOGLE",
+    "vkGetPhysicalDeviceProperties2",
+    "vkFreeMemorySyncGOOGLE",
+    "vkQueueHostSyncGOOGLE",
+    "vkQueueSubmitAsyncGOOGLE",
+    "vkQueueWaitIdleAsyncGOOGLE",
+    "vkQueueBindSparseAsyncGOOGLE",
+    "vkGetLinearImageLayoutGOOGLE",
+    "vkGetLinearImageLayout2GOOGLE",
+    "vkQueueFlushCommandsGOOGLE",
+    "vkQueueCommitDescriptorSetUpdatesGOOGLE",
+    "vkCollectDescriptorPoolIdsGOOGLE",
+    "vkQueueSignalReleaseImageANDROIDAsyncGOOGLE",
+    "vkQueueFlushCommandsFromAuxMemoryGOOGLE",
+    "vkGetBlobGOOGLE",
+    "vkUpdateDescriptorSetWithTemplateSized2GOOGLE",
+    "vkQueueSubmitAsync2GOOGLE",
+    "vkGetSemaphoreGOOGLE",
+    "vkTraceAsyncGOOGLE",
+    "vkSetDebugMetadataAsyncGOOGLE",
 ]
 
 # Handles that need to be translated to/from their corresponding gfxstream object types
@@ -562,7 +585,7 @@ class VulkanFuncTable(VulkanWrapperGenerator):
             genReturnExpression()
 
         api_entry = api.withModifiedName("gfxstream_vk_" + api.name[2:])
-        if api.name not in HANDWRITTEN_ENTRY_POINTS:
+        if api.name not in NON_AUTOGEN_ENTRYPOINTS:
             cgen.line(self.cgen.makeFuncProto(api_entry))
             cgen.beginBlock()
             genGfxstreamEntry()

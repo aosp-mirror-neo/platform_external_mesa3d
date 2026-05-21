@@ -7,13 +7,14 @@ section_start weston "Building Weston"
 
 # When changing this file, you need to bump the following
 # .gitlab-ci/image-tags.yml tags:
-# DEBIAN_BASE_TAG
+# DEBIAN_TEST_BASE_TAG
 
 export WESTON_VERSION="14.0.1"
 
 git clone https://gitlab.freedesktop.org/wayland/weston
 cd weston
 git checkout "$WESTON_VERSION"
+patch -p1 < "$OLDPWD/.gitlab-ci/container/patches/weston-no-xwm.patch"
 meson setup \
     -Dbackend-drm=false \
     -Dbackend-drm-screencast-vaapi=false \
@@ -44,6 +45,7 @@ meson setup \
     -Dwcap-decode=false \
     -Dtests=false \
     -Ddoc=false \
+    -Dno-xwm-decorations=true \
     _build ${EXTRA_MESON_ARGS:-}
 meson install -C _build
 cd ..

@@ -613,6 +613,8 @@ clear_depth_stencil(struct crocus_context *ice,
 static void
 crocus_clear(struct pipe_context *ctx,
              unsigned buffers,
+             uint32_t color_clear_mask,
+             uint8_t stencil_clear_mask,
              const struct pipe_scissor_state *scissor_state,
              const union pipe_color_union *p_color,
              double depth,
@@ -729,7 +731,7 @@ crocus_clear_texture(struct pipe_context *ctx,
          case 96:  format = ISL_FORMAT_R32G32B32_UINT;    break;
          case 128: format = ISL_FORMAT_R32G32B32A32_UINT; break;
          default:
-            unreachable("Unknown format bpb");
+            UNREACHABLE("Unknown format bpb");
          }
 
          /* No aux surfaces for non-renderable surfaces */

@@ -42,8 +42,6 @@
 #include "vk_sync_timeline.h"
 #include "vk_util.h"
 
-#include "vulkan/wsi/wsi_common.h"
-
 static VkResult
 vk_queue_start_submit_thread(struct vk_queue *queue);
 
@@ -57,6 +55,8 @@ vk_queue_init(struct vk_queue *queue, struct vk_device *device,
 
    memset(queue, 0, sizeof(*queue));
    vk_object_base_init(device, &queue->base, VK_OBJECT_TYPE_QUEUE);
+
+   simple_mtx_init(&queue->lock, mtx_plain);
 
    list_addtail(&queue->link, &device->queues);
 
@@ -96,7 +96,7 @@ vk_queue_init(struct vk_queue *queue, struct vk_device *device,
          goto fail_thread;
    }
 
-   util_dynarray_init(&queue->labels, NULL);
+   queue->labels = UTIL_DYNARRAY_INIT;
    queue->region_begin = true;
 
    return VK_SUCCESS;
@@ -147,7 +147,8 @@ vk_queue_submit_alloc(struct vk_queue *queue,
                       uint32_t image_bind_count,
                       uint32_t bind_entry_count,
                       uint32_t image_bind_entry_count,
-                      uint32_t signal_count)
+                      uint32_t signal_count,
+                      bool is_protected)
 {
    VK_MULTIALLOC(ma);
    VK_MULTIALLOC_DECL(&ma, struct vk_queue_submit, submit, 1);
@@ -191,6 +192,7 @@ vk_queue_submit_alloc(struct vk_queue *queue,
    submit->_wait_temps     = wait_temps;
    submit->_wait_points    = wait_points;
    submit->_signal_points  = signal_points;
+   submit->is_protected    = is_protected;
 
    return submit;
 }
@@ -203,9 +205,6 @@ vk_queue_submit_cleanup(struct vk_queue *queue,
       if (submit->_wait_temps[i] != NULL)
          vk_sync_destroy(queue->base.device, submit->_wait_temps[i]);
    }
-
-   if (submit->_mem_signal_temp != NULL)
-      vk_sync_destroy(queue->base.device, submit->_mem_signal_temp);
 
    if (submit->_wait_points != NULL) {
       for (uint32_t i = 0; i < submit->wait_count; i++) {
@@ -299,7 +298,6 @@ vk_queue_submit_add_semaphore_signal(struct vk_queue *queue,
                                      const VkSemaphoreSubmitInfo *signal_info)
 {
    VK_FROM_HANDLE(vk_semaphore, semaphore, signal_info->semaphore);
-   VkResult result;
 
    struct vk_sync *sync = vk_semaphore_get_active_sync(semaphore);
    uint64_t signal_value = signal_info->value;
@@ -309,29 +307,6 @@ vk_queue_submit_add_semaphore_signal(struct vk_queue *queue,
             "Tried to signal a timeline with value 0");
       }
    } else {
-      signal_value = 0;
-   }
-
-   /* For emulated timelines, we need to associate a binary vk_sync with
-    * each time point and pass the binary vk_sync to the driver.  We could
-    * do this in vk_queue_submit_final but it might require doing memory
-    * allocation and we don't want to to add extra failure paths there.
-    * Instead, allocate and replace the driver-visible vk_sync now and
-    * we'll insert it into the timeline in vk_queue_submit_final.  The
-    * insert step is guaranteed to not fail.
-    */
-   struct vk_sync_timeline *timeline = vk_sync_as_timeline(sync);
-   if (timeline) {
-      assert(queue->base.device->timeline_mode ==
-             VK_DEVICE_TIMELINE_MODE_EMULATED);
-      struct vk_sync_timeline_point **signal_point =
-         &submit->_signal_points[submit->signal_count];
-      result = vk_sync_timeline_alloc_point(queue->base.device, timeline,
-                                            signal_value, signal_point);
-      if (unlikely(result != VK_SUCCESS))
-         return result;
-
-      sync = &(*signal_point)->sync;
       signal_value = 0;
    }
 
@@ -357,28 +332,6 @@ vk_queue_submit_add_sync_signal(struct vk_queue *queue,
       .stage_mask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
       .signal_value = signal_value,
    };
-}
-
-static VkResult MUST_CHECK
-vk_queue_submit_add_mem_signal(struct vk_queue *queue,
-                               struct vk_queue_submit *submit,
-                               VkDeviceMemory memory)
-{
-   assert(submit->_mem_signal_temp == NULL);
-   VkResult result;
-
-   struct vk_sync *mem_sync;
-   result = queue->base.device->create_sync_for_memory(queue->base.device,
-                                                       memory, true,
-                                                       &mem_sync);
-   if (unlikely(result != VK_SUCCESS))
-      return result;
-
-   submit->_mem_signal_temp = mem_sync;
-
-   vk_queue_submit_add_sync_signal(queue, submit, mem_sync, 0);
-
-   return VK_SUCCESS;
 }
 
 static void
@@ -483,9 +436,6 @@ vk_queue_submits_merge(struct vk_queue *queue,
    if (vk_queue_submit_has_bind(first) != vk_queue_submit_has_bind(second))
       return NULL;
 
-   if (first->_mem_signal_temp)
-      return NULL;
-
    if (first->perf_pass_index != second->perf_pass_index)
       return NULL;
 
@@ -509,6 +459,9 @@ vk_queue_submits_merge(struct vk_queue *queue,
       return second;
    }
 
+   if (first->is_protected != second->is_protected)
+      return NULL;
+
    struct vk_queue_submit *merged = vk_queue_submit_alloc(queue,
       first->wait_count + second->wait_count,
       first->command_buffer_count + second->command_buffer_count,
@@ -517,7 +470,8 @@ vk_queue_submits_merge(struct vk_queue *queue,
       first->image_bind_count + second->image_bind_count,
       first->_bind_entry_count + second->_bind_entry_count,
       first->_image_bind_entry_count + second->_image_bind_entry_count,
-      first->signal_count + second->signal_count);
+      first->signal_count + second->signal_count,
+      first->is_protected);
    if (merged == NULL)
       return NULL;
 
@@ -568,9 +522,6 @@ vk_queue_submits_merge(struct vk_queue *queue,
 
    typed_memcpy(merged->_wait_temps, first->_wait_temps, first->wait_count);
    typed_memcpy(&merged->_wait_temps[first->wait_count], second->_wait_temps, second->wait_count);
-
-   assert(first->_mem_signal_temp == NULL);
-   merged->_mem_signal_temp = second->_mem_signal_temp;
 
    if (queue->base.device->timeline_mode == VK_DEVICE_TIMELINE_MODE_EMULATED) {
       typed_memcpy(merged->_wait_points,
@@ -637,53 +588,22 @@ vk_queue_submit_final(struct vk_queue *queue,
     */
    uint32_t wait_count = 0;
    for (uint32_t i = 0; i < submit->wait_count; i++) {
-      /* A timeline wait on 0 is always a no-op */
-      if ((submit->waits[i].sync->flags & VK_SYNC_IS_TIMELINE) &&
-          submit->waits[i].wait_value == 0)
-         continue;
+      struct vk_sync_timeline_point *wait_point;
+      result = vk_sync_wait_unwrap(queue->base.device,
+                                   &submit->waits[i], &wait_point);
+      if (wait_point != NULL)
+         submit->_wait_points[i] = wait_point;
+      if (unlikely(result != VK_SUCCESS))
+         result = vk_queue_set_lost(queue, "Failed to unwrap sync wait");
 
-      /* Waits on dummy vk_syncs are no-ops */
-      if (vk_sync_type_is_dummy(submit->waits[i].sync->type)) {
+      if (submit->waits[i].sync == NULL) {
          /* We are about to lose track of this wait, if it has a temporary
-          * we need to destroy it now, as vk_queue_submit_cleanup will not
-          * know about it */
-         if (submit->_wait_temps[i] != NULL) {
+          * or a wait point, we need to destroy it now, as
+          * vk_queue_submit_cleanup will not know about it
+          */
+         if (submit->_wait_temps[i] != NULL)
             vk_sync_destroy(queue->base.device, submit->_wait_temps[i]);
-            submit->waits[i].sync = NULL;
-         }
          continue;
-      }
-
-      /* For emulated timelines, we have a binary vk_sync associated with
-       * each time point and pass the binary vk_sync to the driver.
-       */
-      struct vk_sync_timeline *timeline =
-         vk_sync_as_timeline(submit->waits[i].sync);
-      if (timeline) {
-         assert(queue->base.device->timeline_mode ==
-                VK_DEVICE_TIMELINE_MODE_EMULATED);
-         result = vk_sync_timeline_get_point(queue->base.device, timeline,
-                                             submit->waits[i].wait_value,
-                                             &submit->_wait_points[i]);
-         if (unlikely(result != VK_SUCCESS)) {
-            result = vk_queue_set_lost(queue,
-                                       "Time point >= %"PRIu64" not found",
-                                       submit->waits[i].wait_value);
-         }
-
-         /* This can happen if the point is long past */
-         if (submit->_wait_points[i] == NULL)
-            continue;
-
-         submit->waits[i].sync = &submit->_wait_points[i]->sync;
-         submit->waits[i].wait_value = 0;
-      }
-
-      struct vk_sync_binary *binary =
-         vk_sync_as_binary(submit->waits[i].sync);
-      if (binary) {
-         submit->waits[i].sync = &binary->timeline;
-         submit->waits[i].wait_value = binary->next_point;
       }
 
       assert((submit->waits[i].sync->flags & VK_SYNC_IS_TIMELINE) ||
@@ -703,18 +623,19 @@ vk_queue_submit_final(struct vk_queue *queue,
    submit->wait_count = wait_count;
 
    for (uint32_t i = 0; i < submit->signal_count; i++) {
-      assert((submit->signals[i].sync->flags & VK_SYNC_IS_TIMELINE) ||
-             submit->signals[i].signal_value == 0);
-
-      struct vk_sync_binary *binary =
-         vk_sync_as_binary(submit->signals[i].sync);
-      if (binary) {
-         submit->signals[i].sync = &binary->timeline;
-         submit->signals[i].signal_value = ++binary->next_point;
-      }
+      struct vk_sync_timeline_point *signal_point;
+      result = vk_sync_signal_unwrap(queue->base.device,
+                                     &submit->signals[i], &signal_point);
+      if (signal_point != NULL)
+         submit->_signal_points[i] = signal_point;
+      if (unlikely(result != VK_SUCCESS))
+         result = vk_queue_set_lost(queue, "Failed to unwrap sync signal");
    }
 
+   vk_queue_lock(queue);
    result = queue->driver_submit(queue, submit);
+   vk_queue_unlock(queue);
+
    if (unlikely(result != VK_SUCCESS))
       return result;
 
@@ -931,6 +852,8 @@ struct vulkan_submit_info {
    const VkSparseImageMemoryBindInfo *image_binds;
 
    struct vk_fence *fence;
+
+   bool is_protected;
 };
 
 static VkResult
@@ -951,14 +874,7 @@ vk_queue_submit_create(struct vk_queue *queue,
    for (uint32_t i = 0; i < info->image_bind_count; ++i)
       sparse_memory_image_bind_entry_count += info->image_binds[i].bindCount;
 
-   const struct wsi_memory_signal_submit_info *mem_signal =
-      vk_find_struct_const(info->pNext, WSI_MEMORY_SIGNAL_SUBMIT_INFO_MESA);
-   bool signal_mem_sync = mem_signal != NULL &&
-                          mem_signal->memory != VK_NULL_HANDLE &&
-                          queue->base.device->create_sync_for_memory != NULL;
-
    uint32_t signal_count = info->signal_count +
-                           signal_mem_sync +
                            (info->fence != NULL);
 
    struct vk_queue_submit *submit =
@@ -969,7 +885,8 @@ vk_queue_submit_create(struct vk_queue *queue,
                             info->image_bind_count,
                             sparse_memory_bind_entry_count,
                             sparse_memory_image_bind_entry_count,
-                            signal_count);
+                            signal_count,
+                            info->is_protected);
    if (unlikely(submit == NULL))
       return vk_error(queue, VK_ERROR_OUT_OF_HOST_MEMORY);
 
@@ -1004,13 +921,6 @@ vk_queue_submit_create(struct vk_queue *queue,
    for (uint32_t i = 0; i < info->signal_count; i++) {
       result = vk_queue_submit_add_semaphore_signal(queue, submit,
                                                     &info->signals[i]);
-      if (unlikely(result != VK_SUCCESS))
-         goto fail;
-   }
-
-   if (signal_mem_sync) {
-      result = vk_queue_submit_add_mem_signal(queue, submit,
-                                              mem_signal->memory);
       if (unlikely(result != VK_SUCCESS))
          goto fail;
    }
@@ -1219,31 +1129,14 @@ vk_queue_submit(struct vk_queue *queue,
       if (unlikely(result != VK_SUCCESS))
          goto fail;
 
-      /* If we're signaling a memory object, we have to ensure that
-       * vkQueueSubmit does not return until the kernel submission has
-       * happened.  Otherwise, we may get a race between this process
-       * and whatever is going to wait on the object where the other
-       * process may wait before we've submitted our work.  Drain the
-       * queue now to avoid this.  It's the responsibility of the caller
-       * to ensure that any vkQueueSubmit which signals a memory object
-       * has fully resolved dependencies.
-       */
-      const bool needs_drain = submit->_mem_signal_temp;
-
       vk_queue_push_submit(queue, submit);
-
-      if (needs_drain) {
-         result = vk_queue_drain(queue);
-         if (unlikely(result != VK_SUCCESS))
-            return result;
-      }
 
       return VK_SUCCESS;
 
    case VK_QUEUE_SUBMIT_MODE_THREADED_ON_DEMAND:
-      unreachable("Invalid vk_queue::submit.mode");
+      UNREACHABLE("Invalid vk_queue::submit.mode");
    }
-   unreachable("Invalid submit mode");
+   UNREACHABLE("Invalid submit mode");
 
 fail:
    vk_queue_submit_destroy(queue, submit);
@@ -1279,78 +1172,13 @@ vk_queue_merge_submit(struct vk_queue *queue,
    return result;
 }
 
-VkResult
-vk_queue_wait_before_present(struct vk_queue *queue,
-                             const VkPresentInfoKHR *pPresentInfo)
-{
-   if (vk_device_is_lost(queue->base.device))
-      return VK_ERROR_DEVICE_LOST;
-
-   /* From the Vulkan 1.2.194 spec:
-    *
-    *    VUID-vkQueuePresentKHR-pWaitSemaphores-03268
-    *
-    *    "All elements of the pWaitSemaphores member of pPresentInfo must
-    *    reference a semaphore signal operation that has been submitted for
-    *    execution and any semaphore signal operations on which it depends (if
-    *    any) must have also been submitted for execution."
-    *
-    * As with vkQueueSubmit above, we need to ensure that any binary
-    * semaphores we use in this present actually exist.  If we don't have
-    * timeline semaphores, this is a non-issue.  If they're emulated, then
-    * this is ensured for us by the vk_device_flush() at the end of every
-    * vkQueueSubmit() and every vkSignalSemaphore().  For real timeline
-    * semaphores, however, we need to do a wait.  Thanks to the above bit of
-    * spec text, that wait should never block for long.
-    */
-   if (!vk_device_supports_threaded_submit(queue->base.device))
-      return VK_SUCCESS;
-
-   const uint32_t wait_count = pPresentInfo->waitSemaphoreCount;
-
-   if (wait_count == 0)
-      return VK_SUCCESS;
-
-   STACK_ARRAY(struct vk_sync_wait, waits, wait_count);
-
-   for (uint32_t i = 0; i < wait_count; i++) {
-      VK_FROM_HANDLE(vk_semaphore, semaphore,
-                     pPresentInfo->pWaitSemaphores[i]);
-
-      /* From the Vulkan 1.2.194 spec:
-       *
-       *    VUID-vkQueuePresentKHR-pWaitSemaphores-03267
-       *
-       *    "All elements of the pWaitSemaphores member of pPresentInfo must
-       *    be created with a VkSemaphoreType of VK_SEMAPHORE_TYPE_BINARY."
-       */
-      assert(semaphore->type == VK_SEMAPHORE_TYPE_BINARY);
-
-      waits[i] = (struct vk_sync_wait) {
-         .sync = vk_semaphore_get_active_sync(semaphore),
-         .stage_mask = ~(VkPipelineStageFlags2)0,
-      };
-   }
-
-   VkResult result = vk_sync_wait_many(queue->base.device, wait_count, waits,
-                                       VK_SYNC_WAIT_PENDING, UINT64_MAX);
-
-   STACK_ARRAY_FINISH(waits);
-
-   /* Check again, just in case */
-   if (vk_device_is_lost(queue->base.device))
-      return VK_ERROR_DEVICE_LOST;
-
-   return result;
-}
-
 static VkResult
 vk_queue_signal_sync(struct vk_queue *queue,
                      struct vk_sync *sync,
                      uint32_t signal_value)
 {
    struct vk_queue_submit *submit = vk_queue_submit_alloc(queue, 0, 0, 0, 0, 0,
-                                                          0, 0, 1);
+                                                          0, 0, 1, false);
    if (unlikely(submit == NULL))
       return vk_error(queue, VK_ERROR_OUT_OF_HOST_MEMORY);
 
@@ -1372,9 +1200,9 @@ vk_queue_signal_sync(struct vk_queue *queue,
       return VK_SUCCESS;
 
    case VK_QUEUE_SUBMIT_MODE_THREADED_ON_DEMAND:
-      unreachable("Invalid vk_queue::submit.mode");
+      UNREACHABLE("Invalid vk_queue::submit.mode");
    }
-   unreachable("Invalid timeline mode");
+   UNREACHABLE("Invalid timeline mode");
 }
 
 void
@@ -1394,7 +1222,7 @@ vk_queue_finish(struct vk_queue *queue)
       vk_queue_submit_destroy(queue, submit);
    }
 
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
    if (queue->anb_semaphore != VK_NULL_HANDLE) {
       struct vk_device *device = queue->base.device;
       device->dispatch_table.DestroySemaphore(vk_device_to_handle(device),
@@ -1410,6 +1238,8 @@ vk_queue_finish(struct vk_queue *queue)
       vk_free(&queue->base.device->alloc, (void *)label->pLabelName);
    util_dynarray_fini(&queue->labels);
    list_del(&queue->link);
+
+   simple_mtx_destroy(&queue->lock);
    vk_object_base_finish(&queue->base);
 }
 
@@ -1444,7 +1274,8 @@ vk_common_QueueSubmit2(VkQueue _queue,
          .waits = pSubmits[i].pWaitSemaphoreInfos,
          .signal_count = pSubmits[i].signalSemaphoreInfoCount,
          .signals = pSubmits[i].pSignalSemaphoreInfos,
-         .fence = i == submitCount - 1 ? fence : NULL
+         .fence = i == submitCount - 1 ? fence : NULL,
+         .is_protected = !!(pSubmits[i].flags & VK_SUBMIT_PROTECTED_BIT),
       };
       struct vk_queue_submit *submit;
       result = vk_queue_submit_create(queue, &info, &submit);
@@ -1596,7 +1427,7 @@ get_cpu_wait_type(struct vk_physical_device *pdevice)
          return *t;
    }
 
-   unreachable("You must have a non-timeline CPU wait sync type");
+   UNREACHABLE("You must have a non-timeline CPU wait sync type");
 }
 
 VKAPI_ATTR VkResult VKAPI_CALL

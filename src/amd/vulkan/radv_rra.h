@@ -12,6 +12,7 @@
 #define RADV_RRA_H
 
 #include "util/hash_table.h"
+#include "util/set.h"
 #include "util/simple_mtx.h"
 #include "util/u_dynarray.h"
 #include "util/u_math.h"
@@ -31,6 +32,7 @@ struct radv_rra_accel_struct_data {
    uint64_t size;
    struct radv_rra_accel_struct_buffer *buffer;
    VkAccelerationStructureTypeKHR type;
+   bool can_be_tlas;
    bool is_dead;
 };
 
@@ -105,6 +107,7 @@ struct radv_rra_trace_data {
    struct hash_table *accel_structs;
    struct hash_table_u64 *accel_struct_vas;
    simple_mtx_t data_mtx;
+   FILE *stats_file;
    bool validate_as;
    bool copy_after_build;
    bool triggered;
@@ -269,7 +272,7 @@ static_assert(sizeof(struct rra_geometry_info) == 12, "rra_geometry_info does no
 
 struct rra_validation_context {
    bool failed;
-   char location[31];
+   char location[63];
 };
 
 void PRINTFLIKE(2, 3) rra_validation_fail(struct rra_validation_context *ctx, const char *message, ...);
@@ -286,10 +289,13 @@ struct rra_bvh_info {
    uint32_t leaf_nodes_size;
    uint32_t internal_nodes_size;
    uint32_t instance_sideband_data_size;
+   uint32_t box32_count;
+   uint32_t box16_count;
    struct rra_geometry_info *geometry_infos;
 };
 
 struct rra_transcoding_context {
+   struct set *used_blas;
    const uint8_t *src;
    uint8_t *dst;
    uint32_t dst_leaf_offset;
@@ -316,5 +322,33 @@ void rra_gather_bvh_info_gfx12(const uint8_t *bvh, uint32_t node_id, struct rra_
 
 void rra_transcode_node_gfx12(struct rra_transcoding_context *ctx, uint32_t parent_id, uint32_t src_id,
                               uint32_t dst_offset);
+
+struct radv_bvh_stats_gfx10_3 {
+   uint32_t max_depth;
+   float sah;
+   float instance_sah;
+   uint32_t box16_node_count;
+   uint32_t box32_node_count;
+   uint32_t triangle_node_count;
+   uint32_t instance_node_count;
+   uint32_t procedural_node_count;
+};
+
+struct radv_bvh_stats_gfx12 {
+   uint32_t max_depth;
+   float sah;
+   float instance_sah;
+   uint32_t box_node_count;
+   uint32_t primitive_node_count;
+   uint32_t instance_node_count;
+};
+
+void radv_gather_bvh_stats_gfx10_3(const uint8_t *bvh, uint32_t node_id, uint32_t depth, float p,
+                                   struct hash_table_u64 *blas_sah, struct radv_bvh_stats_gfx10_3 *stats);
+
+void radv_gather_bvh_stats_gfx12(const uint8_t *bvh, uint32_t node_id, uint32_t depth, float p,
+                                 struct hash_table_u64 *blas_sah, struct radv_bvh_stats_gfx12 *stats);
+
+VkResult radv_dump_bvh_stats(VkQueue vk_queue);
 
 #endif /* RADV_RRA_H */

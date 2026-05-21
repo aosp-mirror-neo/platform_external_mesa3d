@@ -11,14 +11,15 @@
 #include "Resources.h"
 #include "VkEncoder.h"
 #include "gfxstream_vk_private.h"
+#include "git_sha1.h"
 #include "goldfish_address_space.h"
 #include "goldfish_vk_private_defs.h"
 #include "util/anon_file.h"
+#include "util/detect_os.h"
 #include "util/log.h"
 #include "util/macros.h"
-#include "vulkan/vulkan_core.h"
-#include "util/detect_os.h"
 #include "virtio/virtio-gpu/virgl_hw.h"
+#include "vulkan/vulkan_core.h"
 
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
 #include "vk_format_info.h"
@@ -29,10 +30,25 @@
 
 #include <algorithm>
 #include <chrono>
+#include <random>
 #include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+
+#ifdef HAVE_PERFETTO
+#ifndef ANDROID_LIBPERFETTO
+#include <perfetto.h>
+#else
+#include <perfetto/tracing.h>
+#endif
+
+#define GFXSTREAM_TRACE_DEFAULT_CATEGORY "gfxstream.default"
+
+PERFETTO_DEFINE_CATEGORIES(
+    perfetto::Category(GFXSTREAM_TRACE_DEFAULT_CATEGORY));
+
+#endif // HAVE_PERFETTO
 
 #include "vk_util.h"
 
@@ -41,8 +57,7 @@
 #endif
 
 #ifndef VK_USE_PLATFORM_FUCHSIA
-void zx_handle_close(zx_handle_t) {}
-void zx_event_create(int, zx_handle_t*) {}
+static void zx_handle_close(zx_handle_t) {}
 #endif
 
 static constexpr uint32_t kDefaultApiVersion = VK_MAKE_VERSION(1, 1, 0);
@@ -77,8 +92,20 @@ static T vk_make_orphan_copy(const T& vk_struct) {
     return copy;
 }
 
+
 namespace gfxstream {
 namespace vk {
+namespace {
+
+#ifdef HAVE_PERFETTO
+uint64_t GeneratePseudoUniqueId() {
+    thread_local std::mt19937 generator(std::random_device{}());
+    std::uniform_int_distribution<uint64_t> distribution(0, std::numeric_limits<uint64_t>::max());
+    return distribution(generator);
+}
+#endif
+
+}  // namespace
 
 #define MAKE_HANDLE_MAPPING_FOREACH(type_name, map_impl, map_to_u64_impl, map_from_u64_impl)       \
     void mapHandles_##type_name(type_name* handles, size_t count) override {                       \
@@ -150,12 +177,11 @@ struct StagingInfo {
     }
 
     ~StagingInfo() {
-        for (auto stream : streams) {
-            delete stream;
-        }
-
         for (auto encoder : encoders) {
             delete encoder;
+        }
+        for (auto stream : streams) {
+            delete stream;
         }
     }
 
@@ -213,75 +239,60 @@ struct CommandBufferPendingDescriptorSets {
 
 GOLDFISH_VK_LIST_HANDLE_TYPES(HANDLE_REGISTER_IMPL_IMPL)
 GOLDFISH_VK_LIST_TRIVIAL_HANDLE_TYPES(HANDLE_UNREGISTER_IMPL_IMPL)
-uint32_t getWaitSemaphoreCount(const VkSubmitInfo& pSubmit) { return pSubmit.waitSemaphoreCount; }
+static uint32_t getWaitSemaphoreCount(const VkSubmitInfo& pSubmit) {
+    return pSubmit.waitSemaphoreCount;
+}
 
-uint32_t getWaitSemaphoreCount(const VkSubmitInfo2& pSubmit) {
+static uint32_t getWaitSemaphoreCount(const VkSubmitInfo2& pSubmit) {
     return pSubmit.waitSemaphoreInfoCount;
 }
 
-uint32_t getCommandBufferCount(const VkSubmitInfo& pSubmit) { return pSubmit.commandBufferCount; }
+static uint32_t getCommandBufferCount(const VkSubmitInfo& pSubmit) {
+    return pSubmit.commandBufferCount;
+}
 
-uint32_t getCommandBufferCount(const VkSubmitInfo2& pSubmit) {
+static uint32_t getCommandBufferCount(const VkSubmitInfo2& pSubmit) {
     return pSubmit.commandBufferInfoCount;
 }
 
-uint32_t getSignalSemaphoreCount(const VkSubmitInfo& pSubmit) {
+static uint32_t getSignalSemaphoreCount(const VkSubmitInfo& pSubmit) {
     return pSubmit.signalSemaphoreCount;
 }
 
-uint32_t getSignalSemaphoreCount(const VkSubmitInfo2& pSubmit) {
+static uint32_t getSignalSemaphoreCount(const VkSubmitInfo2& pSubmit) {
     return pSubmit.signalSemaphoreInfoCount;
 }
 
-VkSemaphore getWaitSemaphore(const VkSubmitInfo& pSubmit, int i) {
+static VkSemaphore getWaitSemaphore(const VkSubmitInfo& pSubmit, int i) {
     return pSubmit.pWaitSemaphores[i];
 }
 
-VkSemaphore getWaitSemaphore(const VkSubmitInfo2& pSubmit, int i) {
+static VkSemaphore getWaitSemaphore(const VkSubmitInfo2& pSubmit, int i) {
     return pSubmit.pWaitSemaphoreInfos[i].semaphore;
 }
 
-VkSemaphore getSignalSemaphore(const VkSubmitInfo& pSubmit, int i) {
+static VkSemaphore getSignalSemaphore(const VkSubmitInfo& pSubmit, int i) {
     return pSubmit.pSignalSemaphores[i];
 }
 
-VkSemaphore getSignalSemaphore(const VkSubmitInfo2& pSubmit, int i) {
+static VkSemaphore getSignalSemaphore(const VkSubmitInfo2& pSubmit, int i) {
     return pSubmit.pSignalSemaphoreInfos[i].semaphore;
 }
 
-VkCommandBuffer getCommandBuffer(const VkSubmitInfo& pSubmit, int i) {
+static VkCommandBuffer getCommandBuffer(const VkSubmitInfo& pSubmit, int i) {
     return pSubmit.pCommandBuffers[i];
 }
 
-VkCommandBuffer getCommandBuffer(const VkSubmitInfo2& pSubmit, int i) {
+static VkCommandBuffer getCommandBuffer(const VkSubmitInfo2& pSubmit, int i) {
     return pSubmit.pCommandBufferInfos[i].commandBuffer;
 }
 
-bool descriptorPoolSupportsIndividualFreeLocked(VkDescriptorPool pool) {
+static bool descriptorPoolSupportsIndividualFreeLocked(VkDescriptorPool pool) {
     return as_goldfish_VkDescriptorPool(pool)->allocInfo->createFlags &
            VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
 }
 
-VkDescriptorImageInfo createImmutableSamplersFilteredImageInfo(
-    VkDescriptorType descType, VkDescriptorSet descSet, uint32_t binding,
-    const VkDescriptorImageInfo* pImageInfo) {
-    VkDescriptorImageInfo res = *pImageInfo;
-
-    if (descType != VK_DESCRIPTOR_TYPE_SAMPLER &&
-        descType != VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER)
-        return res;
-
-    bool immutableSampler =
-        as_goldfish_VkDescriptorSet(descSet)->reified->bindingIsImmutableSampler[binding];
-
-    if (!immutableSampler) return res;
-
-    res.sampler = 0;
-
-    return res;
-}
-
-bool descriptorBindingIsImmutableSampler(VkDescriptorSet dstSet, uint32_t dstBinding) {
+static bool descriptorBindingIsImmutableSampler(VkDescriptorSet dstSet, uint32_t dstBinding) {
     return as_goldfish_VkDescriptorSet(dstSet)->reified->bindingIsImmutableSampler[dstBinding];
 }
 
@@ -720,7 +731,7 @@ uint64_t ResourceTracker::getAHardwareBufferId(AHardwareBuffer* ahw) {
 }
 #endif
 
-void transformExternalResourceMemoryDedicatedRequirementsForGuest(
+static void transformExternalResourceMemoryDedicatedRequirementsForGuest(
     VkMemoryDedicatedRequirements* dedicatedReqs) {
     dedicatedReqs->prefersDedicatedAllocation = VK_TRUE;
     dedicatedReqs->requiresDedicatedAllocation = VK_TRUE;
@@ -760,7 +771,25 @@ CoherentMemoryPtr ResourceTracker::freeCoherentMemoryLocked(VkDeviceMemory memor
     return nullptr;
 }
 
-VkResult acquireSync(uint64_t syncId, int64_t& osHandle) {
+void ResourceTracker::EmitGuestAndHostTraceMarker(VkEncoder* encoder) {
+#ifdef HAVE_PERFETTO
+    const uint64_t flowId = GeneratePseudoUniqueId();
+
+    TRACE_EVENT_INSTANT(
+        GFXSTREAM_TRACE_DEFAULT_CATEGORY,
+        "vkTraceAsyncGOOGLE",
+        perfetto::Flow::Global(flowId),
+        "flow id", flowId);
+
+    if (mCaps.vulkanCapset.hasTraceAsyncCommand) {
+        encoder->vkTraceAsyncGOOGLE(flowId, true /* do lock */);
+    }
+#else
+    (void)encoder;
+#endif  // HAVE_PERFETTO
+}
+
+static VkResult acquireSync(uint64_t syncId, int64_t& osHandle) {
     struct VirtGpuExecBuffer exec = {};
     struct gfxstreamAcquireSync acquireSync = {};
     VirtGpuDevice* instance = VirtGpuDevice::getInstance();
@@ -778,7 +807,7 @@ VkResult acquireSync(uint64_t syncId, int64_t& osHandle) {
     return VK_SUCCESS;
 }
 
-VkResult createFence(VkDevice device, uint64_t hostFenceHandle, int64_t& osHandle) {
+static VkResult createFence(VkDevice device, uint64_t hostFenceHandle, int64_t& osHandle) {
     struct VirtGpuExecBuffer exec = {};
     struct gfxstreamCreateExportSyncVK exportSync = {};
     VirtGpuDevice* instance = VirtGpuDevice::getInstance();
@@ -800,8 +829,8 @@ VkResult createFence(VkDevice device, uint64_t hostFenceHandle, int64_t& osHandl
     return VK_SUCCESS;
 }
 
-void collectAllPendingDescriptorSetsBottomUp(const std::vector<VkCommandBuffer>& workingSet,
-                                             std::unordered_set<VkDescriptorSet>& allDs) {
+static void collectAllPendingDescriptorSetsBottomUp(const std::vector<VkCommandBuffer>& workingSet,
+                                                    std::unordered_set<VkDescriptorSet>& allDs) {
     if (workingSet.empty()) return;
 
     std::vector<VkCommandBuffer> nextLevel;
@@ -832,8 +861,8 @@ void collectAllPendingDescriptorSetsBottomUp(const std::vector<VkCommandBuffer>&
     }
 }
 
-void commitDescriptorSetUpdates(void* context, VkQueue queue,
-                                const std::unordered_set<VkDescriptorSet>& sets) {
+static void commitDescriptorSetUpdates(void* context, VkQueue queue,
+                                       const std::unordered_set<VkDescriptorSet>& sets) {
     VkEncoder* enc = (VkEncoder*)context;
 
     std::unordered_map<VkDescriptorPool, uint32_t> poolSet;
@@ -980,8 +1009,8 @@ uint32_t ResourceTracker::syncEncodersForCommandBuffer(VkCommandBuffer commandBu
     return 0;
 }
 
-void addPendingDescriptorSets(VkCommandBuffer commandBuffer, uint32_t descriptorSetCount,
-                              const VkDescriptorSet* pDescriptorSets) {
+static void addPendingDescriptorSets(VkCommandBuffer commandBuffer, uint32_t descriptorSetCount,
+                                     const VkDescriptorSet* pDescriptorSets) {
     struct goldfish_VkCommandBuffer* cb = as_goldfish_VkCommandBuffer(commandBuffer);
 
     if (!cb->userPtr) {
@@ -997,9 +1026,9 @@ void addPendingDescriptorSets(VkCommandBuffer commandBuffer, uint32_t descriptor
     }
 }
 
-void decDescriptorSetLayoutRef(void* context, VkDevice device,
-                               VkDescriptorSetLayout descriptorSetLayout,
-                               const VkAllocationCallbacks* pAllocator) {
+static void decDescriptorSetLayoutRef(void* context, VkDevice device,
+                                      VkDescriptorSetLayout descriptorSetLayout,
+                                      const VkAllocationCallbacks* pAllocator) {
     if (!descriptorSetLayout) return;
 
     struct goldfish_VkDescriptorSetLayout* setLayout =
@@ -1698,7 +1727,7 @@ VkResult ResourceTracker::on_vkEnumerateInstanceExtensionProperties(
 
     // Spec:
     //
-    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumerateInstanceExtensionProperties.html
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkEnumerateInstanceExtensionProperties.html
     //
     // If pProperties is NULL, then the number of extensions properties
     // available is returned in pPropertyCount. Otherwise, pPropertyCount
@@ -1775,8 +1804,11 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_KHR_storage_buffer_storage_class",
         "VK_EXT_depth_clip_enable",
         "VK_KHR_create_renderpass2",
-        "VK_EXT_vertex_attribute_divisor",
+        "VK_KHR_vertex_attribute_divisor",
         "VK_EXT_host_query_reset",
+        "VK_EXT_blend_operation_advanced",
+        "VK_EXT_frame_boundary",
+        "VK_EXT_primitives_generated_query",
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
         "VK_KHR_external_semaphore",
         "VK_KHR_external_semaphore_fd",
@@ -1786,14 +1818,12 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_device_memory_report",
 #endif
 #ifdef LINUX_GUEST_BUILD
-        // Required by Zink
-        "VK_KHR_imageless_framebuffer",
         // Passthrough if available on host. Will otherwise be emulated by guest
         "VK_EXT_image_drm_format_modifier",
         "VK_KHR_external_memory_fd",
 #endif
         // Vulkan 1.1
-        // "VK_KHR_16bit_storage",
+        "VK_KHR_16bit_storage",
         "VK_KHR_device_group",
         "VK_KHR_device_group_creation",
         "VK_KHR_external_fence_capabilities",
@@ -1802,7 +1832,6 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_KHR_get_physical_device_properties2",
         "VK_KHR_relaxed_block_layout",
         "VK_KHR_shader_draw_parameters",
-        "VK_KHR_storage_buffer_storage_class",
         "VK_KHR_variable_pointers",
         "VK_EXT_color_write_enable",
         "VK_EXT_memory_budget",
@@ -1817,13 +1846,11 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_KHR_sampler_mirror_clamp_to_edge",
         "VK_KHR_separate_depth_stencil_layouts",
         "VK_KHR_shader_atomic_int64",
-        "VK_KHR_shader_float16_int8",
         "VK_KHR_shader_float_controls",
         "VK_KHR_spirv_1_4",
         "VK_KHR_uniform_buffer_standard_layout",
         "VK_EXT_descriptor_indexing",
         "VK_EXT_sampler_filter_minmax",
-        "VK_EXT_scalar_block_layout",
         "VK_EXT_separate_stencil_usage",
         "VK_EXT_shader_viewport_index_layer",
 
@@ -1848,6 +1875,13 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_texture_compression_astc_hdr",
         "VK_EXT_tooling_info",
         "VK_EXT_ycbcr_2plane_444_formats",
+
+        // Android requirements
+        "VK_EXT_pipeline_protected_access",
+        "VK_KHR_maintenance6",
+        "VK_KHR_maintenance7",
+        "VK_KHR_maintenance8",
+        "VK_KHR_maintenance9",
     };
 
     VkEncoder* enc = (VkEncoder*)context;
@@ -1924,27 +1958,37 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
     }
 #endif
 
+    // TODO: query ExternalMemoryMode from vkEmulation directly to compansate for the host platform
+    // correctly, instead of host extension checks, or make this support mandatory for Android.
     bool win32ExtMemAvailable = getHostDeviceExtensionIndex("VK_KHR_external_memory_win32") != -1;
     bool posixExtMemAvailable = getHostDeviceExtensionIndex("VK_KHR_external_memory_fd") != -1;
-    bool metalExtMemAvailable = getHostDeviceExtensionIndex("VK_EXT_external_memory_metal") != -1 ||
-                                getHostDeviceExtensionIndex("VK_MVK_moltenvk") != -1;
+    bool metalExtMemAvailable = getHostDeviceExtensionIndex("VK_EXT_external_memory_metal") != -1;
+    bool hostAllocationExtMemAvailable =
+        getHostDeviceExtensionIndex("VK_EXT_external_memory_host") != -1;
     bool qnxExtMemAvailable =
         getHostDeviceExtensionIndex("VK_QNX_external_memory_screen_buffer") != -1;
 
-    bool hostHasExternalMemorySupport =
-        win32ExtMemAvailable || posixExtMemAvailable || metalExtMemAvailable || qnxExtMemAvailable;
+    bool hostHasExternalMemorySupport = win32ExtMemAvailable || posixExtMemAvailable ||
+                                        metalExtMemAvailable || hostAllocationExtMemAvailable ||
+                                        qnxExtMemAvailable;
 
     if (hostHasExternalMemorySupport) {
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
         filteredExts.push_back(
             VkExtensionProperties{"VK_ANDROID_external_memory_android_hardware_buffer", 7});
-        filteredExts.push_back(VkExtensionProperties{"VK_EXT_queue_family_foreign", 1});
 #endif
 #ifdef VK_USE_PLATFORM_FUCHSIA
         filteredExts.push_back(VkExtensionProperties{"VK_FUCHSIA_external_memory", 1});
         filteredExts.push_back(VkExtensionProperties{"VK_FUCHSIA_buffer_collection", 1});
 #endif
+        filteredExts.push_back(VkExtensionProperties{"VK_EXT_queue_family_foreign", 1});
     } else {
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
+        mesa_loge(
+            "%s: Did not recognize any form of external memory support on the host device/driver. "
+            "Guest won't support VK_ANDROID_external_memory_android_hardware_buffer!",
+            __func__);
+#endif
 #ifdef LINUX_GUEST_BUILD
         // Note: Linux gfxstream-vulkan driver automatically assumes some form of external memory
         // support on the host, and advertises VK_KHR_external_memory_fd and
@@ -1977,14 +2021,14 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
 
     // Spec:
     //
-    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumerateDeviceExtensionProperties.html
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkEnumerateDeviceExtensionProperties.html
     //
     // pPropertyCount is a pointer to an integer related to the number of
     // extension properties available or queried, and is treated in the
     // same fashion as the
     // vkEnumerateInstanceExtensionProperties::pPropertyCount parameter.
     //
-    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumerateInstanceExtensionProperties.html
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkEnumerateInstanceExtensionProperties.html
     //
     // If pProperties is NULL, then the number of extensions properties
     // available is returned in pPropertyCount. Otherwise, pPropertyCount
@@ -2039,7 +2083,7 @@ VkResult ResourceTracker::on_vkEnumeratePhysicalDevices(void* context, VkResult,
     // even if the guest did not ask for it
     // - Serve the guest query according to the spec:
     //
-    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumeratePhysicalDevices.html
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkEnumeratePhysicalDevices.html
 
     auto it = info_VkInstance.find(instance);
 
@@ -2082,7 +2126,7 @@ VkResult ResourceTracker::on_vkEnumeratePhysicalDevices(void* context, VkResult,
 
     // Serve the guest query according to the spec.
     //
-    // https://registry.khronos.org/vulkan/specs/latest/man/html/vkEnumeratePhysicalDevices.html
+    // https://docs.vulkan.org/refpages/latest/refpages/source/vkEnumeratePhysicalDevices.html
     //
     // If pPhysicalDevices is NULL, then the number of physical devices
     // available is returned in pPhysicalDeviceCount. Otherwise,
@@ -2118,21 +2162,6 @@ VkResult ResourceTracker::on_vkEnumeratePhysicalDevices(void* context, VkResult,
     }
 }
 
-void ResourceTracker::on_vkGetPhysicalDeviceProperties(void*, VkPhysicalDevice,
-                                                       VkPhysicalDeviceProperties* pProperties) {
-#ifdef LINUX_GUEST_BUILD
-    if (pProperties) {
-        if (VK_PHYSICAL_DEVICE_TYPE_CPU == pProperties->deviceType) {
-            /* For Linux guest: Even if host driver reports DEVICE_TYPE_CPU,
-             * override this to VIRTUAL_GPU, otherwise Linux DRM interfaces
-             * will take unexpected code paths to deal with "software" driver
-             */
-            pProperties->deviceType = VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU;
-        }
-    }
-#endif
-}
-
 void ResourceTracker::on_vkGetPhysicalDeviceFeatures2(void*, VkPhysicalDevice,
                                                       VkPhysicalDeviceFeatures2* pFeatures) {
     if (pFeatures) {
@@ -2144,60 +2173,116 @@ void ResourceTracker::on_vkGetPhysicalDeviceFeatures2(void*, VkPhysicalDevice,
     }
 }
 
-void ResourceTracker::on_vkGetPhysicalDeviceFeatures2KHR(void* context,
-                                                         VkPhysicalDevice physicalDevice,
-                                                         VkPhysicalDeviceFeatures2* pFeatures) {
-    on_vkGetPhysicalDeviceFeatures2(context, physicalDevice, pFeatures);
+void ResourceTracker::on_vkGetPhysicalDeviceProperties2KHR(
+    void* context, VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
+    on_vkGetPhysicalDeviceProperties2(context, physicalDevice, pProperties);
 }
 
 void ResourceTracker::on_vkGetPhysicalDeviceProperties2(void* context,
                                                         VkPhysicalDevice physicalDevice,
                                                         VkPhysicalDeviceProperties2* pProperties) {
-    if (pProperties) {
-        on_vkGetPhysicalDeviceProperties(context, physicalDevice, &pProperties->properties);
-        VirtGpuDevice* instance = VirtGpuDevice::getInstance();
-        VkPhysicalDeviceDrmPropertiesEXT* drmProps =
-            vk_find_struct(pProperties, PHYSICAL_DEVICE_DRM_PROPERTIES_EXT);
+    VkEncoder* enc = (VkEncoder*)context;
+    VirtGpuDevice* instance = VirtGpuDevice::getInstance();
+    if (!pProperties) {
+        return;
+    }
 
-        if (instance && drmProps) {
-            VirtGpuDrmInfo drmInfo;
-            if (instance->getDrmInfo(&drmInfo)) {
-                drmProps->hasPrimary = drmInfo.hasPrimary;
-                drmProps->hasRender = drmInfo.hasRender;
-                drmProps->primaryMajor = drmInfo.primaryMajor;
-                drmProps->primaryMinor = drmInfo.primaryMinor;
-                drmProps->renderMajor = drmInfo.renderMajor;
-                drmProps->renderMinor = drmInfo.renderMinor;
-            } else {
-                mesa_logd(
-                    "%s: encountered VkPhysicalDeviceDrmPropertiesEXT in pProperties::pNext chain, "
-                    "but failed to query DrmInfo from the VirtGpuDevice",
-                    __func__);
-            }
-        }
+    void* pNextOriginal = pProperties->pNext;
+    VkPhysicalDeviceProperties2 localProps = *pProperties;
 
-        VkPhysicalDevicePCIBusInfoPropertiesEXT* pciBusInfoProps =
-            vk_find_struct(pProperties, PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT);
-        if (instance && pciBusInfoProps) {
-            VirtGpuPciBusInfo pciBusInfo;
-            if (instance->getPciBusInfo(&pciBusInfo)) {
-                pciBusInfoProps->pciDomain = pciBusInfo.domain;
-                pciBusInfoProps->pciBus = pciBusInfo.bus;
-                pciBusInfoProps->pciDevice = pciBusInfo.device;
-                pciBusInfoProps->pciFunction = pciBusInfo.function;
-            } else {
-                mesa_logd(
-                    "%s: encountered VkPhysicalDevicePCIBusInfoPropertiesEXT in pProperties::pNext "
-                    "chain, but failed to query PciBusInfo from the VirtGpuDevice",
-                    __func__);
-            }
+    if (vk_find_struct(&localProps, PHYSICAL_DEVICE_DRM_PROPERTIES_EXT)) {
+        vk_filter_struct(&localProps, PHYSICAL_DEVICE_DRM_PROPERTIES_EXT);
+    }
+
+    if (vk_find_struct(&localProps, PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT)) {
+        vk_filter_struct(&localProps, PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT);
+    }
+
+    if (vk_find_struct(&localProps, PHYSICAL_DEVICE_DRIVER_PROPERTIES)) {
+        vk_filter_struct(&localProps, PHYSICAL_DEVICE_DRIVER_PROPERTIES);
+    }
+
+    if (vk_find_struct(&localProps, PHYSICAL_DEVICE_ID_PROPERTIES)) {
+        vk_filter_struct(&localProps, PHYSICAL_DEVICE_ID_PROPERTIES);
+    }
+
+#if defined(VK_USE_PLATFORM_ANDROID_KHR)
+    if (vk_find_struct(&localProps, PHYSICAL_DEVICE_PRESENTATION_PROPERTIES_ANDROID)) {
+        vk_filter_struct(&localProps, PHYSICAL_DEVICE_PRESENTATION_PROPERTIES_ANDROID);
+    }
+#endif
+
+    enc->vkGetPhysicalDeviceProperties2(physicalDevice, &localProps, false /* no lock */);
+
+    *pProperties = localProps;
+    pProperties->pNext = pNextOriginal;
+
+    if (pProperties->properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU) {
+        pProperties->properties.deviceType = VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU;
+    }
+
+    pProperties->properties.driverVersion = vk_get_driver_version();
+    VkPhysicalDeviceVulkan12Properties* vulkan12Props =
+        vk_find_struct(pProperties, PHYSICAL_DEVICE_VULKAN_1_2_PROPERTIES);
+    if (vulkan12Props) {
+        snprintf(vulkan12Props->driverName, sizeof(vulkan12Props->driverName), "gfxstream");
+        snprintf(vulkan12Props->driverInfo, sizeof(vulkan12Props->driverInfo),
+                 "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
+    }
+
+    VkPhysicalDeviceDriverProperties* driverProps =
+        vk_find_struct(pProperties, PHYSICAL_DEVICE_DRIVER_PROPERTIES);
+    if (driverProps) {
+        snprintf(driverProps->driverName, sizeof(driverProps->driverName), "gfxstream");
+        snprintf(driverProps->driverInfo, sizeof(driverProps->driverInfo),
+                 "Mesa " PACKAGE_VERSION MESA_GIT_SHA1);
+    }
+
+    const char* transport_name = instance ? "Virtio-GPU GFXStream" : "Goldfish GFXStream";
+    char device_name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    int device_name_len = snprintf(device_name, sizeof(device_name), "%s (%s)",
+                                   transport_name, pProperties->properties.deviceName);
+    if (device_name_len >= (int)VK_MAX_PHYSICAL_DEVICE_NAME_SIZE) {
+        memcpy(device_name + VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 5, "...)", 4);
+        device_name_len = VK_MAX_PHYSICAL_DEVICE_NAME_SIZE - 1;
+    }
+    memcpy(pProperties->properties.deviceName, device_name, device_name_len + 1);
+
+    VkPhysicalDeviceDrmPropertiesEXT* drmProps =
+        vk_find_struct(pProperties, PHYSICAL_DEVICE_DRM_PROPERTIES_EXT);
+    if (instance && drmProps) {
+        VirtGpuDrmInfo drmInfo;
+        if (instance->getDrmInfo(&drmInfo)) {
+            drmProps->hasPrimary = drmInfo.hasPrimary;
+            drmProps->hasRender = drmInfo.hasRender;
+            drmProps->primaryMajor = drmInfo.primaryMajor;
+            drmProps->primaryMinor = drmInfo.primaryMinor;
+            drmProps->renderMajor = drmInfo.renderMajor;
+            drmProps->renderMinor = drmInfo.renderMinor;
+        } else {
+            mesa_logd(
+                "%s: encountered VkPhysicalDeviceDrmPropertiesEXT in pProperties::pNext chain, "
+                "but failed to query DrmInfo from the VirtGpuDevice",
+                __func__);
         }
     }
-}
 
-void ResourceTracker::on_vkGetPhysicalDeviceProperties2KHR(
-    void* context, VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties2* pProperties) {
-    on_vkGetPhysicalDeviceProperties2(context, physicalDevice, pProperties);
+    VkPhysicalDevicePCIBusInfoPropertiesEXT* pciBusInfoProps =
+        vk_find_struct(pProperties, PHYSICAL_DEVICE_PCI_BUS_INFO_PROPERTIES_EXT);
+    if (instance && pciBusInfoProps) {
+        VirtGpuPciBusInfo pciBusInfo;
+        if (instance->getPciBusInfo(&pciBusInfo)) {
+            pciBusInfoProps->pciDomain = pciBusInfo.domain;
+            pciBusInfoProps->pciBus = pciBusInfo.bus;
+            pciBusInfoProps->pciDevice = pciBusInfo.device;
+            pciBusInfoProps->pciFunction = pciBusInfo.function;
+        } else {
+            mesa_logd(
+                "%s: encountered VkPhysicalDevicePCIBusInfoPropertiesEXT in pProperties::pNext "
+                "chain, but failed to query PciBusInfo from the VirtGpuDevice",
+                __func__);
+        }
+    }
 }
 
 void ResourceTracker::on_vkGetPhysicalDeviceMemoryProperties(
@@ -2210,18 +2295,6 @@ void ResourceTracker::on_vkGetPhysicalDeviceMemoryProperties(
 void ResourceTracker::on_vkGetPhysicalDeviceMemoryProperties2(
     void*, VkPhysicalDevice physdev, VkPhysicalDeviceMemoryProperties2* out) {
     on_vkGetPhysicalDeviceMemoryProperties(nullptr, physdev, &out->memoryProperties);
-}
-
-void ResourceTracker::on_vkGetDeviceQueue(void*, VkDevice device, uint32_t, uint32_t,
-                                          VkQueue* pQueue) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    info_VkQueue[*pQueue].device = device;
-}
-
-void ResourceTracker::on_vkGetDeviceQueue2(void*, VkDevice device, const VkDeviceQueueInfo2*,
-                                           VkQueue* pQueue) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    info_VkQueue[*pQueue].device = device;
 }
 
 VkResult ResourceTracker::on_vkCreateInstance(void* context, VkResult input_result,
@@ -2278,7 +2351,7 @@ void ResourceTracker::on_vkDestroyDevice_pre(void* context, VkDevice device,
 }
 
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
-void updateMemoryTypeBits(uint32_t* memoryTypeBits, uint32_t memoryIndex) {
+static void updateMemoryTypeBits(uint32_t* memoryTypeBits, uint32_t memoryIndex) {
     *memoryTypeBits = 1u << memoryIndex;
 }
 #endif
@@ -3136,13 +3209,13 @@ VkResult ResourceTracker::allocateCoherentMemory(VkDevice device,
     // Support device address capture/replay allocations
     if (deviceAddressMemoryAllocation) {
         if (allocFlagsInfoPtr) {
-            mesa_logd("%s: has alloc flags\n", __func__);
+            MESA_TRACE_SCOPE("%s: has alloc flags\n", __func__);
             allocFlagsInfo = *allocFlagsInfoPtr;
             vk_append_struct(&structChainIter, &allocFlagsInfo);
         }
 
         if (opaqueCaptureAddressAllocInfoPtr) {
-            mesa_logd("%s: has opaque capture address\n", __func__);
+            MESA_TRACE_SCOPE("%s: has opaque capture address\n", __func__);
             opaqueCaptureAddressAllocInfo = *opaqueCaptureAddressAllocInfoPtr;
             vk_append_struct(&structChainIter, &opaqueCaptureAddressAllocInfo);
         }
@@ -3343,13 +3416,13 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
         vk_find_struct_const(pAllocateInfo, MEMORY_OPAQUE_CAPTURE_ADDRESS_ALLOCATE_INFO);
 
     if (allocFlagsInfoPtr) {
-        mesa_logd("%s: has alloc flags\n", __func__);
+        MESA_TRACE_SCOPE("%s: has alloc flags\n", __func__);
         allocFlagsInfo = *allocFlagsInfoPtr;
         vk_append_struct(&structChainIter, &allocFlagsInfo);
     }
 
     if (opaqueCaptureAddressAllocInfoPtr) {
-        mesa_logd("%s: has opaque capture address\n", __func__);
+        MESA_TRACE_SCOPE("%s: has opaque capture address\n", __func__);
         opaqueCaptureAddressAllocInfo = *opaqueCaptureAddressAllocInfoPtr;
         vk_append_struct(&structChainIter, &opaqueCaptureAddressAllocInfo);
     }
@@ -4620,52 +4693,6 @@ void ResourceTracker::on_vkDestroySamplerYcbcrConversion(void* context, VkDevice
     }
 }
 
-VkResult ResourceTracker::on_vkCreateSamplerYcbcrConversionKHR(
-    void* context, VkResult, VkDevice device, const VkSamplerYcbcrConversionCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator, VkSamplerYcbcrConversion* pYcbcrConversion) {
-    VkSamplerYcbcrConversionCreateInfo localCreateInfo = vk_make_orphan_copy(*pCreateInfo);
-
-#if defined(VK_USE_PLATFORM_ANDROID_KHR)
-    const VkExternalFormatANDROID* extFormatAndroidPtr =
-        vk_find_struct_const(pCreateInfo, EXTERNAL_FORMAT_ANDROID);
-    if (extFormatAndroidPtr) {
-        if (extFormatAndroidPtr->externalFormat == DRM_FORMAT_RGB565) {
-            // We don't support external formats on host and it causes RGB565
-            // to fail in CtsGraphicsTestCases android.graphics.cts.BasicVulkanGpuTest
-            // when passed as an external format.
-            // We may consider doing this for all external formats.
-            // See b/134771579.
-            *pYcbcrConversion = VK_YCBCR_CONVERSION_DO_NOTHING;
-            return VK_SUCCESS;
-        } else if (extFormatAndroidPtr->externalFormat) {
-            localCreateInfo.format = vk_format_from_fourcc(extFormatAndroidPtr->externalFormat);
-        }
-    }
-#endif
-
-    VkEncoder* enc = (VkEncoder*)context;
-    VkResult res = enc->vkCreateSamplerYcbcrConversionKHR(device, &localCreateInfo, pAllocator,
-                                                          pYcbcrConversion, true /* do lock */);
-
-    if (*pYcbcrConversion == VK_YCBCR_CONVERSION_DO_NOTHING) {
-        mesa_loge(
-            "FATAL: vkCreateSamplerYcbcrConversionKHR returned a reserved value "
-            "(VK_YCBCR_CONVERSION_DO_NOTHING)");
-        abort();
-    }
-    return res;
-}
-
-void ResourceTracker::on_vkDestroySamplerYcbcrConversionKHR(
-    void* context, VkDevice device, VkSamplerYcbcrConversion ycbcrConversion,
-    const VkAllocationCallbacks* pAllocator) {
-    VkEncoder* enc = (VkEncoder*)context;
-    if (ycbcrConversion != VK_YCBCR_CONVERSION_DO_NOTHING) {
-        enc->vkDestroySamplerYcbcrConversionKHR(device, ycbcrConversion, pAllocator,
-                                                true /* do lock */);
-    }
-}
-
 VkResult ResourceTracker::on_vkCreateSampler(void* context, VkResult, VkDevice device,
                                              const VkSamplerCreateInfo* pCreateInfo,
                                              const VkAllocationCallbacks* pAllocator,
@@ -4733,14 +4760,6 @@ void ResourceTracker::on_vkGetPhysicalDeviceExternalFenceProperties(
 #endif
 }
 
-void ResourceTracker::on_vkGetPhysicalDeviceExternalFencePropertiesKHR(
-    void* context, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceExternalFenceInfo* pExternalFenceInfo,
-    VkExternalFenceProperties* pExternalFenceProperties) {
-    on_vkGetPhysicalDeviceExternalFenceProperties(context, physicalDevice, pExternalFenceInfo,
-                                                  pExternalFenceProperties);
-}
-
 VkResult ResourceTracker::on_vkCreateFence(void* context, VkResult input_result, VkDevice device,
                                            const VkFenceCreateInfo* pCreateInfo,
                                            const VkAllocationCallbacks* pAllocator,
@@ -4764,11 +4783,11 @@ VkResult ResourceTracker::on_vkCreateFence(void* context, VkResult input_result,
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
     if (exportSyncFd) {
         if (!mFeatureInfo.hasVirtioGpuNativeSync) {
-            mesa_logd("%s: ensure sync device\n", __func__);
+            MESA_TRACE_SCOPE("%s: ensure sync device\n", __func__);
             ensureSyncDeviceFd();
         }
 
-        mesa_logd("%s: getting fence info\n", __func__);
+        MESA_TRACE_SCOPE("%s: getting fence info\n", __func__);
         std::lock_guard<std::recursive_mutex> lock(mLock);
         auto it = info_VkFence.find(*pFence);
 
@@ -4778,7 +4797,7 @@ VkResult ResourceTracker::on_vkCreateFence(void* context, VkResult input_result,
 
         info.external = true;
         info.exportFenceCreateInfo = *exportFenceInfoPtr;
-        mesa_logd("%s: info set (fence still -1). fence: %p\n", __func__, (void*)(*pFence));
+        MESA_TRACE_SCOPE("%s: info set (fence still -1). fence: %p\n", __func__, (void*)(*pFence));
         // syncFd is still -1 because we expect user to explicitly
         // export it via vkGetFenceFdKHR
     }
@@ -4812,14 +4831,16 @@ VkResult ResourceTracker::on_vkResetFences(void* context, VkResult, VkDevice dev
         auto& info = it->second;
         if (!info.external) continue;
 
-#if GFXSTREAM_ENABLE_GUEST_GOLDFISH
         if (info.syncFd && *info.syncFd >= 0) {
-            mesa_logd("%s: resetting fence. make fd -1\n", __func__);
+            MESA_TRACE_SCOPE("%s: resetting fence. make fd -1\n", __func__);
+
+#if GFXSTREAM_ENABLE_GUEST_GOLDFISH
             goldfish_sync_signal(*info.syncFd);
+#endif
+
             mSyncHelper->close(*info.syncFd);
         }
         info.syncFd.reset();
-#endif
     }
 
     return res;
@@ -4856,19 +4877,21 @@ VkResult ResourceTracker::on_vkImportFenceFdKHR(void* context, VkResult, VkDevic
 
     auto& info = it->second;
 
-#if GFXSTREAM_ENABLE_GUEST_GOLDFISH
     if (info.syncFd && *info.syncFd >= 0) {
-        mesa_logd("%s: previous sync fd exists, close it\n", __func__);
+        MESA_TRACE_SCOPE("%s: previous sync fd exists, close it\n", __func__);
+
+#if GFXSTREAM_ENABLE_GUEST_GOLDFISH
         goldfish_sync_signal(*info.syncFd);
-        mSyncHelper->close(*info.syncFd);
-    }
 #endif
 
+        mSyncHelper->close(*info.syncFd);
+    }
+
     if (pImportFenceFdInfo->fd < 0) {
-        mesa_logd("%s: import -1, set to -1 and exit\n", __func__);
+        MESA_TRACE_SCOPE("%s: import -1, set to -1 and exit\n", __func__);
         info.syncFd = -1;
     } else {
-        mesa_logd("%s: import actual fd, dup and close()\n", __func__);
+        MESA_TRACE_SCOPE("%s: import actual fd, dup and close()\n", __func__);
 
         int fenceCopy = mSyncHelper->dup(pImportFenceFdInfo->fd);
         if (fenceCopy < 0) {
@@ -4963,7 +4986,7 @@ VkResult ResourceTracker::on_vkGetFenceFdKHR(void* context, VkResult, VkDevice d
         // relinquish ownership
         info.syncFd.reset();
 
-        mesa_logd("%s: got fd: %d\n", __func__, *pFd);
+        MESA_TRACE_SCOPE("%s: got fd: %d\n", __func__, *pFd);
         return VK_SUCCESS;
     }
     return VK_ERROR_DEVICE_LOST;
@@ -5031,7 +5054,7 @@ VkResult ResourceTracker::on_vkWaitForFences(void* context, VkResult, VkDevice d
     lock.unlock();
 
     for (auto fd : fencesExternalSyncFds) {
-        mesa_logd("Waiting on sync fd: %d", fd);
+        MESA_TRACE_SCOPE("Waiting on sync fd: %d", fd);
 
         std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
         // syncHelper works in milliseconds
@@ -5045,7 +5068,7 @@ VkResult ResourceTracker::on_vkWaitForFences(void* context, VkResult, VkDevice d
         }
 
         timeout -= timeTaken;
-        mesa_logd("Done waiting on sync fd: %d", fd);
+        MESA_TRACE_SCOPE("Done waiting on sync fd: %d", fd);
 
 #if GFXSTREAM_SYNC_DEBUG
         mSyncHelper->debugPrint(fd);
@@ -5055,7 +5078,7 @@ VkResult ResourceTracker::on_vkWaitForFences(void* context, VkResult, VkDevice d
     if (!fencesNonExternal.empty()) {
         auto hostConn = ResourceTracker::threadingCallbacks.hostConnectionGetFunc();
         auto vkEncoder = ResourceTracker::threadingCallbacks.vkEncoderGetFunc(hostConn);
-        mesa_logd("vkWaitForFences to host");
+        MESA_TRACE_SCOPE("vkWaitForFences to host");
         return vkEncoder->vkWaitForFences(device, fencesNonExternal.size(),
                                           fencesNonExternal.data(), waitAll, timeout,
                                           true /* do lock */);
@@ -5501,14 +5524,6 @@ void ResourceTracker::on_vkGetImageMemoryRequirements2(void* context, VkDevice d
     transformImageMemoryRequirements2ForGuest(pInfo->image, pMemoryRequirements);
 }
 
-void ResourceTracker::on_vkGetImageMemoryRequirements2KHR(
-    void* context, VkDevice device, const VkImageMemoryRequirementsInfo2* pInfo,
-    VkMemoryRequirements2* pMemoryRequirements) {
-    VkEncoder* enc = (VkEncoder*)context;
-    enc->vkGetImageMemoryRequirements2KHR(device, pInfo, pMemoryRequirements, true /* do lock */);
-    transformImageMemoryRequirements2ForGuest(pInfo->image, pMemoryRequirements);
-}
-
 VkResult ResourceTracker::on_vkGetImageDrmFormatModifierPropertiesEXT(
     void* context, VkResult, VkDevice device, VkImage image,
     VkImageDrmFormatModifierPropertiesEXT* pProperties) {
@@ -5572,12 +5587,6 @@ VkResult ResourceTracker::on_vkBindImageMemory2(void* context, VkResult, VkDevic
     }
 
     return enc->vkBindImageMemory2(device, bindingCount, pBindInfos, true /* do lock */);
-}
-
-VkResult ResourceTracker::on_vkBindImageMemory2KHR(void* context, VkResult result, VkDevice device,
-                                                   uint32_t bindingCount,
-                                                   const VkBindImageMemoryInfo* pBindInfos) {
-    return on_vkBindImageMemory2(context, result, device, bindingCount, pBindInfos);
 }
 
 VkResult ResourceTracker::on_vkCreateBuffer(void* context, VkResult, VkDevice device,
@@ -5753,35 +5762,6 @@ void ResourceTracker::on_vkGetBufferMemoryRequirements2(
     transformBufferMemoryRequirements2ForGuest(pInfo->buffer, pMemoryRequirements);
 }
 
-void ResourceTracker::on_vkGetBufferMemoryRequirements2KHR(
-    void* context, VkDevice device, const VkBufferMemoryRequirementsInfo2* pInfo,
-    VkMemoryRequirements2* pMemoryRequirements) {
-    VkEncoder* enc = (VkEncoder*)context;
-    enc->vkGetBufferMemoryRequirements2KHR(device, pInfo, pMemoryRequirements, true /* do lock */);
-    transformBufferMemoryRequirements2ForGuest(pInfo->buffer, pMemoryRequirements);
-}
-
-VkResult ResourceTracker::on_vkBindBufferMemory(void* context, VkResult, VkDevice device,
-                                                VkBuffer buffer, VkDeviceMemory memory,
-                                                VkDeviceSize memoryOffset) {
-    VkEncoder* enc = (VkEncoder*)context;
-    return enc->vkBindBufferMemory(device, buffer, memory, memoryOffset, true /* do lock */);
-}
-
-VkResult ResourceTracker::on_vkBindBufferMemory2(void* context, VkResult, VkDevice device,
-                                                 uint32_t bindInfoCount,
-                                                 const VkBindBufferMemoryInfo* pBindInfos) {
-    VkEncoder* enc = (VkEncoder*)context;
-    return enc->vkBindBufferMemory2(device, bindInfoCount, pBindInfos, true /* do lock */);
-}
-
-VkResult ResourceTracker::on_vkBindBufferMemory2KHR(void* context, VkResult, VkDevice device,
-                                                    uint32_t bindInfoCount,
-                                                    const VkBindBufferMemoryInfo* pBindInfos) {
-    VkEncoder* enc = (VkEncoder*)context;
-    return enc->vkBindBufferMemory2KHR(device, bindInfoCount, pBindInfos, true /* do lock */);
-}
-
 VkResult ResourceTracker::on_vkCreateSemaphore(void* context, VkResult input_result,
                                                VkDevice device,
                                                const VkSemaphoreCreateInfo* pCreateInfo,
@@ -5884,7 +5864,7 @@ void ResourceTracker::on_vkDestroySemaphore(void* context, VkDevice device, VkSe
     enc->vkDestroySemaphore(device, semaphore, pAllocator, true /* do lock */);
 }
 
-// https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#vkGetSemaphoreFdKHR
+// https://docs.vulkan.org/refpages/latest/refpages/source/vkGetSemaphoreFdKHR.html
 // Each call to vkGetSemaphoreFdKHR must create a new file descriptor and transfer ownership
 // of it to the application. To avoid leaking resources, the application must release ownership
 // of the file descriptor when it is no longer needed.
@@ -6196,6 +6176,7 @@ VkResult ResourceTracker::on_vkQueueSubmit(void* context, VkResult input_result,
                                            uint32_t submitCount, const VkSubmitInfo* pSubmits,
                                            VkFence fence) {
     MESA_TRACE_SCOPE("on_vkQueueSubmit");
+    EmitGuestAndHostTraceMarker((VkEncoder*)context);
 
     /* From the Vulkan 1.3.204 spec:
      *
@@ -6233,6 +6214,7 @@ VkResult ResourceTracker::on_vkQueueSubmit2(void* context, VkResult input_result
                                             uint32_t submitCount, const VkSubmitInfo2* pSubmits,
                                             VkFence fence) {
     MESA_TRACE_SCOPE("on_vkQueueSubmit2");
+    EmitGuestAndHostTraceMarker((VkEncoder*)context);
     return on_vkQueueSubmitTemplate<VkSubmitInfo2, VkSemaphoreSubmitInfo>(context, input_result, queue, submitCount,
                                                    pSubmits, fence);
 }
@@ -6390,72 +6372,73 @@ VkResult ResourceTracker::on_vkQueueSubmitTemplate(void* context, VkResult input
     std::vector<std::vector<uint64_t>> prunedWaitSemaphoreValueLists(submitCount);
     std::vector<std::vector<uint64_t>> prunedSignalSemaphoreValueLists(submitCount);
 
-    std::unique_lock<std::recursive_mutex> lock(mLock);
+    {
+        std::unique_lock<std::recursive_mutex> lock(mLock);
 
-    for (uint32_t i = 0; i < submitCount; ++i) {
-        std::vector<VkSemaphore> waitSemsToRemove;
-        std::vector<VkSemaphore> signalSemsToRemove;
-        for (uint32_t j = 0; j < getWaitSemaphoreCount(pSubmits[i]); ++j) {
-            VkSemaphore semaphore = getWaitSemaphore(pSubmits[i], j);
-            auto it = info_VkSemaphore.find(semaphore);
-            if (it != info_VkSemaphore.end()) {
-                auto& semInfo = it->second;
+        for (uint32_t i = 0; i < submitCount; ++i) {
+            std::vector<VkSemaphore> waitSemsToRemove;
+            std::vector<VkSemaphore> signalSemsToRemove;
+            for (uint32_t j = 0; j < getWaitSemaphoreCount(pSubmits[i]); ++j) {
+                VkSemaphore semaphore = getWaitSemaphore(pSubmits[i], j);
+                auto it = info_VkSemaphore.find(semaphore);
+                if (it != info_VkSemaphore.end()) {
+                    auto& semInfo = it->second;
 #ifdef VK_USE_PLATFORM_FUCHSIA
-                if (semInfo.eventHandle) {
-                    pre_signal_events.push_back(semInfo.eventHandle);
-                    pre_signal_semaphores.push_back(semaphore);
-                }
+                    if (semInfo.eventHandle) {
+                        pre_signal_events.push_back(semInfo.eventHandle);
+                        pre_signal_semaphores.push_back(semaphore);
+                    }
 #endif
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
-                if (semInfo.syncFd.has_value()) {
-                    preSignalSyncFds.push_back(semInfo.syncFd.value());
-                    waitSemsToRemove.push_back(semaphore);
-                }
-#endif
-            }
-        }
-        for (uint32_t j = 0; j < getSignalSemaphoreCount(pSubmits[i]); ++j) {
-            VkSemaphore semaphore = getSignalSemaphore(pSubmits[i], j);
-            auto it = info_VkSemaphore.find(semaphore);
-            if (it != info_VkSemaphore.end()) {
-                auto& semInfo = it->second;
-#ifdef VK_USE_PLATFORM_FUCHSIA
-                if (semInfo.eventHandle) {
-                    post_wait_events.push_back({semInfo.eventHandle, semInfo.eventKoid});
-#ifndef FUCHSIA_NO_TRACE
-                    if (semInfo.eventKoid != ZX_KOID_INVALID) {
-                        // TODO(fxbug.dev/42144867): Remove the "semaphore"
-                        // FLOW_END events once it is removed from clients
-                        // (for example, gfx Engine).
-                        TRACE_FLOW_END("gfx", "semaphore", semInfo.eventKoid);
-                        TRACE_FLOW_BEGIN("gfx", "goldfish_post_wait_event", semInfo.eventKoid);
+                    if (semInfo.syncFd.has_value()) {
+                        preSignalSyncFds.push_back(semInfo.syncFd.value());
+                        waitSemsToRemove.push_back(semaphore);
                     }
 #endif
                 }
+            }
+            for (uint32_t j = 0; j < getSignalSemaphoreCount(pSubmits[i]); ++j) {
+                VkSemaphore semaphore = getSignalSemaphore(pSubmits[i], j);
+                auto it = info_VkSemaphore.find(semaphore);
+                if (it != info_VkSemaphore.end()) {
+                    auto& semInfo = it->second;
+#ifdef VK_USE_PLATFORM_FUCHSIA
+                    if (semInfo.eventHandle) {
+                        post_wait_events.push_back({semInfo.eventHandle, semInfo.eventKoid});
+#ifndef FUCHSIA_NO_TRACE
+                        if (semInfo.eventKoid != ZX_KOID_INVALID) {
+                            // TODO(fxbug.dev/42144867): Remove the "semaphore"
+                            // FLOW_END events once it is removed from clients
+                            // (for example, gfx Engine).
+                            TRACE_FLOW_END("gfx", "semaphore", semInfo.eventKoid);
+                            TRACE_FLOW_BEGIN("gfx", "goldfish_post_wait_event", semInfo.eventKoid);
+                        }
+#endif
+                    }
 #endif
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
-                if (semInfo.syncFd.value_or(-1) >= 0) {
-                    post_wait_sync_fds.push_back(semInfo.syncFd.value());
-                    signalSemsToRemove.push_back(semaphore);
-                }
+                    if (semInfo.syncFd.value_or(-1) >= 0) {
+                        post_wait_sync_fds.push_back(semInfo.syncFd.value());
+                        signalSemsToRemove.push_back(semaphore);
+                    }
 #endif
+                }
             }
-        }
 
-        // Get the current TSSI from the unorphaned submitInfo, the prune functions may need this.
-        const VkTimelineSemaphoreSubmitInfo* currTssi = vk_find_struct_const(&pSubmits[i], TIMELINE_SEMAPHORE_SUBMIT_INFO);
-        // Start with an orphan copy of the current submitInfo
-        prunedSubmitInfos[i] = vk_make_orphan_copy(pSubmits[i]);
-        // Do initial setup for the new tssi struct; prune functions may or may not actually add to submitInfo.
-        prunedTssis[i] = {
-            .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
-            .pNext = NULL
-        };
-        // Finally, prune the wait/signal semaphores accordingly!
-        pruneWaitSemaphores(waitSemsToRemove, prunedSubmitInfos[i], currTssi, prunedWaitSemaphoreLists[i], prunedWaitDstStageMaskFlagLists[i], prunedTssis[i], prunedWaitSemaphoreValueLists[i]);
-        pruneSignalSemaphores(signalSemsToRemove, prunedSubmitInfos[i], currTssi, prunedSignalSemaphoreLists[i], prunedTssis[i], prunedSignalSemaphoreValueLists[i]);
+            // Get the current TSSI from the unorphaned submitInfo, the prune functions may need this.
+            const VkTimelineSemaphoreSubmitInfo* currTssi = vk_find_struct_const(&pSubmits[i], TIMELINE_SEMAPHORE_SUBMIT_INFO);
+            // Start with an orphan copy of the current submitInfo
+            prunedSubmitInfos[i] = vk_make_orphan_copy(pSubmits[i]);
+            // Do initial setup for the new tssi struct; prune functions may or may not actually add to submitInfo.
+            prunedTssis[i] = {
+                .sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+                .pNext = NULL
+            };
+            // Finally, prune the wait/signal semaphores accordingly!
+            pruneWaitSemaphores(waitSemsToRemove, prunedSubmitInfos[i], currTssi, prunedWaitSemaphoreLists[i], prunedWaitDstStageMaskFlagLists[i], prunedTssis[i], prunedWaitSemaphoreValueLists[i]);
+            pruneSignalSemaphores(signalSemsToRemove, prunedSubmitInfos[i], currTssi, prunedSignalSemaphoreLists[i], prunedTssis[i], prunedSignalSemaphoreValueLists[i]);
+        }
     }
-    lock.unlock();
 
     // Schedule waits on the OS external objects and
     // signal the wait semaphores
@@ -6480,7 +6463,7 @@ VkResult ResourceTracker::on_vkQueueSubmitTemplate(void* context, VkResult input
 #endif
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
     for (auto fd : preSignalSyncFds) {
-        // https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/VkImportSemaphoreFdInfoKHR.html
+        // https://docs.vulkan.org/refpages/latest/refpages/source/VkImportSemaphoreFdInfoKHR.html
         // fd == -1 is treated as already signaled
         if (fd != -1) {
             mSyncHelper->wait(fd, 3000);
@@ -6495,20 +6478,22 @@ VkResult ResourceTracker::on_vkQueueSubmitTemplate(void* context, VkResult input
     input_result = vkQueueSubmitEnc(enc, queue, submitCount, prunedSubmitInfos.data(), fence);
     if (input_result != VK_SUCCESS) return input_result;
 
-    lock.lock();
     int externalFenceFdToSignal = -1;
-
 #if defined(VK_USE_PLATFORM_ANDROID_KHR) || DETECT_OS_LINUX
-    if (fence != VK_NULL_HANDLE) {
-        auto it = info_VkFence.find(fence);
-        if (it != info_VkFence.end()) {
-            const auto& info = it->second;
-            if (info.syncFd && *info.syncFd >= 0) {
-                externalFenceFdToSignal = *info.syncFd;
+    {
+        std::unique_lock<std::recursive_mutex> lock(mLock);
+        if (fence != VK_NULL_HANDLE) {
+            auto it = info_VkFence.find(fence);
+            if (it != info_VkFence.end()) {
+                const auto& info = it->second;
+                if (info.syncFd && *info.syncFd >= 0) {
+                    externalFenceFdToSignal = *info.syncFd;
+                }
             }
         }
     }
 #endif
+
     VkResult waitIdleRes = VK_SUCCESS;
     if (externalFenceFdToSignal >= 0 || !post_wait_events.empty() || !post_wait_sync_fds.empty()) {
         auto hostConn = ResourceTracker::threadingCallbacks.hostConnectionGetFunc();
@@ -6534,7 +6519,7 @@ VkResult ResourceTracker::on_vkQueueSubmitTemplate(void* context, VkResult input
             }
 
             if (externalFenceFdToSignal >= 0) {
-                mesa_logd("%s: external fence real signal: %d\n", __func__,
+                MESA_TRACE_SCOPE("%s: external fence real signal: %d\n", __func__,
                           externalFenceFdToSignal);
                 goldfish_sync_signal(externalFenceFdToSignal);
             }
@@ -6812,20 +6797,6 @@ VkResult ResourceTracker::on_vkCreateDescriptorUpdateTemplate(
     return initDescriptorUpdateTemplateBuffers(pCreateInfo, *pDescriptorUpdateTemplate);
 }
 
-VkResult ResourceTracker::on_vkCreateDescriptorUpdateTemplateKHR(
-    void* context, VkResult input_result, VkDevice device,
-    const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo,
-    const VkAllocationCallbacks* pAllocator,
-    VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
-    (void)context;
-    (void)device;
-    (void)pAllocator;
-
-    if (input_result != VK_SUCCESS) return input_result;
-
-    return initDescriptorUpdateTemplateBuffers(pCreateInfo, *pDescriptorUpdateTemplate);
-}
-
 void ResourceTracker::on_vkUpdateDescriptorSetWithTemplate(
     void* context, VkDevice device, VkDescriptorSet descriptorSet,
     VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
@@ -6978,13 +6949,6 @@ void ResourceTracker::on_vkUpdateDescriptorSetWithTemplate(
         bufferViews, inlineUniformBlockBuffer, true /* do lock */);
 }
 
-void ResourceTracker::on_vkUpdateDescriptorSetWithTemplateKHR(
-    void* context, VkDevice device, VkDescriptorSet descriptorSet,
-    VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
-    on_vkUpdateDescriptorSetWithTemplate(context, device, descriptorSet, descriptorUpdateTemplate,
-                                         pData);
-}
-
 #ifdef LINUX_GUEST_BUILD
 static void fillEmulatedDrmFormatModPropsList(
     const VkFormatProperties* pFormatProperties,
@@ -7022,14 +6986,8 @@ void ResourceTracker::on_vkGetPhysicalDeviceFormatProperties2(
 #endif
 }
 
-void ResourceTracker::on_vkGetPhysicalDeviceFormatProperties2KHR(
-    void* context, VkPhysicalDevice physicalDevice, VkFormat format,
-    VkFormatProperties2* pFormatProperties) {
-    on_vkGetPhysicalDeviceFormatProperties2(context, physicalDevice, format, pFormatProperties);
-}
-
-VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2_common(
-    bool isKhr, void* context, VkResult input_result, VkPhysicalDevice physicalDevice,
+VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2(
+    void* context, VkResult input_result, VkPhysicalDevice physicalDevice,
     const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
     VkImageFormatProperties2* pImageFormatProperties) {
     VkEncoder* enc = (VkEncoder*)context;
@@ -7108,13 +7066,8 @@ VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2_common(
 
     VkResult hostRes;
 
-    if (isKhr) {
-        hostRes = enc->vkGetPhysicalDeviceImageFormatProperties2KHR(
-            physicalDevice, &localImageFormatInfo, pImageFormatProperties, true /* do lock */);
-    } else {
-        hostRes = enc->vkGetPhysicalDeviceImageFormatProperties2(
-            physicalDevice, &localImageFormatInfo, pImageFormatProperties, true /* do lock */);
-    }
+    hostRes = enc->vkGetPhysicalDeviceImageFormatProperties2(
+        physicalDevice, &localImageFormatInfo, pImageFormatProperties, true /* do lock */);
 
     if (hostRes != VK_SUCCESS) return hostRes;
 
@@ -7169,31 +7122,13 @@ VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2_common(
     return hostRes;
 }
 
-VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2(
-    void* context, VkResult input_result, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
-    VkImageFormatProperties2* pImageFormatProperties) {
-    return on_vkGetPhysicalDeviceImageFormatProperties2_common(
-        false /* not KHR */, context, input_result, physicalDevice, pImageFormatInfo,
-        pImageFormatProperties);
-}
-
-VkResult ResourceTracker::on_vkGetPhysicalDeviceImageFormatProperties2KHR(
-    void* context, VkResult input_result, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
-    VkImageFormatProperties2* pImageFormatProperties) {
-    return on_vkGetPhysicalDeviceImageFormatProperties2_common(
-        true /* is KHR */, context, input_result, physicalDevice, pImageFormatInfo,
-        pImageFormatProperties);
-}
-
-void ResourceTracker::on_vkGetPhysicalDeviceExternalBufferProperties_common(
-    bool isKhr, void* context, VkPhysicalDevice physicalDevice,
+void ResourceTracker::on_vkGetPhysicalDeviceExternalBufferProperties(
+    void* context, VkPhysicalDevice physicalDevice,
     const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo,
     VkExternalBufferProperties* pExternalBufferProperties) {
     VkEncoder* enc = (VkEncoder*)context;
 
-#if defined(ANDROID)
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
     // Older versions of Goldfish's Gralloc did not support allocating AHARDWAREBUFFER_FORMAT_BLOB
     // with GPU usage (b/299520213).
     if (mGralloc->treatBlobAsImage() &&
@@ -7221,32 +7156,11 @@ void ResourceTracker::on_vkGetPhysicalDeviceExternalBufferProperties_common(
         }
     }
 
-    if (isKhr) {
-        enc->vkGetPhysicalDeviceExternalBufferPropertiesKHR(
-            physicalDevice, pExternalBufferInfo, pExternalBufferProperties, true /* do lock */);
-    } else {
-        enc->vkGetPhysicalDeviceExternalBufferProperties(
-            physicalDevice, pExternalBufferInfo, pExternalBufferProperties, true /* do lock */);
-    }
+    enc->vkGetPhysicalDeviceExternalBufferProperties(
+        physicalDevice, pExternalBufferInfo, pExternalBufferProperties, true /* do lock */);
+
     transformImpl_VkExternalMemoryProperties_fromhost(
         &pExternalBufferProperties->externalMemoryProperties, 0);
-}
-
-void ResourceTracker::on_vkGetPhysicalDeviceExternalBufferProperties(
-    void* context, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceExternalBufferInfo* pExternalBufferInfo,
-    VkExternalBufferProperties* pExternalBufferProperties) {
-    return on_vkGetPhysicalDeviceExternalBufferProperties_common(
-        false /* not KHR */, context, physicalDevice, pExternalBufferInfo,
-        pExternalBufferProperties);
-}
-
-void ResourceTracker::on_vkGetPhysicalDeviceExternalBufferPropertiesKHR(
-    void* context, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceExternalBufferInfoKHR* pExternalBufferInfo,
-    VkExternalBufferPropertiesKHR* pExternalBufferProperties) {
-    return on_vkGetPhysicalDeviceExternalBufferProperties_common(
-        true /* is KHR */, context, physicalDevice, pExternalBufferInfo, pExternalBufferProperties);
 }
 
 void ResourceTracker::on_vkGetPhysicalDeviceExternalSemaphoreProperties(
@@ -7287,14 +7201,6 @@ void ResourceTracker::on_vkGetPhysicalDeviceExternalSemaphoreProperties(
             VK_EXTERNAL_SEMAPHORE_FEATURE_IMPORTABLE_BIT;
     }
 #endif  // VK_USE_PLATFORM_FUCHSIA
-}
-
-void ResourceTracker::on_vkGetPhysicalDeviceExternalSemaphorePropertiesKHR(
-    void* context, VkPhysicalDevice physicalDevice,
-    const VkPhysicalDeviceExternalSemaphoreInfo* pExternalSemaphoreInfo,
-    VkExternalSemaphoreProperties* pExternalSemaphoreProperties) {
-    on_vkGetPhysicalDeviceExternalSemaphoreProperties(
-        context, physicalDevice, pExternalSemaphoreInfo, pExternalSemaphoreProperties);
 }
 
 void ResourceTracker::registerEncoderCleanupCallback(const VkEncoder* encoder, void* object,
@@ -7581,8 +7487,6 @@ void ResourceTracker::on_vkCmdClearColorImage(void* context, VkCommandBuffer com
         return;
     }
 
-    auto& imageInfo = imageInfoIt->second;
-    VkFormat actualFormat = imageInfo.createInfo.format;
     VkClearColorValue convertedColor = *pColor;
 
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
@@ -7590,6 +7494,8 @@ void ResourceTracker::on_vkCmdClearColorImage(void* context, VkCommandBuffer com
     // it'll have the identical parameters, so we need to convert the linearized
     // clear color back to sRGB at this point.
     // TODO(b/420857458): revise the allocation logic to support mutable formats better
+    auto& imageInfo = imageInfoIt->second;
+    VkFormat actualFormat = imageInfo.createInfo.format;
     if (imageInfo.hasAnb && srgbFormatNeedsConversionForClearColor(actualFormat)) {
        // Perform linear to srgb conversion
        // Backing image is UNORM for vkCmdClearColorImage so we convert pColor
@@ -7658,7 +7564,7 @@ VkResult ResourceTracker::exportSyncFdForQSRILocked(VkImage image, int* fd) {
 #endif
     }
 
-    mesa_logd("%s: got fd: %d\n", __func__, *fd);
+    MESA_TRACE_SCOPE("%s: got fd: %d\n", __func__, *fd);
     auto imageInfoIt = info_VkImage.find(image);
     if (imageInfoIt != info_VkImage.end()) {
         auto& imageInfo = imageInfoIt->second;

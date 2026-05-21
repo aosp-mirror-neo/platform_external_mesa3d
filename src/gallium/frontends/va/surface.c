@@ -33,7 +33,6 @@
 #include "util/u_handle_table.h"
 #include "util/u_rect.h"
 #include "util/u_sampler.h"
-#include "util/u_surface.h"
 #include "util/u_video.h"
 #include "util/set.h"
 
@@ -128,14 +127,6 @@ vlVaDestroySurfaces(VADriverContextP ctx, VASurfaceID *surface_list, int num_sur
             surf->ctx->decoder->destroy_fence(surf->ctx->decoder, surf->fence);
          if (surf->is_dpb)
             vlVaRemoveDpbSurface(surf, surface_list[i]);
-      }
-      if (drv->last_efc_surface) {
-         vlVaSurface *efc_surf = drv->last_efc_surface;
-         if (efc_surf == surf || efc_surf->efc_surface == surf) {
-            efc_surf->efc_surface = NULL;
-            drv->last_efc_surface = NULL;
-            drv->efc_count = -1;
-         }
       }
       if (surf->coded_buf)
          surf->coded_buf->coded_surf = NULL;
@@ -243,210 +234,6 @@ vlVaQuerySurfaceError(VADriverContextP ctx, VASurfaceID render_target, VAStatus 
    return VA_STATUS_ERROR_UNIMPLEMENTED;
 }
 
-static void
-upload_sampler(struct pipe_context *pipe, struct pipe_sampler_view *dst,
-               const struct pipe_box *dst_box, const void *src, unsigned src_stride,
-               unsigned src_x, unsigned src_y)
-{
-   struct pipe_transfer *transfer;
-   void *map;
-
-   map = pipe->texture_map(pipe, dst->texture, 0, PIPE_MAP_WRITE,
-                            dst_box, &transfer);
-   if (!map)
-      return;
-
-   util_copy_rect(map, dst->texture->format, transfer->stride, 0, 0,
-                  dst_box->width, dst_box->height,
-                  src, src_stride, src_x, src_y);
-
-   pipe->texture_unmap(pipe, transfer);
-}
-
-static VAStatus
-vlVaPutSubpictures(vlVaSurface *surf, vlVaDriver *drv,
-                   struct pipe_surface *surf_draw, struct u_rect *dirty_area,
-                   struct u_rect *src_rect, struct u_rect *dst_rect)
-{
-   vlVaSubpicture *sub;
-   int i;
-
-   for (i = 0; i < surf->subpics.size/sizeof(vlVaSubpicture *); i++) {
-      struct pipe_blend_state blend;
-      void *blend_state = NULL;
-      vlVaBuffer *buf;
-      struct pipe_box box;
-      struct u_rect *s, *d, sr, dr, c;
-      int sw, sh, dw, dh;
-
-      sub = ((vlVaSubpicture **)surf->subpics.data)[i];
-      if (!sub)
-         continue;
-
-      buf = handle_table_get(drv->htab, sub->image->buf);
-      if (!buf)
-         return VA_STATUS_ERROR_INVALID_IMAGE;
-
-      box.x = 0;
-      box.y = 0;
-      box.z = 0;
-      box.width = sub->dst_rect.x1 - sub->dst_rect.x0;
-      box.height = sub->dst_rect.y1 - sub->dst_rect.y0;
-      box.depth = 1;
-
-      s = &sub->src_rect;
-      d = &sub->dst_rect;
-      sw = s->x1 - s->x0;
-      sh = s->y1 - s->y0;
-      dw = d->x1 - d->x0;
-      dh = d->y1 - d->y0;
-      c.x0 = MAX2(d->x0, s->x0);
-      c.y0 = MAX2(d->y0, s->y0);
-      c.x1 = MIN2(d->x0 + dw, src_rect->x1);
-      c.y1 = MIN2(d->y0 + dh, src_rect->y1);
-      sr.x0 = s->x0 + (c.x0 - d->x0)*(sw/(float)dw);
-      sr.y0 = s->y0 + (c.y0 - d->y0)*(sh/(float)dh);
-      sr.x1 = s->x0 + (c.x1 - d->x0)*(sw/(float)dw);
-      sr.y1 = s->y0 + (c.y1 - d->y0)*(sh/(float)dh);
-
-      s = src_rect;
-      d = dst_rect;
-      sw = s->x1 - s->x0;
-      sh = s->y1 - s->y0;
-      dw = d->x1 - d->x0;
-      dh = d->y1 - d->y0;
-      dr.x0 = d->x0 + c.x0*(dw/(float)sw);
-      dr.y0 = d->y0 + c.y0*(dh/(float)sh);
-      dr.x1 = d->x0 + c.x1*(dw/(float)sw);
-      dr.y1 = d->y0 + c.y1*(dh/(float)sh);
-
-      vl_compositor_clear_layers(&drv->cstate);
-      if (drv->pipe->create_blend_state) {
-         memset(&blend, 0, sizeof(blend));
-         blend.independent_blend_enable = 0;
-         blend.rt[0].blend_enable = 1;
-         blend.rt[0].rgb_src_factor = PIPE_BLENDFACTOR_SRC_ALPHA;
-         blend.rt[0].rgb_dst_factor = PIPE_BLENDFACTOR_INV_SRC_ALPHA;
-         blend.rt[0].alpha_src_factor = PIPE_BLENDFACTOR_ZERO;
-         blend.rt[0].alpha_dst_factor = PIPE_BLENDFACTOR_ZERO;
-         blend.rt[0].rgb_func = PIPE_BLEND_ADD;
-         blend.rt[0].alpha_func = PIPE_BLEND_ADD;
-         blend.rt[0].colormask = PIPE_MASK_RGBA;
-         blend.logicop_enable = 0;
-         blend.logicop_func = PIPE_LOGICOP_CLEAR;
-         blend.dither = 0;
-         blend_state = drv->pipe->create_blend_state(drv->pipe, &blend);
-         vl_compositor_set_layer_blend(&drv->cstate, 0, blend_state, false);
-      }
-      upload_sampler(drv->pipe, sub->sampler, &box, buf->data,
-                     sub->image->pitches[0], 0, 0);
-      vl_compositor_set_rgba_layer(&drv->cstate, &drv->compositor, 0, sub->sampler,
-                                   &sr, NULL, NULL);
-      vl_compositor_set_layer_dst_area(&drv->cstate, 0, &dr);
-      vl_compositor_render(&drv->cstate, &drv->compositor, surf_draw, dirty_area, false);
-      if (blend_state)
-         drv->pipe->delete_blend_state(drv->pipe, blend_state);
-   }
-
-   return VA_STATUS_SUCCESS;
-}
-
-VAStatus
-vlVaPutSurface(VADriverContextP ctx, VASurfaceID surface_id, void* draw, short srcx, short srcy,
-               unsigned short srcw, unsigned short srch, short destx, short desty,
-               unsigned short destw, unsigned short desth, VARectangle *cliprects,
-               unsigned int number_cliprects,  unsigned int flags)
-{
-   vlVaDriver *drv;
-   vlVaSurface *surf;
-   struct pipe_screen *screen;
-   struct pipe_resource *tex;
-   struct pipe_surface surf_templ;
-   struct vl_screen *vscreen;
-   struct u_rect src_rect, *dirty_area;
-   struct u_rect dst_rect = {destx, destx + destw, desty, desty + desth};
-   enum pipe_format format;
-   VAStatus status;
-   enum VL_CSC_COLOR_STANDARD color_standard;
-
-   if (!ctx)
-      return VA_STATUS_ERROR_INVALID_CONTEXT;
-
-   drv = VL_VA_DRIVER(ctx);
-   mtx_lock(&drv->mutex);
-   surf = handle_table_get(drv->htab, surface_id);
-   vlVaGetSurfaceBuffer(drv, surf);
-   if (!surf || !surf->buffer) {
-      mtx_unlock(&drv->mutex);
-      return VA_STATUS_ERROR_INVALID_SURFACE;
-   }
-
-   screen = drv->pipe->screen;
-   vscreen = drv->vscreen;
-
-   tex = vscreen->texture_from_drawable(vscreen, draw);
-   if (!tex) {
-      mtx_unlock(&drv->mutex);
-      return VA_STATUS_ERROR_INVALID_DISPLAY;
-   }
-
-   dirty_area = vscreen->get_dirty_area(vscreen);
-
-   u_surface_default_template(&surf_templ, tex);
-
-   src_rect.x0 = srcx;
-   src_rect.y0 = srcy;
-   src_rect.x1 = srcw + srcx;
-   src_rect.y1 = srch + srcy;
-
-   format = surf->buffer->buffer_format;
-
-   if (flags & VA_SRC_BT601)
-      color_standard = VL_CSC_COLOR_STANDARD_BT_601;
-   else if (flags & VA_SRC_SMPTE_240)
-      color_standard = VL_CSC_COLOR_STANDARD_SMPTE_240M;
-   else
-      color_standard = VL_CSC_COLOR_STANDARD_BT_709;
-
-   vl_csc_get_matrix(color_standard, NULL, true, &drv->csc);
-   vl_compositor_set_csc_matrix(&drv->cstate, (const vl_csc_matrix *)&drv->csc, 1.0f, 0.0f);
-
-   vl_compositor_clear_layers(&drv->cstate);
-
-   if (!util_format_is_yuv(format)) {
-      struct pipe_sampler_view **views;
-
-      views = surf->buffer->get_sampler_view_planes(surf->buffer);
-      vl_compositor_set_rgba_layer(&drv->cstate, &drv->compositor, 0, views[0], &src_rect, NULL, NULL);
-   } else
-      vl_compositor_set_buffer_layer(&drv->cstate, &drv->compositor, 0, surf->buffer, &src_rect, NULL, VL_COMPOSITOR_WEAVE);
-
-   vl_compositor_set_layer_dst_area(&drv->cstate, 0, &dst_rect);
-   vl_compositor_render(&drv->cstate, &drv->compositor, &surf_templ, dirty_area, true);
-
-   status = vlVaPutSubpictures(surf, drv, &surf_templ, dirty_area, &src_rect, &dst_rect);
-   if (status) {
-      mtx_unlock(&drv->mutex);
-      return status;
-   }
-
-   if (drv->pipe->flush_resource)
-      drv->pipe->flush_resource(drv->pipe, tex);
-
-   /* flush before calling flush_frontbuffer so that rendering is flushed
-    * to back buffer so the texture can be copied in flush_frontbuffer
-    */
-   vlVaSurfaceFlush(drv, surf);
-
-   screen->flush_frontbuffer(screen, drv->pipe, tex, 0, 0,
-                             vscreen->get_private(vscreen), 0, NULL);
-
-
-   pipe_resource_reference(&tex, NULL);
-   mtx_unlock(&drv->mutex);
-
-   return VA_STATUS_SUCCESS;
-}
 
 VAStatus
 vlVaLockSurface(VADriverContextP ctx, VASurfaceID surface, unsigned int *fourcc,
@@ -906,11 +693,9 @@ surface_from_external_win32_memory(VADriverContextP ctx, vlVaSurface *surface,
                              struct pipe_video_buffer *templat)
 {
    vlVaDriver *drv;
-   struct pipe_screen *pscreen;
    struct winsys_handle whandle;
    VAStatus result;
 
-   pscreen = VL_VA_PSCREEN(ctx);
    drv = VL_VA_DRIVER(ctx);
 
    templat->buffer_format = surface->templat.buffer_format;
@@ -982,7 +767,7 @@ vlVaHandleSurfaceAllocate(vlVaDriver *drv, vlVaSurface *surface,
          if (i > !!surface->buffer->interlaced)
             c.f[0] = c.f[1] = c.f[2] = c.f[3] = 0.5f;
 
-         uint16_t width, height;
+         unsigned width, height;
          pipe_surface_size(&surfaces[i], &width, &height);
          drv->pipe->clear_render_target(drv->pipe, &surfaces[i], &c, 0, 0,
                   width, height,
@@ -1297,7 +1082,7 @@ vlVaCreateSurfaces2(VADriverContextP ctx, unsigned int format,
          assert(0);
       }
 
-      util_dynarray_init(&surf->subpics, NULL);
+      surf->subpics = UTIL_DYNARRAY_INIT;
       surfaces[i] = handle_table_add(drv->htab, surf);
       if (!surfaces[i]) {
          vaStatus = VA_STATUS_ERROR_ALLOCATION_FAILED;
@@ -1324,226 +1109,6 @@ no_res:
       vlVaDestroySurfaces(ctx, surfaces, i);
 
    return vaStatus;
-}
-
-VAStatus
-vlVaQueryVideoProcFilters(VADriverContextP ctx, VAContextID context,
-                          VAProcFilterType *filters, unsigned int *num_filters)
-{
-   unsigned int num = 0;
-
-   if (!ctx)
-      return VA_STATUS_ERROR_INVALID_CONTEXT;
-
-   if (!num_filters || !filters)
-      return VA_STATUS_ERROR_INVALID_PARAMETER;
-
-   filters[num++] = VAProcFilterDeinterlacing;
-
-   *num_filters = num;
-
-   return VA_STATUS_SUCCESS;
-}
-
-VAStatus
-vlVaQueryVideoProcFilterCaps(VADriverContextP ctx, VAContextID context,
-                             VAProcFilterType type, void *filter_caps,
-                             unsigned int *num_filter_caps)
-{
-   unsigned int i;
-
-   if (!ctx)
-      return VA_STATUS_ERROR_INVALID_CONTEXT;
-
-   if (!filter_caps || !num_filter_caps)
-      return VA_STATUS_ERROR_INVALID_PARAMETER;
-
-   i = 0;
-
-   switch (type) {
-   case VAProcFilterNone:
-      break;
-   case VAProcFilterDeinterlacing: {
-      VAProcFilterCapDeinterlacing *deint = filter_caps;
-
-      if (*num_filter_caps < 3) {
-         *num_filter_caps = 3;
-         return VA_STATUS_ERROR_MAX_NUM_EXCEEDED;
-      }
-
-      deint[i++].type = VAProcDeinterlacingBob;
-      deint[i++].type = VAProcDeinterlacingWeave;
-      deint[i++].type = VAProcDeinterlacingMotionAdaptive;
-      break;
-   }
-
-   case VAProcFilterNoiseReduction:
-   case VAProcFilterSharpening:
-   case VAProcFilterColorBalance:
-   case VAProcFilterSkinToneEnhancement:
-      return VA_STATUS_ERROR_UNIMPLEMENTED;
-   default:
-      assert(0);
-   }
-
-   *num_filter_caps = i;
-
-   return VA_STATUS_SUCCESS;
-}
-
-static VAProcColorStandardType vpp_input_color_standards[] = {
-   VAProcColorStandardBT601,
-   VAProcColorStandardBT709
-};
-
-static VAProcColorStandardType vpp_output_color_standards[] = {
-   VAProcColorStandardBT601,
-   VAProcColorStandardBT709
-};
-
-static VAProcColorStandardType vpp_input_color_standards_extends[] = {
-   VAProcColorStandardBT601,
-   VAProcColorStandardBT709,
-   VAProcColorStandardBT2020,
-   VAProcColorStandardExplicit
-};
-
-static VAProcColorStandardType vpp_output_color_standards_extends[] = {
-   VAProcColorStandardBT601,
-   VAProcColorStandardBT709,
-   VAProcColorStandardBT2020,
-   VAProcColorStandardExplicit
-};
-
-VAStatus
-vlVaQueryVideoProcPipelineCaps(VADriverContextP ctx, VAContextID context,
-                               VABufferID *filters, unsigned int num_filters,
-                               VAProcPipelineCaps *pipeline_cap)
-{
-   unsigned int i = 0;
-
-   if (!ctx)
-      return VA_STATUS_ERROR_INVALID_CONTEXT;
-
-   if (!pipeline_cap)
-      return VA_STATUS_ERROR_INVALID_PARAMETER;
-
-   if (num_filters && !filters)
-      return VA_STATUS_ERROR_INVALID_PARAMETER;
-
-   pipeline_cap->pipeline_flags = 0;
-   pipeline_cap->filter_flags = 0;
-   pipeline_cap->num_forward_references = 0;
-   pipeline_cap->num_backward_references = 0;
-   pipeline_cap->rotation_flags = VA_ROTATION_NONE;
-   pipeline_cap->mirror_flags = VA_MIRROR_NONE;
-
-   struct pipe_screen *pscreen = VL_VA_PSCREEN(ctx);
-   bool media_only = !pscreen->caps.graphics && !pscreen->caps.compute;
-   uint32_t pipe_orientation_flags = pscreen->get_video_param(pscreen,
-                                                              PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                              PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                              PIPE_VIDEO_CAP_VPP_ORIENTATION_MODES);
-
-   if (!media_only || pipe_orientation_flags & PIPE_VIDEO_VPP_ROTATION_90)
-      pipeline_cap->rotation_flags |= (1 << VA_ROTATION_90);
-   if (!media_only || pipe_orientation_flags & PIPE_VIDEO_VPP_ROTATION_180)
-      pipeline_cap->rotation_flags |= (1 << VA_ROTATION_180);
-   if (!media_only || pipe_orientation_flags & PIPE_VIDEO_VPP_ROTATION_270)
-      pipeline_cap->rotation_flags |= (1 << VA_ROTATION_270);
-
-   if (!media_only || pipe_orientation_flags & PIPE_VIDEO_VPP_FLIP_HORIZONTAL)
-      pipeline_cap->mirror_flags |= VA_MIRROR_HORIZONTAL;
-   if (!media_only || pipe_orientation_flags & PIPE_VIDEO_VPP_FLIP_VERTICAL)
-      pipeline_cap->mirror_flags |= VA_MIRROR_VERTICAL;
-
-   if (pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN, PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                PIPE_VIDEO_CAP_VPP_SUPPORT_HDR_INPUT)) {
-      pipeline_cap->num_input_color_standards = ARRAY_SIZE(vpp_input_color_standards_extends);
-      pipeline_cap->input_color_standards = vpp_input_color_standards_extends;
-   } else {
-      pipeline_cap->num_input_color_standards = ARRAY_SIZE(vpp_input_color_standards);
-      pipeline_cap->input_color_standards = vpp_input_color_standards;
-   }
-   if (pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN, PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                PIPE_VIDEO_CAP_VPP_SUPPORT_HDR_OUTPUT)) {
-      pipeline_cap->num_output_color_standards = ARRAY_SIZE(vpp_output_color_standards_extends);
-      pipeline_cap->output_color_standards = vpp_output_color_standards_extends;
-   } else {
-      pipeline_cap->num_output_color_standards = ARRAY_SIZE(vpp_output_color_standards);
-      pipeline_cap->output_color_standards = vpp_output_color_standards;
-   }
-
-   pipeline_cap->max_input_width = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                            PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                            PIPE_VIDEO_CAP_VPP_MAX_INPUT_WIDTH);
-
-   pipeline_cap->max_input_height = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                             PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                             PIPE_VIDEO_CAP_VPP_MAX_INPUT_HEIGHT);
-
-   pipeline_cap->min_input_width = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                            PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                            PIPE_VIDEO_CAP_VPP_MIN_INPUT_WIDTH);
-
-   pipeline_cap->min_input_height = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                             PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                             PIPE_VIDEO_CAP_VPP_MIN_INPUT_HEIGHT);
-
-   pipeline_cap->max_output_width = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                             PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                             PIPE_VIDEO_CAP_VPP_MAX_OUTPUT_WIDTH);
-
-   pipeline_cap->max_output_height = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                              PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                              PIPE_VIDEO_CAP_VPP_MAX_OUTPUT_HEIGHT);
-
-   pipeline_cap->min_output_width = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                             PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                             PIPE_VIDEO_CAP_VPP_MIN_OUTPUT_WIDTH);
-
-   pipeline_cap->min_output_height = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                              PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                              PIPE_VIDEO_CAP_VPP_MIN_OUTPUT_HEIGHT);
-
-   uint32_t pipe_blend_modes = pscreen->get_video_param(pscreen, PIPE_VIDEO_PROFILE_UNKNOWN,
-                                                        PIPE_VIDEO_ENTRYPOINT_PROCESSING,
-                                                        PIPE_VIDEO_CAP_VPP_BLEND_MODES);
-
-   pipeline_cap->blend_flags = 0;
-   if (pipe_blend_modes & PIPE_VIDEO_VPP_BLEND_MODE_GLOBAL_ALPHA)
-      pipeline_cap->blend_flags |= VA_BLEND_GLOBAL_ALPHA;
-
-   vlVaDriver *drv = VL_VA_DRIVER(ctx);
-
-   mtx_lock(&drv->mutex);
-   for (i = 0; i < num_filters; i++) {
-      vlVaBuffer *buf = handle_table_get(drv->htab, filters[i]);
-      VAProcFilterParameterBufferBase *filter;
-
-      if (!buf || buf->type != VAProcFilterParameterBufferType) {
-         mtx_unlock(&drv->mutex);
-         return VA_STATUS_ERROR_INVALID_BUFFER;
-      }
-
-      filter = buf->data;
-      switch (filter->type) {
-      case VAProcFilterDeinterlacing: {
-         VAProcFilterParameterBufferDeinterlacing *deint = buf->data;
-         if (deint->algorithm == VAProcDeinterlacingMotionAdaptive) {
-            pipeline_cap->num_forward_references = 2;
-            pipeline_cap->num_backward_references = 1;
-         }
-         break;
-      }
-      default:
-         mtx_unlock(&drv->mutex);
-         return VA_STATUS_ERROR_UNIMPLEMENTED;
-      }
-   }
-   mtx_unlock(&drv->mutex);
-
-   return VA_STATUS_SUCCESS;
 }
 
 #ifndef _WIN32
@@ -1670,7 +1235,7 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
    desc->height = surf->templat.height;
    desc->num_objects = 0;
 
-   bool supports_contiguous_planes = screen->resource_get_info && surf->buffer->contiguous_planes;
+   bool supports_contiguous_planes = screen->resource_get_param && surf->buffer->contiguous_planes;
 
    for (p = 0; p < ARRAY_SIZE(desc->objects); p++) {
       struct winsys_handle whandle;
@@ -1689,7 +1254,7 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
       }
 
       /* If the driver stores all planes contiguously in memory, only one
-       * handle needs to be exported. resource_get_info is used to obtain
+       * handle needs to be exported. resource_get_param is used to obtain
        * pitch and offset for each layer. */
       if (!desc->num_objects || !supports_contiguous_planes) {
          memset(&whandle, 0, sizeof(whandle));
@@ -1715,7 +1280,19 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
          desc->layers[0].object_index[p] = desc->num_objects - 1;
 
          if (supports_contiguous_planes) {
-            screen->resource_get_info(screen, resource, &desc->layers[0].pitch[p], &desc->layers[0].offset[p]);
+            uint64_t value;
+            if (!screen->resource_get_param(screen, drv->pipe, resource, 0, 0, 0,
+                                            PIPE_RESOURCE_PARAM_STRIDE, 0, &value)) {
+               ret = VA_STATUS_ERROR_INVALID_SURFACE;
+               goto fail;
+            }
+            desc->layers[0].pitch[p] = value;
+            if (!screen->resource_get_param(screen, drv->pipe, resource, 0, 0, 0,
+                                            PIPE_RESOURCE_PARAM_OFFSET, 0, &value)) {
+               ret = VA_STATUS_ERROR_INVALID_SURFACE;
+               goto fail;
+            }
+            desc->layers[0].offset[p] = value;
          } else {
             desc->layers[0].pitch[p] = whandle.stride;
             desc->layers[0].offset[p] = whandle.offset;
@@ -1726,7 +1303,19 @@ vlVaExportSurfaceHandle(VADriverContextP ctx,
          desc->layers[p].object_index[0] = desc->num_objects - 1;
 
          if (supports_contiguous_planes) {
-            screen->resource_get_info(screen, resource, &desc->layers[p].pitch[0], &desc->layers[p].offset[0]);
+            uint64_t value;
+            if (!screen->resource_get_param(screen, drv->pipe, resource, 0, 0, 0,
+                                            PIPE_RESOURCE_PARAM_STRIDE, 0, &value)) {
+               ret = VA_STATUS_ERROR_INVALID_SURFACE;
+               goto fail;
+            }
+            desc->layers[p].pitch[0] = value;
+            if (!screen->resource_get_param(screen, drv->pipe, resource, 0, 0, 0,
+                                            PIPE_RESOURCE_PARAM_OFFSET, 0, &value)) {
+               ret = VA_STATUS_ERROR_INVALID_SURFACE;
+               goto fail;
+            }
+            desc->layers[p].offset[0] = value;
          } else {
             desc->layers[p].pitch[0] = whandle.stride;
             desc->layers[p].offset[0] = whandle.offset;

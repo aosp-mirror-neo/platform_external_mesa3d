@@ -38,8 +38,6 @@
 
 #include "pipe/p_state.h"
 #include "util/format/u_formats.h"
-#include "util/u_debug.h"
-#include "gallivm/lp_bld.h"
 #include "gallivm/lp_bld_type.h"
 #include "gallivm/lp_bld_swizzle.h"
 
@@ -100,7 +98,8 @@ enum lp_sampler_op_type {
 #define LP_SAMPLER_FETCH_MS          (1 << 10)
 #define LP_SAMPLER_RESIDENCY         (1 << 11)
 #define LP_SAMPLER_MIN_LOD           (1 << 12)
-#define LP_SAMPLE_KEY_COUNT          (1 << 13)
+#define LP_SAMPLER_HAS_LAYER         (1 << 13)
+#define LP_SAMPLE_KEY_COUNT          (1 << 14)
 
 
 /* Parameters used to handle TEX instructions */
@@ -166,8 +165,9 @@ struct lp_sampler_size_query_params
 
 #define LP_IMAGE_OP_MS 1
 #define LP_IMAGE_OP_64 2
+#define LP_IMAGE_OP_HAS_LAYER 4
 
-#define LP_TOTAL_IMAGE_OP_COUNT (LP_IMAGE_OP_COUNT * 4)
+#define LP_TOTAL_IMAGE_OP_COUNT (LP_IMAGE_OP_COUNT * 8)
 
 struct lp_img_params
 {
@@ -177,6 +177,7 @@ struct lp_img_params
    unsigned img_op;
    unsigned target;
    unsigned packed_op;
+   bool instr_has_layer_coord;
    LLVMAtomicRMWBinOp op;
    LLVMValueRef exec_mask;
    bool exec_mask_nz;
@@ -444,6 +445,7 @@ struct lp_build_sample_context
    bool no_rho_approx;
    bool fetch_ms;
    bool residency;
+   bool instr_has_layer_coord;
 
    /** regular scalar float type */
    struct lp_type float_type;
@@ -860,6 +862,7 @@ lp_build_img_op_soa(const struct lp_static_texture_state *static_texture_state,
                     struct lp_sampler_dynamic_state *dynamic_state,
                     struct gallivm_state *gallivm,
                     const struct lp_img_params *params,
+                    bool is64,
                     LLVMValueRef *outdata);
 
 void
@@ -890,7 +893,8 @@ void
 lp_build_image_op_array_case(struct lp_build_img_op_array_switch *switch_info,
                              int idx,
                              const struct lp_static_texture_state *static_texture_state,
-                             struct lp_sampler_dynamic_state *dynamic_state);
+                             struct lp_sampler_dynamic_state *dynamic_state,
+                             bool is64);
 
 void
 lp_build_image_op_array_fini_soa(struct lp_build_img_op_array_switch *switch_info);

@@ -76,6 +76,14 @@ etna_sampler_view_desc(struct pipe_sampler_view *view)
    return (struct etna_sampler_view_desc *)view;
 }
 
+static inline
+uint32_t etna_lod_to_fixp58(float f)
+{
+   f = CLAMP(f, -16.0f, 15.0f + (255.0f / 256.0f));
+
+   return etna_float_to_fixp88(f);
+}
+
 static void *
 etna_create_sampler_state_desc(struct pipe_context *pipe,
                           const struct pipe_sampler_state *ss)
@@ -100,8 +108,8 @@ etna_create_sampler_state_desc(struct pipe_context *pipe,
       VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_UNK21;
       /* no ROUND_UV bit? */
    cs->SAMP_CTRL1 = VIVS_NTE_DESCRIPTOR_SAMP_CTRL1_UNK1;
-   uint32_t min_lod_fp8 = MIN2(etna_float_to_fixp88(ss->min_lod), 0xfff);
-   uint32_t max_lod_fp8 = MIN2(etna_float_to_fixp88(ss->max_lod), 0xfff);
+   uint32_t min_lod_fp8 = etna_lod_to_fixp58(ss->min_lod);
+   uint32_t max_lod_fp8 = etna_lod_to_fixp58(ss->max_lod);
    uint32_t max_lod_min = ss->min_img_filter != ss->mag_img_filter ? 4 : 0;
 
    cs->SAMP_LOD_MINMAX =
@@ -193,6 +201,11 @@ etna_create_sampler_view_desc(struct pipe_context *pctx, struct pipe_resource *p
       break;
    default:
       break;
+   }
+
+   if (so->format == PIPE_FORMAT_S8X24_UINT) {
+      sv->SAMP_CTRL0_MASK &= ~VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_DEPTH_STENCIL_MODE__MASK;
+      sv->SAMP_CTRL0 |= VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_DEPTH_STENCIL_MODE_STENCIL;
    }
 
 #define DESC_SET(x, y) buf[(TEXDESC_##x)>>2] = (y)
@@ -313,6 +326,12 @@ etna_emit_texture_desc(struct etna_context *ctx)
             if (texture_use_int_filter(&sv->base, &ss->base, true))
                SAMP_CTRL0 |= VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_INT_FILTER;
 
+            if (util_format_description(sv->base.format)->colorspace == UTIL_FORMAT_COLORSPACE_ZS &&
+                ss->base.min_mip_filter == PIPE_TEX_MIPFILTER_LINEAR) {
+               SAMP_CTRL0 &= ~VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_MIP__MASK;
+               SAMP_CTRL0 |= VIVS_NTE_DESCRIPTOR_SAMP_CTRL0_MIP(TEXTURE_FILTER_NEAREST);
+            }
+
             etna_set_state(stream, VIVS_NTE_DESCRIPTOR_TX_CTRL(x),
                COND(sv->ts.enable, VIVS_NTE_DESCRIPTOR_TX_CTRL_TS_ENABLE) |
                VIVS_NTE_DESCRIPTOR_TX_CTRL_TS_MODE(sv->ts.mode) |
@@ -380,6 +399,7 @@ etna_texture_desc_init(struct pipe_context *pctx)
    ctx->base.create_sampler_view = etna_create_sampler_view_desc;
    ctx->base.sampler_view_destroy = etna_sampler_view_desc_destroy;
    ctx->base.sampler_view_release = u_default_sampler_view_release;
+   ctx->base.resource_release = u_default_resource_release;
    ctx->emit_texture_state = etna_emit_texture_desc;
    ctx->ts_for_sampler_view = etna_ts_for_sampler_view_state;
 }

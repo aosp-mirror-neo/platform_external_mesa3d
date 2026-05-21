@@ -106,11 +106,22 @@ struct dpp_funcs {
     /** scaler */
     void (*set_segment_scaler)(struct dpp *dpp, const struct scaler_data *scl_data);
 
+    void (*dscl_set_scaler_position)(struct dpp *dpp, const struct scaler_data *scl_data);
+
     void (*set_frame_scaler)(struct dpp *dpp, const struct scaler_data *scl_data);
 
     uint32_t (*get_line_buffer_size)(void);
 
     bool (*validate_number_of_taps)(struct dpp *dpp, struct scaler_data *scl_data);
+    void (*enable_clocks)(struct dpp *dpp, bool enable);
+
+    void (*dscl_program_easf)(struct dpp *dpp, const struct scaler_data *scl_data);
+
+    void (*dscl_disable_easf)(struct dpp *dpp, const struct scaler_data *scl_data);
+
+    void (*dscl_program_isharp)(struct dpp *dpp, const struct scaler_data *scl_data);
+
+    void (*program_histogram)(struct dpp* dpp, struct vpe_histogram_param* hist_param, enum color_space cs);
 
     void (*program_crc)(struct dpp *opp, bool enable);
 };

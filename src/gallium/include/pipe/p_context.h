@@ -88,6 +88,7 @@ struct u_upload_mgr;
 struct util_debug_callback;
 struct u_vbuf;
 struct pipe_context;
+struct pipe_ml_subgraph;
 
 typedef void (*pipe_draw_func)(struct pipe_context *pipe,
                                const struct pipe_draw_info *info,
@@ -346,11 +347,11 @@ struct pipe_context {
    /**
     * Called when a shader program is linked.
     * \param handles  Array of shader handles attached to this program.
-    *                 The size of the array is \c PIPE_SHADER_TYPES, and each
+    *                 The size of the array is \c MESA_SHADER_STAGES, and each
     *                 position contains the corresponding \c pipe_shader_state*
     *                 or \c pipe_compute_state*, or \c NULL.
     *                 E.g. You can retrieve the fragment shader handle with
-    *                      \c handles[PIPE_SHADER_FRAGMENT]
+    *                      \c handles[MESA_SHADER_FRAGMENT]
     */
    void (*link_shader)(struct pipe_context *, void** handles);
    /*@}*/
@@ -367,7 +368,7 @@ struct pipe_context {
    void * (*create_sampler_state)(struct pipe_context *,
                                   const struct pipe_sampler_state *);
    void   (*bind_sampler_states)(struct pipe_context *,
-                                 enum pipe_shader_type shader,
+                                 mesa_shader_stage shader,
                                  unsigned start_slot, unsigned num_samplers,
                                  void **samplers);
    void   (*delete_sampler_state)(struct pipe_context *, void *);
@@ -460,13 +461,10 @@ struct pipe_context {
     *
     * \param shader           Shader stage
     * \param index            Buffer binding slot index within a shader stage
-    * \param take_ownership   The callee takes ownership of the buffer reference.
-    *                         (the callee shouldn't increment the ref count)
     * \param buf              Constant buffer parameters
     */
    void (*set_constant_buffer)(struct pipe_context *,
-                               enum pipe_shader_type shader, uint index,
-                               bool take_ownership,
+                               mesa_shader_stage shader, uint index,
                                const struct pipe_constant_buffer *buf);
 
    /**
@@ -486,7 +484,7 @@ struct pipe_context {
     * fields if they don't want this or if they don't implement this.
     */
    void (*set_inlinable_constants)(struct pipe_context *,
-                                   enum pipe_shader_type shader,
+                                   mesa_shader_stage shader,
                                    uint num_values, uint32_t *values);
 
    void (*set_framebuffer_state)(struct pipe_context *,
@@ -538,7 +536,7 @@ struct pipe_context {
                                const struct pipe_viewport_state *);
 
    void (*set_sampler_views)(struct pipe_context *,
-                             enum pipe_shader_type shader,
+                             mesa_shader_stage shader,
                              unsigned start_slot, unsigned num_views,
                              unsigned unbind_num_trailing_slots,
                              struct pipe_sampler_view **views);
@@ -575,7 +573,7 @@ struct pipe_context {
     *                          used with loads. If unsure, set to ~0.
     */
    void (*set_shader_buffers)(struct pipe_context *,
-                              enum pipe_shader_type shader,
+                              mesa_shader_stage shader,
                               unsigned start_slot, unsigned count,
                               const struct pipe_shader_buffer *buffers,
                               unsigned writable_bitmask);
@@ -612,18 +610,13 @@ struct pipe_context {
     *                   be bound.
     */
    void (*set_shader_images)(struct pipe_context *,
-                             enum pipe_shader_type shader,
+                             mesa_shader_stage shader,
                              unsigned start_slot, unsigned count,
                              unsigned unbind_num_trailing_slots,
                              const struct pipe_image_view *images);
 
    /**
     * Bind an array of vertex buffers to the specified slots.
-    *
-    * Unlike other set functions, the caller should always increment
-    * the buffer reference counts because the driver should only copy
-    * the pipe_resource pointers. This is the same behavior as setting
-    * take_ownership = true in other functions.
     *
     * count must be equal to the maximum used vertex buffer index + 1
     * in vertex elements or 0.
@@ -720,6 +713,8 @@ struct pipe_context {
     * The entire buffers are cleared (no scissor, no colormask, etc).
     *
     * \param buffers  bitfield of PIPE_CLEAR_* values.
+    * \param color_clear_mask  4 color_mask bits per draw buffer, max 8 draw buffers. 4*8 = 32 bits
+    * \param stencil_clear_mask  the stencil mask
     * \param scissor_state  the scissored region to clear
     * \param color  pointer to a union of fiu array for each of r, g, b, a.
     * \param depth  depth clear value in [0,1].
@@ -727,6 +722,8 @@ struct pipe_context {
     */
    void (*clear)(struct pipe_context *pipe,
                  unsigned buffers,
+                 uint32_t color_clear_mask,
+                 uint8_t stencil_clear_mask,
                  const struct pipe_scissor_state *scissor_state,
                  const union pipe_color_union *color,
                  double depth,
@@ -871,19 +868,6 @@ struct pipe_context {
    void (*sampler_view_release)(struct pipe_context *ctx,
                                 struct pipe_sampler_view *view);
 
-
-   /**
-    * Get a surface which is a "view" into a resource, used by
-    * render target / depth stencil stages.
-    */
-   struct pipe_surface *(*create_surface)(struct pipe_context *ctx,
-                                          struct pipe_resource *resource,
-                                          const struct pipe_surface *templat);
-
-   void (*surface_destroy)(struct pipe_context *ctx,
-                           struct pipe_surface *);
-
-
    /**
     * Map a resource.
     *
@@ -963,6 +947,13 @@ struct pipe_context {
     */
    bool (*resource_commit)(struct pipe_context *, struct pipe_resource *,
                            unsigned level, struct pipe_box *box, bool commit);
+
+   /**
+    * Signal the driver that the frontend has released a resource.
+    *
+    * Following this call, the driver has full ownership of the resource.
+    */
+   void (*resource_release)(struct pipe_context *, struct pipe_resource *);
 
    /**
     * Creates a video codec for a specific video format/profile
@@ -1255,20 +1246,6 @@ struct pipe_context {
                                                      unsigned usage );
 
    /**
-    * Compiles a ML subgraph, to be executed later. The returned pipe_ml_subgraph
-    * should contain all information needed to execute the subgraph with as
-    * little effort as strictly needed.
-    *
-    * \param ctx         pipe context
-    * \param operations  array containing the definitions of the operations in the graph
-    * \param count       number of operations
-    * \return            a newly allocated pipe_ml_subgraph
-    */
-   struct pipe_ml_subgraph *(*ml_subgraph_create)(struct pipe_context *context,
-                                                  const struct pipe_ml_operation *operations,
-                                                  unsigned count);
-
-   /**
     * Invokes a ML subgraph for a given input tensor.
     *
     * \param ctx         pipe context
@@ -1301,13 +1278,16 @@ struct pipe_context {
                                    void *outputs[], bool is_signed[]);
 
    /**
-    * Release all resources allocated by the implementation of ml_subgraph_create
-    * 
-    * \param ctx           pipe context
-    * \param subgraph      subgraph to release
+    * Deserialize a previously-serialized ML subgraph.
+    *
+    * \param context     pipe context
+    * \param data        serialized subgraph data
+    * \param size        size of the serialized data in bytes
+    * \return            a newly allocated pipe_ml_subgraph, or NULL on failure
     */
-   void (*ml_subgraph_destroy)(struct pipe_context *context,
-                               struct pipe_ml_subgraph *subgraph);
+   struct pipe_ml_subgraph *(*ml_subgraph_deserialize)(struct pipe_context *context,
+                                                       const uint8_t *data,
+                                                       size_t size);
 };
 
 

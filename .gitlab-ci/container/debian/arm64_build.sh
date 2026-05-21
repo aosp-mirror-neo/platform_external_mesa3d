@@ -35,7 +35,9 @@ DEPS=(
     cmake
     curl
     "clang-${LLVM_VERSION}"
+    dpkg-dev
     fastboot
+    file
     flatbuffers-compiler
     flex
     g++
@@ -67,6 +69,7 @@ DEPS=(
     libxshmfence-dev
     libxtensor-dev
     libxxf86vm-dev
+    libwayland-bin
     libwayland-dev
     libwayland-egl-backend-dev
     "llvm-${LLVM_VERSION}-dev"
@@ -82,6 +85,7 @@ DEPS=(
     python3-venv
     shellcheck
     u-boot-tools
+    wayland-protocols
     xz-utils
     yamllint
     zlib1g-dev
@@ -107,13 +111,11 @@ arch=armhf
 
 . .gitlab-ci/container/build-mold.sh
 
-. .gitlab-ci/container/build-wayland.sh
-
 . .gitlab-ci/container/build-llvm-spirv.sh
 
 . .gitlab-ci/container/build-libclc.sh
 
-. .gitlab-ci/container/build-rust.sh
+. .gitlab-ci/container/build-rust.sh build
 
 . .gitlab-ci/container/build-bindgen.sh
 

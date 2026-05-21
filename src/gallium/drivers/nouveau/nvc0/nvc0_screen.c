@@ -116,7 +116,7 @@ nvc0_init_shader_caps(struct nvc0_screen *screen)
 {
    const uint16_t class_3d = screen->base.class_3d;
 
-   for (unsigned i = 0; i <= PIPE_SHADER_COMPUTE; i++) {
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++) {
       struct pipe_shader_caps *caps =
          (struct pipe_shader_caps *)&screen->base.base.shader_caps[i];
 
@@ -142,8 +142,8 @@ nvc0_init_shader_caps(struct nvc0_screen *screen)
       caps->max_sampler_views = (class_3d >= NVE4_3D_CLASS) ? 32 : 16;
       caps->max_shader_images =
          class_3d >= NVE4_3D_CLASS ||
-         i == PIPE_SHADER_FRAGMENT ||
-         i == PIPE_SHADER_COMPUTE ? NVC0_MAX_IMAGES : 0;
+         i == MESA_SHADER_FRAGMENT ||
+         i == MESA_SHADER_COMPUTE ? NVC0_MAX_IMAGES : 0;
    }
 }
 
@@ -239,7 +239,6 @@ nvc0_init_screen_caps(struct nvc0_screen *screen)
    caps->max_varyings = 0x1f0 / 16;
    caps->max_vertex_buffers = 16;
    caps->gl_begin_end_buffer_size = 512 * 1024; /* TODO: Investigate tuning this */
-   caps->max_texture_mb = 0; /* TODO: use 1/2 of VRAM for this? */
 
    caps->timer_resolution = 1000;
 
@@ -319,7 +318,6 @@ nvc0_init_screen_caps(struct nvc0_screen *screen)
    caps->legacy_math_rules = true;
    caps->doubles = true;
    caps->int64 = true;
-   caps->tgsi_tex_txf_lz = true;
    caps->shader_clock = true;
    caps->compute = true;
    caps->can_bind_const_buffer_as_vertex = true;
@@ -756,14 +754,6 @@ nvc0_screen_bind_cb_3d(struct nvc0_screen *screen, struct nouveau_pushbuf *push,
    IMMED_NVC0(push, NVC0_3D(CB_BIND(stage)), (index << 4) | (size >= 0));
 }
 
-static const struct nir_shader_compiler_options *
-nvc0_screen_get_compiler_options(struct pipe_screen *pscreen,
-                                 enum pipe_shader_type shader)
-{
-   struct nvc0_screen *screen = nvc0_screen(pscreen);
-   return nv50_ir_nir_shader_compiler_options(screen->base.device->chipset, shader);
-}
-
 #define FAIL_SCREEN_INIT(str, err)                    \
    do {                                               \
       NOUVEAU_ERR(str, err);                          \
@@ -835,13 +825,14 @@ nvc0_screen_create(struct nouveau_device *dev)
       screen->base.vidmem_bindings = 0;
    }
 
+   for (unsigned i = 0; i <= MESA_SHADER_COMPUTE; i++)
+      pscreen->nir_options[i] = nv50_ir_nir_shader_compiler_options(screen->base.device->chipset, i);
+
    pscreen->context_create = nvc0_create;
    pscreen->is_format_supported = nvc0_screen_is_format_supported;
    pscreen->get_sample_pixel_grid = nvc0_screen_get_sample_pixel_grid;
    pscreen->get_driver_query_info = nvc0_screen_get_driver_query_info;
    pscreen->get_driver_query_group_info = nvc0_screen_get_driver_query_group_info;
-   /* nir stuff */
-   pscreen->get_compiler_options = nvc0_screen_get_compiler_options;
 
    nvc0_screen_init_resource_functions(pscreen);
 

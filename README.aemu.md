@@ -33,22 +33,24 @@ python3 amc_meson_build.py \
 
 ## Path 2: Generating Bazel Build Files (Integration)
 
-**Note: This path is currently NOT COMPLETE and under active development.**
-
-This path uses `amc.py` to convert the Meson project into Bazel `BUILD` files, allowing `mesa3d` to be integrated directly into the larger Bazel build graph.
+This path uses `amc_meson_build.py` with the `--gen-bazel` flag to convert the Meson project into Bazel `BUILD` files, allowing `mesa3d` to be integrated directly into the larger Bazel build graph.
 
 ### Generation Command
 Execute the following from the `third_party/mesa3d` root:
 
 ```bash
-./aemu-bazel/generate_bazel_files.sh
+cd aemu-bazel
+python3 amc_meson_build.py \
+    --build-config aemu-mesa3d-build-config.jsonc \
+    --shim aemu-mesa3d-shim.jsonc \
+    --gen-bazel ..
 ```
 
 ### Next Steps (Post-Generation):
-After running the script, you would typically unzip the results and place the generated `BUILD.bazel` file:
+After running the command, you would typically unzip the results and place the generated `BUILD.bazel` file:
 ```bash
-unzip aemu-bazel/amc-build/bazel*.zip
-mv platform/BUILD.linux-x86_64 BUILD.bazel
+unzip out-amc/bazel*.zip
+mv platform/BUILD.linux-x86_64 ../BUILD.bazel
 ```
 
 ---

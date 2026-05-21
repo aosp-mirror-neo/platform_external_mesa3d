@@ -210,7 +210,7 @@ tegra_create_sampler_state(struct pipe_context *pcontext,
 }
 
 static void
-tegra_bind_sampler_states(struct pipe_context *pcontext, enum pipe_shader_type shader,
+tegra_bind_sampler_states(struct pipe_context *pcontext, mesa_shader_stage shader,
                           unsigned start_slot, unsigned num_samplers,
                           void **samplers)
 {
@@ -475,8 +475,8 @@ tegra_set_clip_state(struct pipe_context *pcontext,
 }
 
 static void
-tegra_set_constant_buffer(struct pipe_context *pcontext, enum pipe_shader_type shader,
-                          unsigned int index, bool take_ownership,
+tegra_set_constant_buffer(struct pipe_context *pcontext, mesa_shader_stage shader,
+                          unsigned int index,
                           const struct pipe_constant_buffer *buf)
 {
    struct tegra_context *context = to_tegra_context(pcontext);
@@ -488,7 +488,7 @@ tegra_set_constant_buffer(struct pipe_context *pcontext, enum pipe_shader_type s
       buf = &buffer;
    }
 
-   context->gpu->set_constant_buffer(context->gpu, shader, index, take_ownership, buf);
+   context->gpu->set_constant_buffer(context->gpu, shader, index, buf);
 }
 
 static void
@@ -543,7 +543,7 @@ tegra_set_viewport_states(struct pipe_context *pcontext, unsigned start_slot,
 }
 
 static void
-tegra_set_sampler_views(struct pipe_context *pcontext, enum pipe_shader_type shader,
+tegra_set_sampler_views(struct pipe_context *pcontext, mesa_shader_stage shader,
                         unsigned start_slot, unsigned num_views,
                         unsigned unbind_num_trailing_slots,
                         struct pipe_sampler_view **pviews)
@@ -593,7 +593,7 @@ tegra_set_debug_callback(struct pipe_context *pcontext,
 }
 
 static void
-tegra_set_shader_buffers(struct pipe_context *pcontext, enum pipe_shader_type shader,
+tegra_set_shader_buffers(struct pipe_context *pcontext, mesa_shader_stage shader,
                          unsigned start, unsigned count,
                          const struct pipe_shader_buffer *buffers,
                          unsigned writable_bitmask)
@@ -605,7 +605,7 @@ tegra_set_shader_buffers(struct pipe_context *pcontext, enum pipe_shader_type sh
 }
 
 static void
-tegra_set_shader_images(struct pipe_context *pcontext, enum pipe_shader_type shader,
+tegra_set_shader_images(struct pipe_context *pcontext, mesa_shader_stage shader,
                         unsigned start, unsigned count,
                         unsigned unbind_num_trailing_slots,
                         const struct pipe_image_view *images)
@@ -713,13 +713,15 @@ tegra_blit(struct pipe_context *pcontext, const struct pipe_blit_info *pinfo)
 }
 
 static void
-tegra_clear(struct pipe_context *pcontext, unsigned buffers, const struct pipe_scissor_state *scissor_state,
+tegra_clear(struct pipe_context *pcontext, unsigned buffers,
+            uint32_t color_clear_mask, uint8_t stencil_clear_mask,
+            const struct pipe_scissor_state *scissor_state,
             const union pipe_color_union *color, double depth,
             unsigned stencil)
 {
    struct tegra_context *context = to_tegra_context(pcontext);
 
-   context->gpu->clear(context->gpu, buffers, NULL, color, depth, stencil);
+   context->gpu->clear(context->gpu, buffers, color_clear_mask, stencil_clear_mask, NULL, color, depth, stencil);
 }
 
 static void
@@ -859,48 +861,6 @@ tegra_sampler_view_destroy(struct pipe_context *pcontext,
    p_atomic_add(&view->gpu->reference.count, -view->refcount);
    pipe_sampler_view_reference(&view->gpu, NULL);
    free(view);
-}
-
-static struct pipe_surface *
-tegra_create_surface(struct pipe_context *pcontext,
-                     struct pipe_resource *presource,
-                     const struct pipe_surface *template)
-{
-   struct tegra_resource *resource = to_tegra_resource(presource);
-   struct tegra_context *context = to_tegra_context(pcontext);
-   struct tegra_surface *surface;
-
-   surface = calloc(1, sizeof(*surface));
-   if (!surface)
-      return NULL;
-
-   surface->gpu = context->gpu->create_surface(context->gpu, resource->gpu,
-                                               template);
-   if (!surface->gpu) {
-      free(surface);
-      return NULL;
-   }
-
-   memcpy(&surface->base, surface->gpu, sizeof(*surface->gpu));
-   /* overwrite to prevent reference from being released */
-   surface->base.texture = NULL;
-
-   pipe_reference_init(&surface->base.reference, 1);
-   pipe_resource_reference(&surface->base.texture, presource);
-   surface->base.context = &context->base;
-
-   return &surface->base;
-}
-
-static void
-tegra_surface_destroy(struct pipe_context *pcontext,
-                      struct pipe_surface *psurface)
-{
-   struct tegra_surface *surface = to_tegra_surface(psurface);
-
-   pipe_resource_reference(&surface->base.texture, NULL);
-   pipe_surface_reference(&surface->gpu, NULL);
-   free(surface);
 }
 
 static void *
@@ -1355,9 +1315,7 @@ tegra_screen_context_create(struct pipe_screen *pscreen, void *priv,
    context->base.create_sampler_view = tegra_create_sampler_view;
    context->base.sampler_view_destroy = tegra_sampler_view_destroy;
    context->base.sampler_view_release = u_default_sampler_view_release;
-
-   context->base.create_surface = tegra_create_surface;
-   context->base.surface_destroy = tegra_surface_destroy;
+   context->base.resource_release = u_default_resource_release;
 
    context->base.buffer_map = tegra_transfer_map;
    context->base.texture_map = tegra_transfer_map;

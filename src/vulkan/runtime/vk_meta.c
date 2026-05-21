@@ -27,6 +27,7 @@
 #include "vk_buffer.h"
 #include "vk_command_buffer.h"
 #include "vk_device.h"
+#include "vk_format.h"
 #include "vk_pipeline.h"
 #include "vk_util.h"
 
@@ -532,7 +533,14 @@ vk_meta_create_image_view(struct vk_command_buffer *cmd,
    const struct vk_device_dispatch_table *disp = &device->dispatch_table;
    VkDevice _device = vk_device_to_handle(device);
 
-   VkResult result = disp->CreateImageView(_device, info, NULL, image_view_out);
+   /* Meta must always specify view usage */
+   assert(vk_find_struct_const(info->pNext, IMAGE_VIEW_USAGE_CREATE_INFO));
+
+   /* Meta image views are always driver-internal */
+   assert(info->flags & VK_IMAGE_VIEW_CREATE_DRIVER_INTERNAL_BIT_MESA);
+
+   VkResult result =
+      disp->CreateImageView(_device, info, NULL, image_view_out);
    if (unlikely(result != VK_SUCCESS))
       return result;
 

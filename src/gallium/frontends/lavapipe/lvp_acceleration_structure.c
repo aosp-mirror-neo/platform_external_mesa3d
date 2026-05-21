@@ -55,36 +55,69 @@ lvp_init_radix_sort(struct lvp_device *device)
 }
 
 static void
+lvp_get_leaf_node_size(VkGeometryTypeKHR geometry_type, uint32_t *ir_leaf_node_size,
+                       uint32_t *output_leaf_node_size)
+{
+   switch (geometry_type) {
+   case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
+      *ir_leaf_node_size = sizeof(struct vk_ir_triangle_node);
+      *output_leaf_node_size = sizeof(struct lvp_bvh_triangle_node);
+      break;
+   case VK_GEOMETRY_TYPE_AABBS_KHR:
+      *ir_leaf_node_size = sizeof(struct vk_ir_aabb_node);
+      *output_leaf_node_size = sizeof(struct lvp_bvh_aabb_node);
+      break;
+   case VK_GEOMETRY_TYPE_INSTANCES_KHR:
+      *ir_leaf_node_size = sizeof(struct vk_ir_instance_node);
+      *output_leaf_node_size = sizeof(struct lvp_bvh_instance_node);
+      break;
+   default:
+      break;
+   }
+}
+
+static VkDeviceSize
+lvp_get_as_size_internal(VkGeometryTypeKHR geometry_type, uint32_t leaf_node_count)
+{
+   uint32_t internal_node_count = MAX2(leaf_node_count, 2) - 1;
+   uint32_t nodes_size = internal_node_count * sizeof(struct lvp_bvh_box_node);
+
+   uint32_t ir_leaf_node_size = 0;
+   uint32_t output_leaf_node_size = 0;
+   lvp_get_leaf_node_size(geometry_type, &ir_leaf_node_size, &output_leaf_node_size);
+
+   nodes_size += leaf_node_count * output_leaf_node_size;
+
+   nodes_size = util_align_npot(nodes_size, LVP_BVH_NODE_PREFETCH_SIZE);
+
+   return sizeof(struct lvp_bvh_header) + nodes_size;
+}
+
+static VkDeviceSize
+lvp_get_as_size(VkDevice device, const struct vk_acceleration_structure_build_state *state)
+{
+   return lvp_get_as_size_internal(vk_get_as_geometry_type(state->build_info), state->leaf_node_count);
+}
+
+static void
 lvp_write_buffer_cp(VkCommandBuffer cmdbuf, VkDeviceAddress addr,
                     void *data, uint32_t size)
 {
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, cmdbuf);
 
-   struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   struct lvp_cmd_write_buffer_cp *entry =
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct lvp_cmd_write_buffer_cp) + size);
    if (!entry)
       return;
 
-   entry->type = LVP_CMD_WRITE_BUFFER_CP;
+   entry->base.type = LVP_CMD_WRITE_BUFFER_CP;
+   entry->addr = addr;
+   entry->data = entry + 1;
+   entry->size = size;
 
-   struct lvp_cmd_write_buffer_cp *cmd =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct lvp_cmd_write_buffer_cp) + size,
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-   if (!entry) {
-      vk_free(cmd_buffer->vk.cmd_queue.alloc, entry);
-      return;
-   }
+   memcpy(entry->data, data, size);
 
-   cmd->addr = addr;
-   cmd->data = cmd + 1;
-   cmd->size = size;
-
-   memcpy(cmd->data, data, size);
-
-   entry->driver_data = cmd;
-
-   list_addtail(&entry->cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
+   list_addtail(&entry->base.cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
 }
 
 static void
@@ -99,8 +132,7 @@ lvp_cmd_dispatch_unaligned(VkCommandBuffer cmdbuf, uint32_t invocations_x,
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, cmdbuf);
 
    struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct vk_cmd_queue_entry));
    if (!entry)
       return;
 
@@ -119,29 +151,17 @@ lvp_cmd_fill_buffer_addr(VkCommandBuffer cmdbuf, VkDeviceAddress addr,
 {
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, cmdbuf);
 
-   struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   struct lvp_cmd_fill_buffer_addr *entry =
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct lvp_cmd_write_buffer_cp));
    if (!entry)
       return;
 
-   entry->type = LVP_CMD_FILL_BUFFER_ADDR;
+   entry->base.type = LVP_CMD_FILL_BUFFER_ADDR;
+   entry->addr = addr;
+   entry->size = size;
+   entry->data = data;
 
-   struct lvp_cmd_fill_buffer_addr *cmd =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct lvp_cmd_write_buffer_cp),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-   if (!entry) {
-      vk_free(cmd_buffer->vk.cmd_queue.alloc, entry);
-      return;
-   }
-
-   cmd->addr = addr;
-   cmd->size = size;
-   cmd->data = data;
-
-   entry->driver_data = cmd;
-
-   list_addtail(&entry->cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
+   list_addtail(&entry->base.cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
 }
 
 static void
@@ -150,34 +170,23 @@ lvp_enqueue_encode_as(VkCommandBuffer commandBuffer, const struct vk_acceleratio
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
    VK_FROM_HANDLE(vk_acceleration_structure, dst, state->build_info->dstAccelerationStructure);
 
-   struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   struct lvp_cmd_encode_as *entry =
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct lvp_cmd_encode_as));
    if (!entry)
       return;
 
-   entry->type = LVP_CMD_ENCODE_AS;
-
-   struct lvp_cmd_encode_as *cmd =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct lvp_cmd_encode_as),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
-   if (!entry) {
-      vk_free(cmd_buffer->vk.cmd_queue.alloc, entry);
-      return;
-   }
+   entry->base.type = LVP_CMD_ENCODE_AS;
 
    uint64_t intermediate_header_addr = state->build_info->scratchData.deviceAddress + state->scratch.header_offset;
    uint64_t intermediate_bvh_addr = state->build_info->scratchData.deviceAddress + state->scratch.ir_offset;
 
-   cmd->dst = dst;
-   cmd->intermediate_as_addr = intermediate_bvh_addr;
-   cmd->intermediate_header_addr = intermediate_header_addr;
-   cmd->leaf_count = state->leaf_node_count;
-   cmd->geometry_type = vk_get_as_geometry_type(state->build_info);
+   entry->dst = dst;
+   entry->intermediate_as_addr = intermediate_bvh_addr;
+   entry->intermediate_header_addr = intermediate_header_addr;
+   entry->leaf_count = state->leaf_node_count;
+   entry->geometry_type = vk_get_as_geometry_type(state->build_info);
 
-   entry->driver_data = cmd;
-
-   list_addtail(&entry->cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
+   list_addtail(&entry->base.cmd_link, &cmd_buffer->vk.cmd_queue.cmds);
 }
 
 static uint32_t
@@ -233,7 +242,7 @@ lvp_select_subtrees_to_flatten(const struct vk_ir_header *header, const struct v
    }
 
    if (flatten && has_internal_child) {
-      util_dynarray_append(subtrees, uint32_t, index);
+      util_dynarray_append(subtrees, index);
       *max_subtree_size = MAX2(*max_subtree_size, child_count);
       return;
    }
@@ -268,7 +277,7 @@ lvp_gather_subtree(const uint8_t *output, uint32_t offset, uint32_t *leaf_nodes,
 
 static uint32_t
 lvp_rebuild_subtree(const uint8_t *output, uint32_t *leaf_nodes, vk_aabb *leaf_bounds,
-                    uint32_t *internal_nodes, uint32_t leaf_node_count, 
+                    uint32_t *internal_nodes, uint32_t leaf_node_count,
                     uint32_t *internal_node_index)
 {
    uint32_t child_nodes[2];
@@ -348,7 +357,7 @@ lvp_flatten_as(const struct vk_ir_header *header, const struct vk_ir_box_node *i
    /* Select the subtrees that have to be rebuilt in order to
     * limit the BVH to a supported depth.
     */
-   util_dynarray_init(&subtrees, NULL);
+   subtrees = UTIL_DYNARRAY_INIT;
    uint32_t max_subtree_size = 0;
    lvp_select_subtrees_to_flatten(header, ir_box_nodes, node_depth, child_counts,
                                   root_offset, header->ir_internal_node_count - 1,
@@ -382,28 +391,6 @@ ret:
    free(internal_nodes);
 }
 
-static void
-lvp_get_leaf_node_size(VkGeometryTypeKHR geometry_type, uint32_t *ir_leaf_node_size,
-                       uint32_t *output_leaf_node_size)
-{
-   switch (geometry_type) {
-   case VK_GEOMETRY_TYPE_TRIANGLES_KHR:
-      *ir_leaf_node_size = sizeof(struct vk_ir_triangle_node);
-      *output_leaf_node_size = sizeof(struct lvp_bvh_triangle_node);
-      break;
-   case VK_GEOMETRY_TYPE_AABBS_KHR:
-      *ir_leaf_node_size = sizeof(struct vk_ir_aabb_node);
-      *output_leaf_node_size = sizeof(struct lvp_bvh_aabb_node);
-      break;
-   case VK_GEOMETRY_TYPE_INSTANCES_KHR:
-      *ir_leaf_node_size = sizeof(struct vk_ir_instance_node);
-      *output_leaf_node_size = sizeof(struct lvp_bvh_instance_node);
-      break;
-   default:
-      break;
-   }
-}
-
 void
 lvp_encode_as(struct vk_acceleration_structure *dst, VkDeviceAddress intermediate_as_addr,
               VkDeviceAddress intermediate_header_addr, uint32_t leaf_count,
@@ -431,8 +418,10 @@ lvp_encode_as(struct vk_acceleration_structure *dst, VkDeviceAddress intermediat
 
    output_header->leaf_nodes_offset = sizeof(struct lvp_bvh_header) + header->ir_internal_node_count * sizeof(struct lvp_bvh_box_node);
 
+   uint32_t bvh_size = lvp_get_as_size_internal(geometry_type, leaf_count);
+   output_header->compacted_size = bvh_size;
    output_header->serialization_size = sizeof(struct lvp_accel_struct_serialization_header) +
-                                       sizeof(uint64_t) * output_header->instance_count + dst->size;
+                                       sizeof(uint64_t) * output_header->instance_count + bvh_size;
 
    for (uint32_t i = 0; i < header->active_leaf_count; i++) {
       const void *ir_leaf = ir_bvh + i * ir_leaf_node_size;
@@ -509,6 +498,13 @@ lvp_encode_as(struct vk_acceleration_structure *dst, VkDeviceAddress intermediat
          const struct vk_ir_node *ir_child = (const void *)(ir_bvh + ir_child_offset);
 
          output_box->bounds[child_index] = ir_child->aabb;
+         /* Increase the bounding box size a bit for watertightness. */
+         output_box->bounds[child_index].min.x -= MAX2(fabsf(output_box->bounds[child_index].min.x), 1.0) * FLT_EPSILON;
+         output_box->bounds[child_index].min.y -= MAX2(fabsf(output_box->bounds[child_index].min.y), 1.0) * FLT_EPSILON;
+         output_box->bounds[child_index].min.z -= MAX2(fabsf(output_box->bounds[child_index].min.z), 1.0) * FLT_EPSILON;
+         output_box->bounds[child_index].max.x += MAX2(fabsf(output_box->bounds[child_index].max.x), 1.0) * FLT_EPSILON;
+         output_box->bounds[child_index].max.y += MAX2(fabsf(output_box->bounds[child_index].max.y), 1.0) * FLT_EPSILON;
+         output_box->bounds[child_index].max.z += MAX2(fabsf(output_box->bounds[child_index].max.z), 1.0) * FLT_EPSILON;
 
          if (ir_child_offset < root_offset) {
             output_box->children[child_index] =
@@ -539,10 +535,10 @@ lvp_encode_as(struct vk_acceleration_structure *dst, VkDeviceAddress intermediat
       }
    }
 
-   /* The BVH exceeds the maximum depth supported by the traversal stack, 
+   /* The BVH exceeds the maximum depth supported by the traversal stack,
     * flatten the offending parts of the tree.
     */
-   if (max_node_depth >= 24)
+   if (max_node_depth >= (geometry_type == VK_GEOMETRY_TYPE_INSTANCES_KHR ? LVP_MAX_TLAS_DEPTH : LVP_MAX_BLAS_DEPTH))
       lvp_flatten_as(header, ir_box_nodes, root_offset, node_depth, output);
 
    free(node_depth);
@@ -573,7 +569,7 @@ lvp_WriteAccelerationStructuresPropertiesKHR(
    const VkAccelerationStructureKHR *pAccelerationStructures, VkQueryType queryType,
    size_t dataSize, void *pData, size_t stride)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
@@ -583,7 +579,7 @@ lvp_BuildAccelerationStructuresKHR(
    const VkAccelerationStructureBuildGeometryInfoKHR *pInfos,
    const VkAccelerationStructureBuildRangeInfoKHR *const *ppBuildRangeInfos)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
@@ -603,7 +599,7 @@ VKAPI_ATTR VkResult VKAPI_CALL
 lvp_CopyAccelerationStructureKHR(VkDevice _device, VkDeferredOperationKHR deferredOperation,
                                  const VkCopyAccelerationStructureInfoKHR *pInfo)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
@@ -611,7 +607,7 @@ VKAPI_ATTR VkResult VKAPI_CALL
 lvp_CopyMemoryToAccelerationStructureKHR(VkDevice _device, VkDeferredOperationKHR deferredOperation,
                                          const VkCopyMemoryToAccelerationStructureInfoKHR *pInfo)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
@@ -619,36 +615,19 @@ VKAPI_ATTR VkResult VKAPI_CALL
 lvp_CopyAccelerationStructureToMemoryKHR(VkDevice _device, VkDeferredOperationKHR deferredOperation,
                                          const VkCopyAccelerationStructureToMemoryInfoKHR *pInfo)
 {
-   unreachable("Unimplemented");
+   UNREACHABLE("Unimplemented");
    return VK_ERROR_FEATURE_NOT_PRESENT;
 }
 
-static VkDeviceSize
-lvp_get_as_size(VkDevice device, const struct vk_acceleration_structure_build_state *state)
-{
-   uint32_t internal_node_count = MAX2(state->leaf_node_count, 2) - 1;
-   uint32_t nodes_size = internal_node_count * sizeof(struct lvp_bvh_box_node);
-
-   uint32_t ir_leaf_node_size = 0;
-   uint32_t output_leaf_node_size = 0;
-   lvp_get_leaf_node_size(vk_get_as_geometry_type(state->build_info), &ir_leaf_node_size, &output_leaf_node_size);
-
-   nodes_size += state->leaf_node_count * output_leaf_node_size;
-
-   nodes_size = util_align_npot(nodes_size, LVP_BVH_NODE_PREFETCH_SIZE);
-
-   return sizeof(struct lvp_bvh_header) + nodes_size;
-}
-
 static VkResult
-lvp_encode_bind_pipeline(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state)
+lvp_encode_prepare(VkCommandBuffer cmd_buffer, const struct vk_acceleration_structure_build_state *state)
 {
    return VK_SUCCESS;
 }
 
 const struct vk_acceleration_structure_build_ops accel_struct_ops = {
    .get_as_size = lvp_get_as_size,
-   .encode_bind_pipeline[0] = lvp_encode_bind_pipeline,
+   .encode_prepare[0] = lvp_encode_prepare,
    .encode_as[0] = lvp_enqueue_encode_as,
 };
 
@@ -683,8 +662,7 @@ lvp_enqueue_save_state(VkCommandBuffer cmdbuf)
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, cmdbuf);
 
    struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct vk_cmd_queue_entry));
    if (!entry)
       return;
 
@@ -699,8 +677,7 @@ lvp_enqueue_restore_state(VkCommandBuffer cmdbuf)
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, cmdbuf);
 
    struct vk_cmd_queue_entry *entry =
-      vk_zalloc(cmd_buffer->vk.cmd_queue.alloc, sizeof(struct vk_cmd_queue_entry),
-                8, VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+      linear_zalloc_child(cmd_buffer->vk.cmd_queue.ctx, sizeof(struct vk_cmd_queue_entry));
    if (!entry)
       return;
 
@@ -715,13 +692,13 @@ lvp_CmdBuildAccelerationStructuresKHR(VkCommandBuffer commandBuffer, uint32_t in
                                       const VkAccelerationStructureBuildRangeInfoKHR *const *ppBuildRangeInfos)
 {
    VK_FROM_HANDLE(lvp_cmd_buffer, cmd_buffer, commandBuffer);
-
-   lvp_init_radix_sort(cmd_buffer->device);
+   struct lvp_device *device = lvp_cmd_buffer_device(cmd_buffer);
+   lvp_init_radix_sort(device);
 
    lvp_enqueue_save_state(commandBuffer);
 
-   vk_cmd_build_acceleration_structures(commandBuffer, &cmd_buffer->device->vk, &cmd_buffer->device->meta,
-                                        infoCount, pInfos, ppBuildRangeInfos, &cmd_buffer->device->accel_struct_args);
+   vk_cmd_build_acceleration_structures(commandBuffer, &device->vk, &device->meta,
+                                        infoCount, pInfos, ppBuildRangeInfos, &device->accel_struct_args);
 
    lvp_enqueue_restore_state(commandBuffer);
 }

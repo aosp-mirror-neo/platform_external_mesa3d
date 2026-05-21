@@ -57,7 +57,7 @@ TEST_CASES = {
     'gfxstrand': 'faith.ekstrand@collabora.com',
     'Faith': 'faith.ekstrand@collabora.com',
     'faith': 'faith.ekstrand@collabora.com',
-    'alyssa': 'alyssa@rosenzweig.io',
+    'alyssa': 'alyssa.rosenzweig@intel.com',
     'briano': 'ivan.briano@intel.com',
     'schurmann': 'daniel@schuermann.dev',
     'Schürmann': 'daniel@schuermann.dev',
@@ -67,7 +67,7 @@ for test in TEST_CASES:
     a, b = find_person(test), TEST_CASES[test]
     if a is None or a[1] != b:
         print(test, a, b)
-    assert(a[1] == b)
+    assert(a is not None and a[1] == b)
 
 # Now the tool itself
 if __name__ == "__main__":
@@ -76,6 +76,7 @@ if __name__ == "__main__":
                         description='Add review trailers')
     parser.add_argument('person', nargs='+', help="Reviewer's username, first name, or full name")
     parser.add_argument('-a', '--ack', action='store_true', help="Apply an acked-by tag")
+    parser.add_argument('-t', '--test', action='store_true', help="Apply an tested-by tag")
     parser.add_argument('-d', '--dry-run', action='store_true',
                         help="Print trailer without applying")
     parser.add_argument('-r', '--rebase', nargs='?',
@@ -88,6 +89,8 @@ if __name__ == "__main__":
         relevant_args = [sys.argv[0]]
         if args.ack:
             relevant_args.append("--ack")
+        elif args.test:
+            relevant_args.append("--test")
 
         relevant_args += args.person
 
@@ -107,7 +110,12 @@ if __name__ == "__main__":
         if person is None:
             print(f'Could not uniquely identify {p}, skipping')
 
-        trailer = 'Acked-by' if args.ack else 'Reviewed-by'
+        trailer = 'Reviewed-by'
+        if args.ack:
+            trailer = 'Acked-by'
+        elif args.test:
+            trailer = 'Tested-by'
+
         trailer = f'{trailer}: {person[0]} <{person[1]}>'
 
         if args.dry_run:

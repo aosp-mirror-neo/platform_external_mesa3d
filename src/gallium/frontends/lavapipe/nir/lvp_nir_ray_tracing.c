@@ -37,7 +37,7 @@ lvp_load_node_data(nir_builder *b, nir_def *addr, nir_def **node_data, uint32_t 
    if (offset < LVP_BVH_NODE_PREFETCH_SIZE && node_data)
       return node_data[offset / 4];
 
-   return nir_build_load_global(b, 1, 32, nir_iadd_imm(b, addr, offset));
+   return nir_load_global(b, 1, 32, nir_iadd_imm(b, addr, offset));
 }
 
 void
@@ -45,7 +45,7 @@ lvp_load_wto_matrix(nir_builder *b, nir_def *instance_addr, nir_def **node_data,
 {
    unsigned offset = offsetof(struct lvp_bvh_instance_node, wto_matrix);
    for (unsigned i = 0; i < 3; ++i) {
-      out[i] = nir_build_load_global(b, 4, 32, nir_iadd_imm(b, instance_addr, offset + i * 16));
+      out[i] = nir_load_global(b, 4, 32, nir_iadd_imm(b, instance_addr, offset + i * 16));
       out[i] = nir_vec4(b,
          lvp_load_node_data(b, instance_addr, node_data, offset + i * 16 + 0),
          lvp_load_node_data(b, instance_addr, node_data, offset + i * 16 + 4),
@@ -58,7 +58,7 @@ lvp_load_wto_matrix(nir_builder *b, nir_def *instance_addr, nir_def **node_data,
 nir_def *
 lvp_load_vertex_position(nir_builder *b, nir_def *primitive_addr, uint32_t index)
 {
-   return nir_build_load_global(b, 3, 32, nir_iadd_imm(b, primitive_addr, index * 3 * sizeof(float)));
+   return nir_load_global(b, 3, 32, nir_iadd_imm(b, primitive_addr, index * 3 * sizeof(float)));
 }
 
 static nir_def *
@@ -102,7 +102,7 @@ lvp_build_intersect_ray_box(nir_builder *b, nir_def **node_data, nir_def *ray_tm
 
       /* If x of the aabb min is NaN, then this is an inactive aabb.
        * We don't need to care about any other components being NaN as that is UB.
-       * https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html#acceleration-structure-inactive-prims
+       * https://docs.vulkan.org/spec/latest/chapters/accelstructures.html#acceleration-structure-inactive-prims
        */
       nir_def *min_x = nir_channel(b, node_coords[0], 0);
       nir_def *min_x_is_not_nan =
@@ -148,6 +148,27 @@ lvp_build_intersect_ray_box(nir_builder *b, nir_def **node_data, nir_def *ray_tm
    nir_pop_if(b, NULL);
 
    return nir_load_var(b, child_indices);
+}
+
+static nir_def *
+lvp_build_intersect_edge(nir_builder *b, nir_def *v0_x, nir_def *v0_y, nir_def *v1_x, nir_def *v1_y)
+{
+   /* Test (1 0 0) direction: t = <v1-v0, (1 0 0)> */
+   nir_def *t_x = nir_fsub(b, v1_x, v0_x);
+   nir_def *test_y = nir_feq_imm(b, t_x, 0.0);
+   /* Test (0 1 0) direction: t = <v1-v0, (0 1 0)> */
+   nir_def *t_y = nir_fsub(b, v1_y, v0_y);
+
+   return nir_bcsel(b, test_y, nir_flt_imm(b, t_y, 0.0), nir_flt_imm(b, t_x, 0.0));
+}
+
+static nir_def *
+lvp_build_intersect_vertex(nir_builder *b, nir_def *v0_x, nir_def *v1_x, nir_def *v2_x)
+{
+   /* Choose n=(1 0 0) to simplify the dot product. */
+   nir_def *edge0 = nir_fsub(b, v1_x, v0_x);
+   nir_def *edge1 = nir_fsub(b, v2_x, v0_x);
+   return nir_iand(b, nir_fle_imm(b, edge0, 0.0), nir_fgt_imm(b, edge1, 0.0));
 }
 
 static nir_def *
@@ -237,13 +258,6 @@ lvp_build_intersect_ray_tri(nir_builder *b, nir_def **node_data, nir_def *ray_tm
    nir_def *cy =
       nir_fsub(b, nir_vector_extract(b, v_c, ky), nir_fmul(b, sy, nir_vector_extract(b, v_c, kz)));
 
-   ax = nir_f2f64(b, ax);
-   ay = nir_f2f64(b, ay);
-   bx = nir_f2f64(b, bx);
-   by = nir_f2f64(b, by);
-   cx = nir_f2f64(b, cx);
-   cy = nir_f2f64(b, cy);
-
    nir_def *u = nir_fsub(b, nir_fmul(b, cx, by), nir_fmul(b, cy, bx));
    nir_def *v = nir_fsub(b, nir_fmul(b, ax, cy), nir_fmul(b, ay, cx));
    nir_def *w = nir_fsub(b, nir_fmul(b, bx, ay), nir_fmul(b, by, ax));
@@ -257,15 +271,71 @@ lvp_build_intersect_ray_tri(nir_builder *b, nir_def **node_data, nir_def *ray_tm
 
    nir_def *cond = nir_inot(b, nir_iand(b, cond_back, cond_front));
 
+   /* When an edge is hit, we have to ensure that it is not hit twice in case it is shared.
+    *
+    * Vulkan 1.4.322, Section 40.1.1 Watertightness:
+    *
+    *    Any set of two triangles with two shared vertices that were specified in the same
+    *    winding order in each triangle have a shared edge defined by those vertices.
+    *
+    * This means we can decide which triangle should intersect by comparing the shared edge
+    * to two arbitrary directions because the shared edges are antiparallel. The triangle
+    * vertices are transformed so the ray direction is (0 0 1). Therefore it makes sense to
+    * choose (1 0 0) and (0 1 0) as reference directions.
+    *
+    * Hitting edges is extremely rare so an if should be worth.
+    */
+   nir_def *is_edge_a = nir_feq_imm(b, u, 0.0f);
+   nir_def *is_edge_b = nir_feq_imm(b, v, 0.0f);
+   nir_def *is_edge_c = nir_feq_imm(b, w, 0.0f);
+   nir_def *cond_edge = nir_ior(b, is_edge_a, nir_ior(b, is_edge_b, is_edge_c));
+   nir_def *intersect_edge = cond;
+   nir_push_if(b, cond_edge);
+   {
+      nir_def *intersect_edge_a = nir_iand(b, is_edge_a, lvp_build_intersect_edge(b, bx, by, cx, cy));
+      nir_def *intersect_edge_b = nir_iand(b, is_edge_b, lvp_build_intersect_edge(b, cx, cy, ax, ay));
+      nir_def *intersect_edge_c = nir_iand(b, is_edge_c, lvp_build_intersect_edge(b, ax, ay, bx, by));
+      intersect_edge = nir_iand(b, intersect_edge, nir_ior(b, nir_ior(b, intersect_edge_a, intersect_edge_b), intersect_edge_c));
+
+      /* For vertices, special handling is needed to avoid double hits. The spec defines
+       * shared vertices as follows (Vulkan 1.4.322, Section 40.1.1 Watertightness):
+       *
+       *    Any set of two or more triangles where all triangles have one vertex with an
+       *    identical position value, that vertex is a shared vertex.
+       *
+       * Since the no double hit/miss requirement of a shared vertex is only formulated for
+       * closed fans
+       *
+       *    Implementations should not double-hit or miss when a ray intersects a shared edge,
+       *    or a shared vertex of a closed fan.
+       *
+       * it is possible to choose an arbitrary direction n that defines which triangle in the
+       * closed fan should intersect the shared vertex with the ray.
+       *
+       *    All edges that include the above vertex are shared edges.
+       *
+       * Implies that all triangles have the same winding order. It is therefore sufficiant
+       * to choose the triangle where the other vertices are on both sides of a plane
+       * perpendicular to n (relying on winding order to get one instead of two triangles
+       * that meet said condition).
+       */
+      nir_def *is_vertex_a = nir_iand(b, is_edge_b, is_edge_c);
+      nir_def *is_vertex_b = nir_iand(b, is_edge_a, is_edge_c);
+      nir_def *is_vertex_c = nir_iand(b, is_edge_a, is_edge_b);
+      nir_def *intersect_vertex_a = nir_iand(b, is_vertex_a, lvp_build_intersect_vertex(b, ax, bx, cx));
+      nir_def *intersect_vertex_b = nir_iand(b, is_vertex_b, lvp_build_intersect_vertex(b, bx, cx, ax));
+      nir_def *intersect_vertex_c = nir_iand(b, is_vertex_c, lvp_build_intersect_vertex(b, cx, ax, bx));
+      nir_def *is_vertex = nir_ior(b, nir_ior(b, is_vertex_a, is_vertex_b), is_vertex_c);
+      nir_def *intersect_vertex = nir_ior(b, nir_ior(b, intersect_vertex_a, intersect_vertex_b), intersect_vertex_c);
+      intersect_vertex = nir_ior(b, nir_inot(b, is_vertex), intersect_vertex);
+      intersect_edge = nir_iand(b, intersect_edge, intersect_vertex);
+   }
+   nir_pop_if(b, NULL);
+   cond = nir_if_phi(b, intersect_edge, cond);
+
    nir_push_if(b, cond);
    {
       nir_def *det = nir_fadd(b, u, nir_fadd(b, v, w));
-
-      sz = nir_f2f64(b, sz);
-
-      v_a = nir_f2f64(b, v_a);
-      v_b = nir_f2f64(b, v_b);
-      v_c = nir_f2f64(b, v_c);
 
       nir_def *az = nir_fmul(b, sz, nir_vector_extract(b, v_a, kz));
       nir_def *bz = nir_fmul(b, sz, nir_vector_extract(b, v_b, kz));
@@ -280,10 +350,9 @@ lvp_build_intersect_ray_tri(nir_builder *b, nir_def **node_data, nir_def *ray_tm
 
       nir_push_if(b, det_cond_front);
       {
-         t = nir_f2f32(b, nir_fdiv(b, t, det));
-         det = nir_f2f32(b, det);
-         v = nir_fdiv(b, nir_f2f32(b, v), det);
-         w = nir_fdiv(b, nir_f2f32(b, w), det);
+         t = nir_fdiv(b, t, det);
+         v = nir_fdiv(b, v, det);
+         w = nir_fdiv(b, w, det);
 
          nir_def *indices[4] = {t, det, v, w};
          nir_store_var(b, result, nir_vec(b, indices, 4), 0xf);
@@ -428,8 +497,10 @@ lvp_build_ray_traversal(nir_builder *b, const struct lvp_ray_traversal_args *arg
       .no_skip_aabbs = nir_ieq_imm(b, nir_iand_imm(b, args->flags, SpvRayFlagsSkipAABBsKHRMask), 0),
    };
 
-   nir_push_loop(b);
+   nir_loop *loop = nir_push_loop(b);
    {
+      nir_loop_add_continue_construct(loop);
+
       nir_push_if(b, nir_ieq_imm(b, nir_load_deref(b, args->vars.current_node), LVP_BVH_INVALID_NODE));
       {
          nir_push_if(b, nir_ieq_imm(b, nir_load_deref(b, args->vars.stack_ptr), 0));
@@ -461,7 +532,7 @@ lvp_build_ray_traversal(nir_builder *b, const struct lvp_ray_traversal_args *arg
 
       nir_def *node_data[LVP_BVH_NODE_PREFETCH_SIZE / 4];
       for (uint32_t i = 0; i < ARRAY_SIZE(node_data); i++)
-         node_data[i] = nir_build_load_global(b, 1, 32, nir_iadd_imm(b, node_addr, i * 4));
+         node_data[i] = nir_load_global(b, 1, 32, nir_iadd_imm(b, node_addr, i * 4));
 
       nir_def *tmax = nir_load_deref(b, args->vars.tmax);
 
@@ -538,7 +609,7 @@ lvp_build_ray_traversal(nir_builder *b, const struct lvp_ray_traversal_args *arg
       }
       nir_pop_if(b, NULL);
    }
-   nir_pop_loop(b, NULL);
+   nir_pop_loop(b, loop);
 
    return nir_load_var(b, incomplete);
 }

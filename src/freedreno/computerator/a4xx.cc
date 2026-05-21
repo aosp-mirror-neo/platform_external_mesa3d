@@ -25,12 +25,8 @@
 
 #include "util/u_math.h"
 #include "util/u_queue.h"
-#include "util/half_float.h"
 
-#include "adreno_pm4.xml.h"
-#include "adreno_common.xml.h"
-#include "a4xx.xml.h"
-
+#include "common/fd4_hw.h"
 #include "ir3_asm.h"
 #include "main.h"
 
@@ -56,9 +52,9 @@ a4xx_assemble(struct backend *b, FILE *in)
 }
 
 static void
-a4xx_disassemble(struct kernel *kernel, FILE *out)
+a4xx_disassemble(struct kernel *kernel, struct ir3_disasm_options *options)
 {
-   ir3_asm_disassemble(to_ir3_kernel(kernel), out);
+   ir3_asm_disassemble(to_ir3_kernel(kernel), options);
 }
 
 static void
@@ -345,7 +341,9 @@ a4xx_init(struct fd_device *dev, const struct fd_dev_id *dev_id)
       .emit_grid = a4xx_emit_grid,
    };
 
-   struct ir3_compiler_options compiler_options = {};
+   struct ir3_compiler_options compiler_options = {
+      .disable_cache = true,
+   };
    a4xx_backend->compiler =
       ir3_compiler_create(dev, dev_id, fd_dev_info_raw(dev_id), &compiler_options);
    a4xx_backend->dev = dev;

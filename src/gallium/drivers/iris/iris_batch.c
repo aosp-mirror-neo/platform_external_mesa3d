@@ -1,26 +1,7 @@
 /*
  * Copyright © 2017 Intel Corporation
+ * SPDX-License-Identifier: MIT
  *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included
- * in all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
- * OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- */
-
-/**
  * @file iris_batch.c
  *
  * Batchbuffer and command submission module.
@@ -48,7 +29,7 @@
 
 #include "common/intel_aux_map.h"
 #include "intel/common/intel_gem.h"
-#include "intel/compiler/brw_compiler.h"
+#include "intel/compiler/brw/brw_compiler.h"
 #ifdef INTEL_USE_ELK
 #include "intel/compiler/elk/elk_compiler.h"
 #endif
@@ -248,7 +229,7 @@ iris_init_batch(struct iris_context *ice,
                                          stderr, decode_flags, NULL,
                                          decode_get_bo, decode_get_state_size, batch);
 #else
-         unreachable("no elk support");
+         UNREACHABLE("no elk support");
 #endif
       }
       batch->decoder.dynamic_base = IRIS_MEMZONE_DYNAMIC_START;
@@ -281,7 +262,7 @@ iris_init_batches(struct iris_context *ice)
       iris_xe_init_batches(ice);
       break;
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
    }
 
    iris_foreach_batch(ice, batch)
@@ -540,7 +521,7 @@ iris_batch_free(const struct iris_context *ice, struct iris_batch *batch)
       iris_xe_destroy_batch(batch);
       break;
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
    }
 
    iris_destroy_batch_measure(batch->measure);
@@ -717,7 +698,7 @@ replace_kernel_ctx(struct iris_batch *batch)
    case INTEL_KMD_TYPE_XE:
       return iris_xe_replace_batch(batch);
    default:
-      unreachable("missing");
+      UNREACHABLE("missing");
       return false;
    }
 }
