@@ -2121,6 +2121,21 @@ vtn_type_is_ray_query(struct vtn_type *type)
    return vtn_type_without_array(type)->base_type == vtn_base_type_ray_query;
 }
 
+static bool
+vtn_type_all_members_have_access(const struct vtn_type *type,
+                                 enum gl_access_qualifier access)
+{
+   if (type->base_type != vtn_base_type_struct || type->length == 0)
+      return false;
+
+   for (unsigned i = 0; i < type->length; i++) {
+      if (!(type->members[i]->access & access))
+         return false;
+   }
+
+   return true;
+}
+
 static void
 vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
                     struct vtn_type *ptr_type, struct vtn_type *data_type,
@@ -2471,7 +2486,8 @@ vtn_create_variable(struct vtn_builder *b, struct vtn_value *val,
          var->var->data.resource_type = nir_resource_type_uniform_buffer;
          break;
       case vtn_variable_mode_ssbo:
-         if (var->access & ACCESS_NON_WRITEABLE)
+          if (var->access & ACCESS_NON_WRITEABLE ||
+              vtn_type_all_members_have_access(without_array, ACCESS_NON_WRITEABLE))
             var->var->data.resource_type = nir_resource_type_read_only_storage_buffer;
          else
             var->var->data.resource_type = nir_resource_type_read_write_storage_buffer;
@@ -2699,9 +2715,20 @@ vtn_cast_pointer(struct vtn_builder *b, struct vtn_pointer *p,
    vtn_assert(pointed == casted->type->pointed);
 
    if (p->deref) {
+      const struct glsl_type *deref_type = pointed->type;
+
+      /* Preserve the explicit stride when casting an untyped pointer to a raw
+       * SPIR-V matrix type because the raw type lacks it.
+       */
+      if (glsl_type_is_matrix(p->deref->type) &&
+          glsl_type_is_matrix(deref_type) &&
+          glsl_get_explicit_stride(p->deref->type) > 0 &&
+          glsl_get_explicit_stride(deref_type) == 0)
+         deref_type = p->deref->type;
+
       casted->deref = nir_build_deref_cast(&b->nb, &p->deref->def,
                                            p->deref->modes,
-                                           pointed->type, 0);
+                                           deref_type, 0);
    } else if (p->desc_index != NULL) {
       /* Nothing to do for descriptor index pointers. */
    } else if (p->var != NULL) {

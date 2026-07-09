@@ -647,7 +647,23 @@ void si_nir_gather_info(struct si_screen *sscreen, struct nir_shader *nir,
                                    BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SAMPLE_ID) ||
                                    BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SAMPLE_POS) ||
                                    BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SAMPLE_MASK_IN) ||
-                                   BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_HELPER_INVOCATION));
+                                   BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_HELPER_INVOCATION) ||
+                                   BITSET_TEST(nir->info.system_values_read, SYSTEM_VALUE_SUBGROUP_INVOCATION));
+
+      /* Add back color inputs. */
+      unsigned num_inputs_with_colors = info->num_inputs;
+      for (unsigned i = 0; i < 2; i++) {
+         if ((info->colors_read >> (i * 4)) & 0xf) {
+            unsigned index = num_inputs_with_colors;
+
+            info->input_semantic[index] = VARYING_SLOT_BFC0 + i;
+            num_inputs_with_colors++;
+
+            /* Back-face colors don't increment num_inputs. si_emit_spi_map will use
+             * back-face colors conditionally only when they are needed.
+             */
+         }
+      }
    }
 
    info->num_inputs = nir->num_inputs;

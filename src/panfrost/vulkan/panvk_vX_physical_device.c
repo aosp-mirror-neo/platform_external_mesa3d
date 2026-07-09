@@ -18,10 +18,10 @@
 #include "vk_limits.h"
 #include "vk_shader_module.h"
 
-#include "panvk_instance.h"
 #include "panvk_buffer.h"
 #include "panvk_cmd_draw.h"
 #include "panvk_descriptor_set_layout.h"
+#include "panvk_instance.h"
 #include "panvk_physical_device.h"
 #include "panvk_wsi.h"
 
@@ -181,8 +181,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_pipeline_creation_feedback = true,
       .EXT_pipeline_robustness = true,
 #ifdef PANVK_USE_WSI_PLATFORM
-	  .EXT_present_timing =
-         device->kmod.dev->props.gpu_can_query_timestamp,
+      .EXT_present_timing = device->kmod.dev->props.gpu_can_query_timestamp,
 #endif
       .EXT_private_data = true,
       .EXT_primitive_topology_list_restart = true,
@@ -242,34 +241,41 @@ has_compressed_formats(const struct panvk_physical_device *physical_device,
 static bool
 has_texture_compression_etc2(const struct panvk_physical_device *physical_device)
 {
+   return has_compressed_formats(
+      physical_device,
+      BITFIELD_BIT(MALI_ETC2_RGB8) | BITFIELD_BIT(MALI_ETC2_RGB8A1) |
+         BITFIELD_BIT(MALI_ETC2_RGBA8) | BITFIELD_BIT(MALI_ETC2_R11_UNORM) |
+         BITFIELD_BIT(MALI_ETC2_R11_SNORM) |
+         BITFIELD_BIT(MALI_ETC2_RG11_UNORM) |
+         BITFIELD_BIT(MALI_ETC2_RG11_SNORM));
+}
+
+static bool
+has_texture_compression_astc_ldr(
+   const struct panvk_physical_device *physical_device)
+{
    return has_compressed_formats(physical_device,
-      BITFIELD_BIT(MALI_ETC2_RGB8) |
-      BITFIELD_BIT(MALI_ETC2_RGB8A1) | BITFIELD_BIT(MALI_ETC2_RGBA8) |
-      BITFIELD_BIT(MALI_ETC2_R11_UNORM) | BITFIELD_BIT(MALI_ETC2_R11_SNORM) |
-      BITFIELD_BIT(MALI_ETC2_RG11_UNORM) | BITFIELD_BIT(MALI_ETC2_RG11_SNORM));
+                                 BITFIELD_BIT(MALI_ASTC_2D_LDR));
 }
 
 static bool
-has_texture_compression_astc_ldr(const struct panvk_physical_device *physical_device)
+has_texture_compression_astc_hdr(
+   const struct panvk_physical_device *physical_device)
 {
-   return has_compressed_formats(physical_device, BITFIELD_BIT(MALI_ASTC_2D_LDR));
-}
-
-static bool
-has_texture_compression_astc_hdr(const struct panvk_physical_device *physical_device)
-{
-   return has_compressed_formats(physical_device, BITFIELD_BIT(MALI_ASTC_2D_HDR));
+   return has_compressed_formats(physical_device,
+                                 BITFIELD_BIT(MALI_ASTC_2D_HDR));
 }
 
 static bool
 has_texture_compression_bc(const struct panvk_physical_device *physical_device)
 {
-   return has_compressed_formats(physical_device,
+   return has_compressed_formats(
+      physical_device,
       BITFIELD_BIT(MALI_BC1_UNORM) | BITFIELD_BIT(MALI_BC2_UNORM) |
-      BITFIELD_BIT(MALI_BC3_UNORM) | BITFIELD_BIT(MALI_BC4_UNORM) |
-      BITFIELD_BIT(MALI_BC4_SNORM) | BITFIELD_BIT(MALI_BC5_UNORM) |
-      BITFIELD_BIT(MALI_BC5_SNORM) | BITFIELD_BIT(MALI_BC6H_SF16) |
-      BITFIELD_BIT(MALI_BC6H_UF16) | BITFIELD_BIT(MALI_BC7_UNORM));
+         BITFIELD_BIT(MALI_BC3_UNORM) | BITFIELD_BIT(MALI_BC4_UNORM) |
+         BITFIELD_BIT(MALI_BC4_SNORM) | BITFIELD_BIT(MALI_BC5_UNORM) |
+         BITFIELD_BIT(MALI_BC5_SNORM) | BITFIELD_BIT(MALI_BC6H_SF16) |
+         BITFIELD_BIT(MALI_BC6H_UF16) | BITFIELD_BIT(MALI_BC7_UNORM));
 }
 
 void
@@ -337,7 +343,8 @@ panvk_per_arch(get_physical_device_features)(
       .sparseResidency4Samples = false,
       .sparseResidency8Samples = false,
       .sparseResidency16Samples = false,
-      .sparseResidencyAliased = false, /* https://gitlab.freedesktop.org/panfrost/mesa/-/issues/237 */
+      .sparseResidencyAliased =
+         false, /* https://gitlab.freedesktop.org/panfrost/mesa/-/issues/237 */
       .variableMultisampleRate = false,
       .inheritedQueries = false,
 
@@ -706,9 +713,8 @@ panvk_per_arch(get_physical_device_properties)(
    const unsigned max_cbuf_format = 16; /* R32G32B32A32 */
 
    unsigned max_cbuf_atts = pan_get_max_cbufs(PAN_ARCH, max_tib_size);
-   VkSampleCountFlags sample_counts =
-       panvk_get_sample_counts(PAN_ARCH, max_tib_size, max_cbuf_atts,
-                               max_cbuf_format);
+   VkSampleCountFlags sample_counts = panvk_get_sample_counts(
+      PAN_ARCH, max_tib_size, max_cbuf_atts, max_cbuf_format);
 
    uint64_t os_page_size = 4096;
    os_get_page_size(&os_page_size);
@@ -739,13 +745,22 @@ panvk_per_arch(get_physical_device_properties)(
       .deviceType = VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU,
 
       /* Vulkan 1.0 limits */
-      /* Maximum texture dimension is 2^16. */
+      /* Maximum texture dimension is 2^16, but we're limited by the
+       * size/surface-stride fields. The size/surface_stride field is 32-bit
+       * on v10-, so let's take that as a reference for now.
+       * The following limits are chosen so we don't overflow these
+       * size/surface_stride fields. We choose them so they are a power-of-two,
+       * except for 2D/Cube dimensions where taking a power-of-two would be
+       * too limiting, so we pick power-of-two-minus-one, which makes things
+       * fit exactly in our 32-bit budget.
+       */
       .maxImageDimension1D = (1 << 16),
       .maxImageDimension2D = (1 << 16),
       .maxImageDimension3D = (1 << 16),
       .maxImageDimensionCube = (1 << 16),
       .maxImageArrayLayers = (1 << 16),
-      .maxTexelBufferElements = UINT64_C(1) << (util_logbase2(panvk_get_max_buffer_size(device) / 16)),
+      .maxTexelBufferElements =
+         UINT64_C(1) << (util_logbase2(panvk_get_max_buffer_size(device) / 16)),
       /* Each uniform entry is 16-byte and the number of entries is encoded in a
        * 12-bit field, with the minus(1) modifier, which gives 2^20.
        */
@@ -913,7 +928,8 @@ panvk_per_arch(get_physical_device_properties)(
       .optimalBufferCopyRowPitchAlignment = 64,
 
       /* If we can't detect the cacheline size, assume 64 bytes cachelines. */
-      .nonCoherentAtomSize = util_has_cache_ops() ? util_cache_granularity() : 64,
+      .nonCoherentAtomSize =
+         util_has_cache_ops() ? util_cache_granularity() : 64,
 
       /* Vulkan 1.0 sparse properties */
       .sparseResidencyNonResidentStrict = false,
@@ -981,8 +997,7 @@ panvk_per_arch(get_physical_device_properties)(
       .shaderRoundingModeRTZFloat16 = true,
       .shaderRoundingModeRTZFloat32 = true,
       .shaderRoundingModeRTZFloat64 = false,
-      .maxUpdateAfterBindDescriptorsInAllPools =
-         PAN_ARCH >= 9 ? UINT32_MAX : 0,
+      .maxUpdateAfterBindDescriptorsInAllPools = PAN_ARCH >= 9 ? UINT32_MAX : 0,
       /* VK_EXT_descriptor_indexing */
       .maxUpdateAfterBindDescriptorsInAllPools = PAN_ARCH >= 9 ? UINT32_MAX : 0,
       .shaderUniformBufferArrayNonUniformIndexingNative = false,
@@ -1022,10 +1037,9 @@ panvk_per_arch(get_physical_device_properties)(
          PAN_ARCH >= 9 ? MAX_PER_SET_STORAGE_IMAGES : 0,
       .maxDescriptorSetUpdateAfterBindInputAttachments =
          PAN_ARCH >= 9 ? MAX_PER_SET_INPUT_ATTACHMENTS : 0,
-      .supportedDepthResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT |
-                                    VK_RESOLVE_MODE_AVERAGE_BIT |
-                                    VK_RESOLVE_MODE_MIN_BIT |
-                                    VK_RESOLVE_MODE_MAX_BIT,
+      .supportedDepthResolveModes =
+         VK_RESOLVE_MODE_SAMPLE_ZERO_BIT | VK_RESOLVE_MODE_AVERAGE_BIT |
+         VK_RESOLVE_MODE_MIN_BIT | VK_RESOLVE_MODE_MAX_BIT,
       .supportedStencilResolveModes = VK_RESOLVE_MODE_SAMPLE_ZERO_BIT |
                                       VK_RESOLVE_MODE_MIN_BIT |
                                       VK_RESOLVE_MODE_MAX_BIT,
@@ -1070,19 +1084,26 @@ panvk_per_arch(get_physical_device_properties)(
       .integerDotProduct64BitMixedSignednessAccelerated = false,
       .integerDotProductAccumulatingSaturating8BitUnsignedAccelerated = false,
       .integerDotProductAccumulatingSaturating8BitSignedAccelerated = false,
-      .integerDotProductAccumulatingSaturating8BitMixedSignednessAccelerated = false,
-      .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated = PAN_ARCH >= 9,
-      .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated = PAN_ARCH >= 9,
-      .integerDotProductAccumulatingSaturating4x8BitPackedMixedSignednessAccelerated = false,
+      .integerDotProductAccumulatingSaturating8BitMixedSignednessAccelerated =
+         false,
+      .integerDotProductAccumulatingSaturating4x8BitPackedUnsignedAccelerated =
+         PAN_ARCH >= 9,
+      .integerDotProductAccumulatingSaturating4x8BitPackedSignedAccelerated =
+         PAN_ARCH >= 9,
+      .integerDotProductAccumulatingSaturating4x8BitPackedMixedSignednessAccelerated =
+         false,
       .integerDotProductAccumulatingSaturating16BitUnsignedAccelerated = false,
       .integerDotProductAccumulatingSaturating16BitSignedAccelerated = false,
-      .integerDotProductAccumulatingSaturating16BitMixedSignednessAccelerated = false,
+      .integerDotProductAccumulatingSaturating16BitMixedSignednessAccelerated =
+         false,
       .integerDotProductAccumulatingSaturating32BitUnsignedAccelerated = false,
       .integerDotProductAccumulatingSaturating32BitSignedAccelerated = false,
-      .integerDotProductAccumulatingSaturating32BitMixedSignednessAccelerated = false,
+      .integerDotProductAccumulatingSaturating32BitMixedSignednessAccelerated =
+         false,
       .integerDotProductAccumulatingSaturating64BitUnsignedAccelerated = false,
       .integerDotProductAccumulatingSaturating64BitSignedAccelerated = false,
-      .integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated = false,
+      .integerDotProductAccumulatingSaturating64BitMixedSignednessAccelerated =
+         false,
       .storageTexelBufferOffsetAlignmentBytes = 16,
       .storageTexelBufferOffsetSingleTexelAlignment = true,
       .uniformTexelBufferOffsetAlignmentBytes = 4,
@@ -1151,7 +1172,8 @@ panvk_per_arch(get_physical_device_properties)(
       /* VK_KHR_maintenance9 */
       /* Sparse binding not supported yet. */
       .image2DViewOf3DSparse = false,
-      .defaultVertexAttributeValue = VK_DEFAULT_VERTEX_ATTRIBUTE_VALUE_ZERO_ZERO_ZERO_ZERO_KHR,
+      .defaultVertexAttributeValue =
+         VK_DEFAULT_VERTEX_ATTRIBUTE_VALUE_ZERO_ZERO_ZERO_ZERO_KHR,
 
       /* VK_EXT_custom_border_color */
       .maxCustomBorderColorSamplers = 32768,
@@ -1245,7 +1267,7 @@ panvk_per_arch(get_physical_device_properties)(
       VK_IMAGE_LAYOUT_PREINITIALIZED,
       VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT,
 
-      /* Only if vk1.1+ is supported */
+   /* Only if vk1.1+ is supported */
 #if PAN_ARCH >= 10
       /*  Vulkan 1.1 */
       VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_STENCIL_ATTACHMENT_OPTIMAL,

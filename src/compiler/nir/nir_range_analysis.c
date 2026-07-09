@@ -1039,7 +1039,11 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
    }
 
    case nir_op_frcp:
-      r = frcp_fp_class(handle_sz(alu, src_res[0]));
+      /* Some backends have terrible precision for fp64,
+       * so don't try to do anything clever.
+       */
+      if (alu->def.bit_size < 64)
+         r = frcp_fp_class(handle_sz(alu, src_res[0]));
       break;
 
    case nir_op_mov:
@@ -1085,11 +1089,13 @@ process_fp_query(struct analysis_state *state, struct analysis_query *aq, uint32
       break;
 
    case nir_op_fsqrt:
-      r = fsqrt_fp_class(src_res[0]);
+      if (alu->def.bit_size < 64)
+         r = fsqrt_fp_class(src_res[0]);
       break;
 
    case nir_op_frsq:
-      r = frcp_fp_class(fsqrt_fp_class(handle_sz(alu, src_res[0])));
+      if (alu->def.bit_size < 64)
+         r = frcp_fp_class(fsqrt_fp_class(handle_sz(alu, src_res[0])));
       break;
 
    case nir_op_ffloor: {
@@ -2295,7 +2301,8 @@ ssa_def_bits_used(const nir_def *def, int recur)
                uint64_t def_bits_used = ssa_def_bits_used(&use_alu->def, recur);
                unsigned bit_size = use_alu->def.bit_size;
                unsigned offset = nir_alu_src_as_uint(use_alu->src[1]) & (bit_size - 1);
-               unsigned bits = nir_src_is_const(use_alu->src[2].src) ?
+               bool src2_is_const = nir_src_is_const(use_alu->src[2].src);
+               unsigned bits = src2_is_const ?
                                   nir_alu_src_as_uint(use_alu->src[2]) & (bit_size - 1) :
                                   /* Worst case if bits is not constant. */
                                   (bit_size - offset);
@@ -2306,8 +2313,8 @@ ssa_def_bits_used(const nir_def *def, int recur)
                 * If bits is not constant, all bits can be the last one.
                 */
                if (use_alu->op == nir_op_ibfe &&
-                   (def_bits_used >> offset) & ~field_bitmask) {
-                  if (nir_alu_src_as_uint(use_alu->src[2]))
+                   (def_bits_used & ~(src2_is_const ? field_bitmask : 1u))) {
+                  if (src2_is_const)
                      def_bits_used |= BITFIELD64_BIT(bits - 1);
                   else
                      def_bits_used |= field_bitmask;

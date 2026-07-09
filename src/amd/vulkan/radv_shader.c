@@ -38,9 +38,9 @@
 #include "sid.h"
 #include "vk_debug_report.h"
 #include "vk_nir.h"
+#include "vk_nir_convert_ycbcr.h"
 #include "vk_nir_lower_descriptor_heaps.h"
 #include "vk_sampler.h"
-#include "vk_nir_convert_ycbcr.h"
 #include "vk_semaphore.h"
 #include "vk_sync.h"
 #include "vk_ycbcr_conversion.h"
@@ -760,8 +760,8 @@ radv_shader_spirv_to_nir(const struct radv_compiler_info *compiler_info, struct 
 
    if (!stage->key.optimisations_disabled) {
       /* Only run this pass once before nir_lower_var_copies is called,
-      * so that we don't introduce any new copy_deref instructions later.
-      */
+       * so that we don't introduce any new copy_deref instructions later.
+       */
       NIR_PASS(_, nir, nir_opt_find_array_copies);
       NIR_PASS(_, nir, nir_lower_vars_to_ssa);
 
@@ -861,9 +861,7 @@ radv_shader_spirv_to_nir(const struct radv_compiler_info *compiler_info, struct 
       nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
 
    if (compiler_info->hw.has_cs_regalloc_hang_bug && mesa_shader_stage_is_compute(nir->info.stage)) {
-      const uint32_t wg_size = nir->info.workgroup_size[0] *
-                               nir->info.workgroup_size[1] *
-                               nir->info.workgroup_size[2];
+      const uint32_t wg_size = nir->info.workgroup_size[0] * nir->info.workgroup_size[1] * nir->info.workgroup_size[2];
 
       if (wg_size > 256) {
          NIR_PASS(progress, nir, nir_lower_workgroup_size, 256);
@@ -874,6 +872,9 @@ radv_shader_spirv_to_nir(const struct radv_compiler_info *compiler_info, struct 
          nir_shader_gather_info(nir, nir_shader_get_entrypoint(nir));
       }
    }
+
+   free(stage->layout.embedded_samplers.samplers);
+   stage->layout.embedded_samplers.samplers = NULL;
 
    return nir;
 }
@@ -1392,6 +1393,9 @@ radv_free_shader_memory(struct radv_device *device, union radv_shader_arena_bloc
       free(arena);
    } else if (free_list) {
       add_hole(free_list, hole);
+   } else {
+      /* Mark it as a hole, allowing merges when adjacent blocks are freed later. */
+      list_inithead(&hole->freelist);
    }
 
    mtx_unlock(&device->shader_arena_mutex);
@@ -1715,7 +1719,7 @@ radv_precompute_registers_hw_gs(struct radv_device *device, const struct radv_sh
    const uint8_t max_stream = gs_info->gs.num_components_per_stream[3]   ? 3
                               : gs_info->gs.num_components_per_stream[2] ? 2
                               : gs_info->gs.num_components_per_stream[1] ? 1
-                                                                      : 0;
+                                                                         : 0;
    const uint8_t *num_components = gs_info->gs.num_components_per_stream;
 
    uint32_t offset = num_components[0] * gs_max_out_vertices;
@@ -3192,7 +3196,8 @@ radv_gather_nir_debug_info(struct nir_shader *const *shaders, int shader_count)
 }
 
 char *
-radv_dump_nir_shaders(const struct radv_compiler_info *compiler_info, struct nir_shader *const *shaders, int shader_count)
+radv_dump_nir_shaders(const struct radv_compiler_info *compiler_info, struct nir_shader *const *shaders,
+                      int shader_count)
 {
    if (compiler_info->debug.nir_debug_info)
       return radv_gather_nir_debug_info(shaders, shader_count);
@@ -3407,7 +3412,7 @@ radv_create_trap_handler_shader(struct radv_device *device)
 
    struct radv_shader_args args;
    struct radv_shader_debug_info debug = {0};
-   radv_declare_shader_args(&device->compiler_info, NULL, &info, stage, MESA_SHADER_NONE, &args, &debug);
+   radv_declare_shader_args(device, NULL, &info, stage, MESA_SHADER_NONE, &args, &debug);
 
 #if AMD_LLVM_AVAILABLE
    if (options.dump_shader || options.record_ir)

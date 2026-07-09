@@ -260,7 +260,11 @@ nvk_push_draw_state_init(struct nvk_queue *queue, struct nv_push *p)
 
    /* Initialize tessellation parameters */
    P_IMMD(p, NV9097, SET_MME_SHADOW_SCRATCH(NVK_MME_SCRATCH_TESS_PARAMS), 0);
-   P_IMMD(p, NV9097, SET_TESSELLATION_PARAMETERS, {});
+   P_IMMD(p, NV9097, SET_TESSELLATION_PARAMETERS, {
+      .domain_type = DOMAIN_TYPE_ISOLINE,
+      .spacing = SPACING_INTEGER,
+      .output_primitives = OUTPUT_PRIMITIVES_LINES,
+   });
 
    P_IMMD(p, NV9097, SET_RENDER_ENABLE_C, MODE_TRUE);
 
@@ -1035,6 +1039,44 @@ nvk_rendering_linear(const struct nvk_rendering_state *render)
    return true;
 }
 
+static VkResult
+ensure_linear_tiled_shadow_mem_locked(struct nvk_device *dev,
+                                      struct nvk_image *image,
+                                      uint8_t plane_idx)
+{
+   if (image->linear_tiled_shadow_mem[plane_idx] != NULL) {
+      assert(image->linear_tiled_shadows[plane_idx].addr != 0);
+      return VK_SUCCESS;
+   }
+
+   struct nvk_image_plane *plane = &image->linear_tiled_shadows[plane_idx];
+   assert(plane->nil.size_B > 0);
+   VkResult result =
+      nvkmd_dev_alloc_tiled_mem(dev->nvkmd, &dev->vk.base,
+                                plane->nil.size_B, plane->nil.align_B,
+                                plane->nil.pte_kind, plane->nil.tile_mode,
+                                NVKMD_MEM_LOCAL,
+                                &image->linear_tiled_shadow_mem[plane_idx]);
+   if (result != VK_SUCCESS)
+      return result;
+
+   plane->addr = image->linear_tiled_shadow_mem[plane_idx]->va->addr;
+
+   return VK_SUCCESS;
+}
+
+static VkResult
+nvk_image_ensure_linear_tiled_shadow_mem(struct nvk_device *dev,
+                                         struct nvk_image *image,
+                                         uint8_t plane_idx)
+{
+   simple_mtx_lock(&image->tiled_shadow_mutex);
+   VkResult result = ensure_linear_tiled_shadow_mem_locked(dev, image,
+                                                           plane_idx);
+   simple_mtx_unlock(&image->tiled_shadow_mutex);
+   return result;
+}
+
 static void
 get_depth_stencil_plane_params(struct nvk_image_view *iview,
                                uint32_t plane,
@@ -1104,7 +1146,7 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
                       const VkRenderingInfo *pRenderingInfo)
 {
    VK_FROM_HANDLE(nvk_cmd_buffer, cmd, commandBuffer);
-   const struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
+   struct nvk_device *dev = nvk_cmd_buffer_device(cmd);
    const struct nvk_physical_device *pdev = nvk_device_physical(dev);
    struct nvk_rendering_state *render = &cmd->state.gfx.render;
 
@@ -1182,18 +1224,23 @@ nvk_CmdBeginRendering(VkCommandBuffer commandBuffer,
    for (uint32_t i = 0; i < NVK_MAX_RTS; i++) {
       if (render->color_att[i].iview) {
          const struct nvk_image_view *iview = render->color_att[i].iview;
-         const struct nvk_image *image = (struct nvk_image *)iview->vk.image;
+         struct nvk_image *image = (struct nvk_image *)iview->vk.image;
          /* Rendering to multi-planar images is valid for a specific single
           * plane only, so assert that what we have is a single-plane, obtain
           * its index, and begin rendering
           */
          assert(iview->plane_count == 1);
          const uint8_t ip = iview->planes[0].image_plane;
-         const struct nvk_image_plane *plane = &image->planes[ip];
+         struct nvk_image_plane *plane = &image->planes[ip];
 
          if (!render->linear &&
-             plane->nil.levels[0].tiling.gob_type == NIL_GOB_TYPE_LINEAR)
-            plane = &image->linear_tiled_shadow;
+             plane->nil.levels[0].tiling.gob_type == NIL_GOB_TYPE_LINEAR) {
+            VkResult result;
+            result = nvk_image_ensure_linear_tiled_shadow_mem(dev, image, ip);
+            if (result != VK_SUCCESS)
+               vk_command_buffer_set_error(&cmd->vk, result);
+            plane = &image->linear_tiled_shadows[ip];
+         }
 
          const struct nil_image *nil_image = &plane->nil;
          const struct nil_image_level *level =
@@ -2143,7 +2190,37 @@ const struct nvk_mme_test_case nvk_mme_set_tess_params_tests[] = {{
       },
       { }
    },
-}, {}};
+},
+{
+   /* Test expected default state */
+   .init = (struct nvk_mme_mthd_data[]) {
+      {
+         NVK_SET_MME_SCRATCH(TESS_PARAMS),
+         NVK_MME_TESS_STATE(TRIANGLE, INTEGER, 0)
+      },
+      { }
+   },
+   .params = (uint32_t[]) {
+      NVK_MME_VAL_MASK(0, 0xffff)
+   },
+   .expected = (struct nvk_mme_mthd_data[]) {
+      {
+         NVK_SET_MME_SCRATCH(TESS_PARAMS),
+         NVK_MME_FULL_TESS_STATE(
+            NVDEF(NV9097, SET_TESSELLATION_PARAMETERS, DOMAIN_TYPE, ISOLINE) |
+            NVDEF(NV9097, SET_TESSELLATION_PARAMETERS, SPACING, INTEGER),
+            NVDEF(NV9097, SET_TESSELLATION_PARAMETERS, DOMAIN_TYPE, ISOLINE) |
+            NVDEF(NV9097, SET_TESSELLATION_PARAMETERS, SPACING, INTEGER)
+         )
+      },
+      {
+         NV9097_SET_TESSELLATION_PARAMETERS,
+         NVK_MME_TESS_PARAMS(ISOLINE, INTEGER, LINES)
+      },
+      { }
+   },
+},
+{}};
 
 void
 nvk_cmd_flush_gfx_shaders(struct nvk_cmd_buffer *cmd)

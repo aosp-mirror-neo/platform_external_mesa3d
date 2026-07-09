@@ -668,6 +668,14 @@
    DRI_CONF_OPT_S_NODEF(tu_autotune_algorithm, \
                         "Set the preferred autotune algorithm")
 
+#define DRI_CONF_TU_RESTRICT_SUBGROUP_SIZE_64(def) \
+   DRI_CONF_OPT_B(tu_restrict_subgroup_size_64, def, \
+                  "Restrict subgroup size to 64 (instead of a max of 128) to work around games assuming desktop GPU 32/64 sizes")
+
+#define DRI_CONF_TU_ALLOW_CONCURRENT_BINNING(def) \
+   DRI_CONF_OPT_B(tu_allow_concurrent_binning, def, \
+                  "Allow concurrent binning on A7XX+, the CB is disabled by default because it regresses performance on desktop games")
+
 /**
  * \brief Honeykrisp specific configuration options
  */
@@ -849,6 +857,10 @@
 #define DRI_CONF_RADV_HIDE_REBAR_ON_DGPU(def) \
    DRI_CONF_OPT_B(radv_hide_rebar_on_dgpu, def, \
                   "Hide resizable bar on dGPUs by exposing a fake carveout of 256MiB.")
+
+#define DRI_CONF_RADV_FORCE_64_BYTE_SAMPLED_IMAGE(def) \
+   DRI_CONF_OPT_B(radv_force_64_byte_sampled_image, def, \
+                  "Force sampled images size to 64 bytes.")
 
 /**
  * \brief ANV specific configuration options

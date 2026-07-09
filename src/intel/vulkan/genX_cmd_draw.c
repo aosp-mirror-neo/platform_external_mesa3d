@@ -1968,7 +1968,7 @@ cmd_buffer_set_indirect_stride(struct anv_cmd_buffer *cmd_buffer,
    }
 #endif
 
-   return aligned;
+   return aligned == U_TRISTATE_YES;
 }
 
 static void
@@ -2003,8 +2003,8 @@ genX(cmd_buffer_emit_execute_indirect_draws)(struct anv_cmd_buffer *cmd_buffer,
          ind.ArgumentBufferStartAddress = draw;
          ind.CountBufferAddress         = count_addr;
          ind.CountBufferIndirectEnable  = !anv_address_is_null(count_addr);
-         ind.MOCS                       =
-            anv_mocs(cmd_buffer->device, draw.bo, 0);
+         ind.MOCSIndex                  =
+            MOCS_GET_INDEX(anv_mocs(cmd_buffer->device, draw.bo, 0));
 
       }
 

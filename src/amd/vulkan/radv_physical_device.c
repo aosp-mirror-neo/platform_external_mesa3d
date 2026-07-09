@@ -310,6 +310,7 @@ radv_physical_device_init_cache_key(struct radv_physical_device *pdev)
    key->ge_wave32 = pdev->ge_wave_size == 32;
    key->invariant_geom = instance->drirc.debug.invariant_geom;
    key->no_fmask = !!(instance->debug_flags & RADV_DEBUG_NO_FMASK);
+   key->force_64_byte_sampled_image = pdev->force_64_byte_sampled_image;
    key->no_ngg_gs = instance->drirc.performance.disable_ngg_gs;
    key->no_rt = !!(instance->debug_flags & RADV_DEBUG_NO_RT);
    key->ps_wave32 = pdev->ps_wave_size == 32;
@@ -2591,6 +2592,8 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
 
    pdev->use_fmask = pdev->info.compiler_info.has_fmask && !(instance->debug_flags & RADV_DEBUG_NO_FMASK);
 
+   pdev->force_64_byte_sampled_image = !pdev->use_fmask && instance->drirc.debug.force_64_byte_sampled_image;
+
    pdev->use_hiz = !(instance->debug_flags & RADV_DEBUG_NO_HIZ);
 
    if (pdev->info.gfx_level == GFX12) {
@@ -2815,6 +2818,7 @@ radv_physical_device_destroy(struct vk_physical_device *vk_device)
 
    radv_finish_wsi(pdev);
    ac_destroy_perfcounters(&pdev->ac_perfcounters);
+   free(pdev->perfcounters);
    if (pdev->addrlib)
       ac_addrlib_destroy(pdev->addrlib);
    if (pdev->ws)
@@ -3279,13 +3283,15 @@ radv_GetPhysicalDeviceFragmentShadingRatesKHR(VkPhysicalDevice physicalDevice, u
          if (x == 1 && y == 1) {
             samples = ~0;
          } else {
-            samples = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT;
+            samples = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT | VK_SAMPLE_COUNT_8_BIT;
 
-            /* VRS coarse shading with 8x MSAA isn't supported on GFX12 and the
-             * hw automatically clamps to 1x1.
+            /* VRS coarse shading with 8x MSAA isn't supported:
+             * - on GFX12 because the hw automatically clamps to 1x1
+             * - on GFX11-11.7 due to random GPU hangs with VRS 2x2 (verified on NAVI33) and it's
+             *   easier to disable it completely for all rates
              */
-            if (pdev->info.gfx_level < GFX12)
-               samples |= VK_SAMPLE_COUNT_8_BIT;
+            if (pdev->info.gfx_level >= GFX11)
+               samples &= ~VK_SAMPLE_COUNT_8_BIT;
          }
 
          append_rate(x, y, samples);
