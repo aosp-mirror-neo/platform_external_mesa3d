@@ -3582,6 +3582,8 @@ struct gl_context
     */
    GLboolean HasConfig;
 
+   GLboolean TextureFormatSupported[MESA_FORMAT_COUNT];
+
    GLboolean RasterDiscard;  /**< GL_RASTERIZER_DISCARD */
    GLboolean IntelConservativeRasterization; /**< GL_CONSERVATIVE_RASTERIZATION_INTEL */
    GLboolean ConservativeRasterization; /**< GL_CONSERVATIVE_RASTERIZATION_NV */

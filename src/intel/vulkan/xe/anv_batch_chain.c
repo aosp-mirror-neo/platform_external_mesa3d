@@ -146,7 +146,7 @@ xe_exec_ioctl_impl(struct anv_queue *queue, struct drm_xe_exec *exec,
 
    int ret = xe_gem_exec_ioctl(device->fd, device->info, exec);
    if (ret) {
-      if (INTEL_DEBUG(DEBUG_SHADER_PRINT))
+      if (anv_needs_printf_buffer())
          vk_check_printf_status(&device->vk, &device->printf);
       return vk_queue_set_lost(&queue->vk, "%s(%d) failed: %m", func, line);
    }
@@ -291,8 +291,7 @@ xe_queue_exec_locked(struct anv_queue *queue,
 
    const bool can_skip_bind_timeline = cmd_buffer_count == 0;
    const bool is_queue_wait_idle = can_skip_bind_timeline &&
-      wait_count == 0 && signal_count == 1 &&
-      !(signals[0].sync->flags & VK_SYNC_IS_SHAREABLE);
+      wait_count == 0 && signal_count == 1;
 
    struct drm_xe_sync *xe_syncs = NULL;
    uint32_t xe_syncs_count = 0;

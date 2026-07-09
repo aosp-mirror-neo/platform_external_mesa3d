@@ -38,7 +38,6 @@
 #include "util/format/u_formats.h"
 #include "pipe/p_shader_tokens.h"
 #include "pipe/p_state.h"
-#include "util/macros.h"
 #include "util/slab.h"
 #include "util/u_framebuffer.h"
 #include <util/u_suballoc.h>
@@ -138,15 +137,6 @@ struct etna_shader_uniform_info {
    uint32_t count;
 };
 
-struct etna_framebuffer_state {
-   struct pipe_framebuffer_state base;
-
-   unsigned rt_is_128bit : ETNA_MAX_128BIT_RTS;
-   unsigned rt_companion[ETNA_MAX_128BIT_RTS];
-   int8_t companion_src[PIPE_MAX_COLOR_BUFS];
-   uint32_t rt_ts_mask;
-};
-
 struct etna_context {
    struct pipe_context base;
 
@@ -222,7 +212,7 @@ struct etna_context {
    struct etna_shader_state shader;
 
    /* saved parameter-like state. these are mainly kept around for the blitter */
-   struct etna_framebuffer_state framebuffer_s;
+   struct pipe_framebuffer_state framebuffer_s;
    struct pipe_stencil_ref stencil_ref_s;
    struct pipe_viewport_state viewport_s;
    struct pipe_scissor_state scissor;
@@ -253,11 +243,6 @@ struct etna_context {
    bool compute_only;
    bool in_draw_vbo;
    bool in_transfer_blit;
-
-   /* Set by etna_copy_resource/etna_copy_resource_box when the caller
-    * needs an R<->B swap during the blit.  Consumed by BLT/RS because
-    * pipe_blit_info has no driver-private field to carry this through. */
-   bool blit_rb_swap;
    bool needs_gpu_state_reset;
    bool alpha_coverage_dither_emitted;
 
@@ -267,9 +252,6 @@ struct etna_context {
    uint cond_mode;
 
    struct etna_streamout streamout;
-
-   unsigned sampler_companion[MESA_SHADER_STAGES][PIPE_MAX_SAMPLERS / 2];
-   uint16_t tex_is_128bit[MESA_SHADER_STAGES];
 };
 
 static inline struct etna_context *
@@ -282,12 +264,6 @@ static inline struct etna_transfer *
 etna_transfer(struct pipe_transfer *p)
 {
    return (struct etna_transfer *)p;
-}
-
-static inline bool
-etna_framebuffer_rt_use_ts(const struct etna_context *ctx, unsigned i)
-{
-   return ctx->framebuffer_s.rt_ts_mask & BITFIELD_BIT(i);
 }
 
 struct pipe_context *

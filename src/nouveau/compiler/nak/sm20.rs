@@ -148,9 +148,7 @@ enum AluSrc {
 impl AluSrc {
     fn from_src(src: Option<&Src>) -> AluSrc {
         if let Some(src) = src {
-            assert!(
-                src.src_swizzle.is_none() || src.src_swizzle == SrcSwizzle::Yy
-            );
+            assert!(src.src_swizzle.is_none());
             // do not assert src_mod, can be encoded by opcode.
 
             match &src.src_ref {
@@ -301,7 +299,7 @@ impl SM20Encoder<'_> {
     }
 
     fn set_reg_src(&mut self, range: Range<usize>, src: &Src) {
-        assert!(src.src_swizzle.is_none() || src.src_swizzle == SrcSwizzle::Yy);
+        assert!(src.src_swizzle.is_none());
         self.set_reg_src_ref(range, &src.src_ref);
     }
 

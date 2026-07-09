@@ -1188,16 +1188,14 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
     * of acquire/release direction.
     */
    if (private_binding_acquire) {
-      initial_aux_usage = isl_mod_info &&
-         isl_drm_modifier_has_aux(isl_mod_info->modifier) ?
+      initial_aux_usage = isl_drm_modifier_has_aux(isl_mod_info->modifier) ?
          image->planes[plane].aux_usage : ISL_AUX_USAGE_NONE;
-      initial_fast_clear = isl_mod_info && isl_mod_info->supports_clear_color ?
+      initial_fast_clear = isl_mod_info->supports_clear_color ?
          initial_fast_clear : ANV_FAST_CLEAR_NONE;
    } else if (private_binding_release) {
-      final_aux_usage = isl_mod_info &&
-      isl_drm_modifier_has_aux(isl_mod_info->modifier) ?
+      final_aux_usage = isl_drm_modifier_has_aux(isl_mod_info->modifier) ?
          image->planes[plane].aux_usage : ISL_AUX_USAGE_NONE;
-      final_fast_clear = isl_mod_info && isl_mod_info->supports_clear_color ?
+      final_fast_clear = isl_mod_info->supports_clear_color ?
          final_fast_clear : ANV_FAST_CLEAR_NONE;
    }
 
@@ -1368,18 +1366,9 @@ transition_color_buffer(struct anv_cmd_buffer *cmd_buffer,
           final_aux_usage == ISL_AUX_USAGE_NONE ||
           initial_aux_usage == final_aux_usage);
 
-   /* If initial aux usage is NONE, there is nothing to resolve. However, we
-    * need to ensure uncompressed cachelines don't interfere with compressed
-    * cachelines which may be generated in the final layout.
-    */
-   if (initial_aux_usage == ISL_AUX_USAGE_NONE) {
-      if (final_aux_usage != ISL_AUX_USAGE_NONE) {
-         genX(cmd_buffer_update_color_aux_op)(cmd_buffer, GFX_VER == 9 ?
-              ANV_COLOR_AUX_OP_CLASS_SW_AMBIGUATE :
-              ANV_COLOR_AUX_OP_CLASS_HW_AMBIGUATE);
-      }
+   /* If initial aux usage is NONE, there is nothing to resolve */
+   if (initial_aux_usage == ISL_AUX_USAGE_NONE)
       return;
-   }
 
    enum isl_aux_op resolve_op = ISL_AUX_OP_NONE;
 
@@ -1915,19 +1904,22 @@ can_use_resource_barrier(const struct intel_device_info *devinfo,
        engine_class != INTEL_ENGINE_CLASS_COMPUTE)
       return false;
 
-   /* Split barriers (VkEvent) are tricky to support with resource barrier.
+   /* Wa_18039014283:
     *
-    * From Bspec 56054 (RESOURCE_BARRIER_BODY):
-    *    "Split barrier pairs need to have identical values for all
-    *     fields other than the barrier type."
+    * RESOURCE_BARRIER instructions with a Type=Signal, SignalStage=GPGPU are
+    * not functional. Since the main use case for this is VkEvent and VkEvent
+    * might not have exactly matching informations on both signal/wait sides
+    * (see
+    * https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkCmdWaitEvents.html),
+    * this is somewhat unusable.
     *
-    * Vulkan does not require signal and wait barriers to have identical values, see:
-    * https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkCmdWaitEvents.html
-    *
-    * This rule handles also Wa_18039014283.
+    * We're also seeing other problems with this, for example with
+    * dEQP-VK.synchronization2.op.single_queue.event.write_blit_image_read_copy_image_to_buffer.image_128_r32_uint
+    * So HW might be more broken than expected.
     */
-   if (!anv_address_is_null(signal_addr) ||
-       !anv_address_is_null(wait_addr))
+   if (intel_needs_workaround(devinfo, 18039014283) &&
+       (!anv_address_is_null(signal_addr) ||
+        !anv_address_is_null(wait_addr)))
       return false;
 
    /* The HW doesn't support signaling from the top of pipeline */
@@ -6541,9 +6533,6 @@ void genX(CmdBeginRendering)(
     */
    gfx->dirty |= ANV_CMD_DIRTY_ALL_SHADERS(cmd_buffer->device);
 
-   memset(gfx->color_output_mapping, ANV_COLOR_OUTPUT_UNKNOWN,
-          sizeof(gfx->color_output_mapping));
-
 #if GFX_VER >= 11
    if (render_target_change && cmd_buffer->device->physical->rt_change_needs_flush) {
       /* The PIPE_CONTROL command description says:
@@ -7157,7 +7146,7 @@ void genX(cmd_emit_timestamp)(struct anv_batch *batch,
 
       GENX(EXECUTE_INDIRECT_DISPATCH_pack)
       (batch, dwords, &(struct GENX(EXECUTE_INDIRECT_DISPATCH)) {
-            .MOCSIndex = MOCS_GET_INDEX(anv_mocs(device, NULL, 0)),
+            .MOCS = anv_mocs(device, NULL, 0),
             .body = {
                .PostSync = (struct GENX(POSTSYNC_DATA)) {
                   .Operation = WriteTimestamp,

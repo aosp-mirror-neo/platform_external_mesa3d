@@ -36,8 +36,8 @@ pan_mod_afbc_get_wsi_row_pitch(const struct pan_image *image,
       tile_extent_el.width * tile_extent_el.height *
       pan_format_get_plane_blocksize(props->format, plane_idx);
    const unsigned tile_row_payload_size_B =
-      pan_afbc_stride_blocks(props->format, props->modifier,
-                             header_row_stride_B) *
+      pan_afbc_stride_blocks(props->format,
+                             props->modifier, header_row_stride_B) *
       tile_payload_size_B;
 
    return tile_row_payload_size_B / pan_afbc_superblock_height(props->modifier);
@@ -85,13 +85,12 @@ pan_mod_afbc_init_slice_layout(
 
    /* If superblock tiling is used, align on a superblock tile. */
    if (props->modifier & AFBC_FORMAT_MOD_TILED) {
-      align_px.width = ALIGN_POT(
-         align_px.width, afbc_tile_extent_px.width *
-                            pan_afbc_tile_size(props->format, props->modifier));
+      align_px.width =
+         ALIGN_POT(align_px.width, afbc_tile_extent_px.width *
+                   pan_afbc_tile_size(props->format, props->modifier));
       align_px.height =
-         ALIGN_POT(align_px.height,
-                   afbc_tile_extent_px.height *
-                      pan_afbc_tile_size(props->format, props->modifier));
+         ALIGN_POT(align_px.height, afbc_tile_extent_px.height *
+                   pan_afbc_tile_size(props->format, props->modifier));
    }
 
    struct pan_image_extent aligned_extent_px = {
@@ -126,8 +125,8 @@ pan_mod_afbc_init_slice_layout(
          return false;
       }
 
-      slayout->afbc.header.row_stride_B = pan_afbc_row_stride(
-         props->format, props->modifier, width_from_wsi_row_stride);
+      slayout->afbc.header.row_stride_B =
+         pan_afbc_row_stride(props->format, props->modifier, width_from_wsi_row_stride);
       if (slayout->afbc.header.row_stride_B & row_align_mask) {
          mesa_loge("WSI pitch not properly aligned");
          return false;
@@ -142,23 +141,22 @@ pan_mod_afbc_init_slice_layout(
       /* If this is not a strict import, ignore the WSI row pitch and use
        * the resource width to get the size. */
       if (!layout_constraints->strict) {
-         slayout->afbc.header.row_stride_B =
-            ALIGN_POT(pan_afbc_row_stride(props->format, props->modifier,
-                                          aligned_extent_px.width),
-                      row_align_mask + 1);
+         slayout->afbc.header.row_stride_B = ALIGN_POT(
+            pan_afbc_row_stride(props->format, props->modifier, aligned_extent_px.width),
+            row_align_mask + 1);
       }
    } else {
       slayout->offset_B =
          ALIGN_POT(layout_constraints ? layout_constraints->offset_B : 0,
                    offset_align_mask + 1);
-      slayout->afbc.header.row_stride_B =
-         ALIGN_POT(pan_afbc_row_stride(props->format, props->modifier,
-                                       aligned_extent_px.width),
-                   row_align_mask + 1);
+      slayout->afbc.header.row_stride_B = ALIGN_POT(
+         pan_afbc_row_stride(props->format, props->modifier, aligned_extent_px.width),
+         row_align_mask + 1);
    }
 
-   const unsigned row_stride_sb = pan_afbc_stride_blocks(
-      props->format, props->modifier, slayout->afbc.header.row_stride_B);
+   const unsigned row_stride_sb = pan_afbc_stride_blocks(props->format,
+                                                         props->modifier,
+                                                         slayout->afbc.header.row_stride_B);
    const unsigned surface_stride_sb =
       row_stride_sb * (aligned_extent_px.height / afbc_tile_extent_px.height);
 
@@ -173,8 +171,7 @@ pan_mod_afbc_init_slice_layout(
    slayout->afbc.surface_stride_B = surf_stride_B;
    slayout->size_B = surf_stride_B * mip_extent_px.depth;
 
-   if (hdr_surf_size_B > UINT32_MAX || surf_stride_B > MAX_SLICE_STRIDE_B ||
-       slayout->size_B > MAX_SIZE_B)
+   if (hdr_surf_size_B > UINT32_MAX)
       return false;
 
    return true;
@@ -237,8 +234,7 @@ pan_mod_afbc_test_props(const struct pan_kmod_dev_props *dprops,
       }
    }
 
-   struct pan_image_block_size superblock_extent_px =
-      pan_afbc_superblock_size(iprops->modifier);
+   struct pan_image_block_size superblock_extent_px = pan_afbc_superblock_size(iprops->modifier);
 
    if (iprops->modifier & AFBC_FORMAT_MOD_TILED) {
       /* Make sure tiled mode is supported. */
@@ -246,10 +242,8 @@ pan_mod_afbc_test_props(const struct pan_kmod_dev_props *dprops,
          return PAN_MOD_NOT_SUPPORTED;
 
       struct pan_image_block_size tile_extent_px = {
-         superblock_extent_px.width *
-            pan_afbc_tile_size(iprops->format, iprops->modifier),
-         superblock_extent_px.height *
-            pan_afbc_tile_size(iprops->format, iprops->modifier),
+         superblock_extent_px.width * pan_afbc_tile_size(iprops->format, iprops->modifier),
+         superblock_extent_px.height * pan_afbc_tile_size(iprops->format, iprops->modifier),
       };
 
       /* Tiled mode has some overhead we don't want to pay if the image size is
@@ -416,8 +410,9 @@ pan_mod_afrc_init_slice_layout(
                    align_mask + 1);
    }
 
-   uint64_t surf_stride_B = (uint64_t)slayout->tiled_or_linear.row_stride_B *
-                            (aligned_extent_px.height / tile_extent_px.height);
+   uint64_t surf_stride_B =
+      (uint64_t)slayout->tiled_or_linear.row_stride_B *
+      (aligned_extent_px.height / tile_extent_px.height);
 
    slayout->tiled_or_linear.surface_stride_B = surf_stride_B;
    slayout->size_B =
@@ -611,8 +606,7 @@ pan_mod_interleaved_64k_init_slice_layout(
 
 static uint32_t
 pan_mod_interleaved_64k_get_wsi_row_pitch(const struct pan_image *image,
-                                          unsigned plane_idx,
-                                          unsigned mip_level)
+                                          unsigned plane_idx, unsigned mip_level)
 {
    UNREACHABLE("interleaved 64k cannot be used for wsi");
 }
@@ -666,14 +660,12 @@ pan_mod_interleaved_64k_test_props(const struct pan_kmod_dev_props *dprops,
    return PAN_MOD_OPTIMAL;
 }
 
-#define pan_mod_interleaved_64k_emit_tex_payload_entry                         \
+#define pan_mod_interleaved_64k_emit_tex_payload_entry                                 \
    GENX(pan_tex_emit_interleaved_64k_payload_entry)
-#define pan_mod_interleaved_64k_emit_color_attachment                          \
+#define pan_mod_interleaved_64k_emit_color_attachment                                  \
    GENX(pan_emit_interleaved_64k_color_attachment)
-#define pan_mod_interleaved_64k_emit_zs_attachment                             \
-   GENX(pan_emit_interleaved_64k_zs_attachment)
-#define pan_mod_interleaved_64k_emit_s_attachment                              \
-   GENX(pan_emit_interleaved_64k_s_attachment)
+#define pan_mod_interleaved_64k_emit_zs_attachment GENX(pan_emit_interleaved_64k_zs_attachment)
+#define pan_mod_interleaved_64k_emit_s_attachment  GENX(pan_emit_interleaved_64k_s_attachment)
 #endif
 
 static bool
@@ -786,11 +778,6 @@ pan_mod_linear_init_slice_layout(
    uint64_t surf_stride_B =
       (uint64_t)slayout->tiled_or_linear.row_stride_B * mip_extent_el.height;
    surf_stride_B = ALIGN_POT(surf_stride_B, (uint64_t)align_mask + 1);
-
-   /* Surface stride is passed as a 32-bit unsigned integer to RT/ZS and texture
-    * descriptors, make sure it fits. */
-   if (surf_stride_B > MAX_SLICE_STRIDE_B)
-      return false;
 
    slayout->tiled_or_linear.surface_stride_B = surf_stride_B;
    slayout->size_B = surf_stride_B * mip_extent_el.depth * props->nr_samples;

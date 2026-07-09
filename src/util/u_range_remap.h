@@ -50,8 +50,7 @@ struct list_range_entry {
 
 struct range_entry *
 util_range_insert_remap(unsigned start, unsigned end,
-                        struct range_remap *r_remap, void *ptr,
-                        bool allow_range_truncation);
+                        struct range_remap *r_remap, void *ptr);
 
 struct range_entry *
 util_range_remap(unsigned n, const struct range_remap *r_remap);

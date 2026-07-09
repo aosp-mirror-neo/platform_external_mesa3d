@@ -322,7 +322,7 @@ setup_uniform_remap_tables(const struct gl_constants *consts,
       /* Set remap table entry to the correct gl_uniform_storage. */
       util_range_insert_remap(uniform->remap_location,
                               uniform->remap_location + entries - 1,
-                              prog->UniformRemapTable, uniform, true);
+                              prog->UniformRemapTable, uniform);
    }
 
    /* Reserve locations for rest of the uniforms. */
@@ -376,7 +376,7 @@ setup_uniform_remap_tables(const struct gl_constants *consts,
       /* Set remap table entry to the correct gl_uniform_storage. */
       util_range_insert_remap(uniform->remap_location,
                               uniform->remap_location + entries - 1,
-                              prog->UniformRemapTable, uniform, true);
+                              prog->UniformRemapTable, uniform);
    }
 
    util_range_switch_to_sorted_array(prog->UniformRemapTable);

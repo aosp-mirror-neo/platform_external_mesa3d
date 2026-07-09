@@ -438,20 +438,6 @@ set_clear_fb(struct pipe_context *pctx, struct pipe_surface *psurf, struct pipe_
    pctx->set_framebuffer_state(pctx, &fb_state);
 }
 
-static int
-surf_matches_fb(struct zink_context *ctx, struct pipe_surface *psurf)
-{
-   if (util_format_is_depth_or_stencil(psurf->format)) {
-      return pipe_surface_equal(psurf, &ctx->fb_state.zsbuf) ? PIPE_MAX_COLOR_BUFS : -1;
-   } else {
-      for (unsigned i = 0; i < ctx->fb_state.nr_cbufs; i++) {
-         if (pipe_surface_equal(psurf, &ctx->fb_state.cbufs[i]))
-            return i;
-      }
-   }
-   return -1;
-}
-
 void
 zink_clear_texture_dynamic(struct pipe_context *pctx,
                            struct pipe_resource *pres,
@@ -463,9 +449,9 @@ zink_clear_texture_dynamic(struct pipe_context *pctx,
    struct zink_screen *screen = zink_screen(pctx->screen);
    struct zink_resource *res = zink_resource(pres);
 
-   bool full_clear = 0 >= box->x && u_minify(pres->width0, level) >= box->width &&
-                     0 >= box->y && u_minify(pres->height0, level) >= box->height &&
-                     0 >= box->z && u_minify(pres->target == PIPE_TEXTURE_3D ? pres->depth0 : pres->array_size, level) >= box->depth;
+   bool full_clear = 0 <= box->x && u_minify(pres->width0, level) >= box->x + box->width &&
+                     0 <= box->y && u_minify(pres->height0, level) >= box->y + box->height &&
+                     0 <= box->z && u_minify(pres->target == PIPE_TEXTURE_3D ? pres->depth0 : pres->array_size, level) >= box->z + box->depth;
 
    struct pipe_surface psurf = create_clear_surface(pctx, pres, level, box);
    struct zink_surface *surf = zink_create_fb_surface(pctx, &psurf);
@@ -502,21 +488,10 @@ zink_clear_texture_dynamic(struct pipe_context *pctx,
          util_format_unpack_s_8uint(pres->format, &stencil, data, 1);
    }
 
-   VkCommandBuffer cmdbuf;
-   bool needs_rp = false;
-   int idx = surf_matches_fb(ctx, &psurf);
-   if (res->fb_bind_count && idx != -1) {
-      cmdbuf = ctx->bs->cmdbuf;
-      if (!ctx->in_rp)
-         zink_batch_rp(ctx);
-   } else {
-      zink_blit_barriers(ctx, NULL, res, full_clear);
-      cmdbuf = zink_get_cmdbuf(ctx, NULL, res);
-      if (cmdbuf == ctx->bs->cmdbuf && ctx->in_rp)
-         zink_batch_no_rp(ctx);
-      zink_batch_reference_resource_rw(ctx, res, true);
-      needs_rp = true;
-   }
+   zink_blit_barriers(ctx, NULL, res, full_clear);
+   VkCommandBuffer cmdbuf = zink_get_cmdbuf(ctx, NULL, res);
+   if (cmdbuf == ctx->bs->cmdbuf && ctx->in_rp)
+      zink_batch_no_rp(ctx);
 
    if (res->aspect & VK_IMAGE_ASPECT_COLOR_BIT) {
       memcpy(&att.clearValue, &color, sizeof(float) * 4);
@@ -530,26 +505,22 @@ zink_clear_texture_dynamic(struct pipe_context *pctx,
       if (res->aspect & VK_IMAGE_ASPECT_STENCIL_BIT)
          info.pStencilAttachment = &att;
    }
-   if (needs_rp)
-      VKCTX(CmdBeginRendering)(cmdbuf, &info);
-   if (!full_clear || !needs_rp) {
+   VKCTX(CmdBeginRendering)(cmdbuf, &info);
+   if (!full_clear) {
       VkClearRect rect;
       rect.rect = info.renderArea;
-      rect.baseArrayLayer = 0;
+      rect.baseArrayLayer = box->z;
       rect.layerCount = box->depth;
 
       VkClearAttachment clear_att;
       clear_att.aspectMask = res->aspect;
-      if (needs_rp)
-         clear_att.colorAttachment = idx == -1 ? 0 : idx;
-      else if (!util_format_is_depth_or_stencil(pres->format))
-         clear_att.colorAttachment = ffs(res->fb_binds) - 1;
+      clear_att.colorAttachment = 0;
       clear_att.clearValue = att.clearValue;
 
       VKCTX(CmdClearAttachments)(cmdbuf, 1, &clear_att, 1, &rect);
    }
-   if (needs_rp)
-      VKCTX(CmdEndRendering)(cmdbuf);
+   VKCTX(CmdEndRendering)(cmdbuf);
+   zink_batch_reference_resource_rw(ctx, res, true);
 }
 
 void

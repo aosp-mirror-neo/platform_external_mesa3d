@@ -139,12 +139,8 @@ lvp_needs_advanced_blend_lowering(struct lvp_pipeline *pipeline)
    if (!cb)
       return false;
 
-   if (BITSET_TEST(pipeline->graphics_state.dynamic, MESA_VK_DYNAMIC_CB_BLEND_ADVANCED))
-      return false;
-
    for (uint32_t i = 0; i < cb->attachment_count; i++)
-      if (cb->attachments[i].blend_enable &&
-          cb->attachments[i].color_blend_op >= VK_BLEND_OP_ZERO_EXT)
+      if (cb->attachments[i].color_blend_op >= VK_BLEND_OP_ZERO_EXT)
          return true;
 
    return false;
@@ -181,7 +177,7 @@ lvp_lower_advanced_blend(struct lvp_pipeline *pipeline)
       const struct vk_color_blend_attachment_state *att = &cb->attachments[rt];
 
       /* Advanced blend ops start at VK_BLEND_OP_ZERO_EXT */
-      if (!att->blend_enable || att->color_blend_op < VK_BLEND_OP_ZERO_EXT)
+      if (att->color_blend_op < VK_BLEND_OP_ZERO_EXT)
          continue;
 
       const bool write_enable = cb->color_write_enables & BITFIELD_BIT(rt);
@@ -389,7 +385,8 @@ lvp_ycbcr_conversion_lookup(const void *data, uint32_t set, uint32_t binding, ui
    if (!binding_layout->immutable_samplers)
       return NULL;
 
-   return binding_layout->immutable_ycbcr[array_index].format ? &binding_layout->immutable_ycbcr[array_index] : NULL;
+   struct vk_ycbcr_conversion *ycbcr_conversion = binding_layout->immutable_samplers[array_index]->vk.ycbcr_conversion;
+   return ycbcr_conversion ? &ycbcr_conversion->state : NULL;
 }
 
 /* pipeline is NULL for shader objects. */
@@ -732,7 +729,7 @@ layouts_equal(const struct lvp_descriptor_set_layout *a, const struct lvp_descri
 {
    const uint8_t *pa = (const uint8_t*)a, *pb = (const uint8_t*)b;
    uint32_t hash_start_offset = sizeof(struct vk_descriptor_set_layout);
-   uint32_t binding_offset = offsetof(struct lvp_descriptor_set_layout, immutable_set);
+   uint32_t binding_offset = offsetof(struct lvp_descriptor_set_layout, binding);
    /* base equal */
    if (memcmp(pa + hash_start_offset, pb + hash_start_offset, binding_offset - hash_start_offset))
       return false;
@@ -740,22 +737,31 @@ layouts_equal(const struct lvp_descriptor_set_layout *a, const struct lvp_descri
    /* bindings equal */
    if (a->binding_count != b->binding_count)
       return false;
-   if (a->immutable_sampler_count != b->immutable_sampler_count)
-      return false;
    size_t binding_size = a->binding_count * sizeof(struct lvp_descriptor_set_binding_layout);
    const struct lvp_descriptor_set_binding_layout *la = a->binding;
    const struct lvp_descriptor_set_binding_layout *lb = b->binding;
-   if (!memcmp(la, lb, binding_size))
-      return true;
-   for (unsigned i = 0; i < a->binding_count; i++) {
-      if (memcmp(&la[i], &lb[i], offsetof(struct lvp_descriptor_set_binding_layout, immutable_samplers)))
-         return false;
+   if (memcmp(la, lb, binding_size)) {
+      for (unsigned i = 0; i < a->binding_count; i++) {
+         if (memcmp(&la[i], &lb[i], offsetof(struct lvp_descriptor_set_binding_layout, immutable_samplers)))
+            return false;
+      }
    }
-   if (!a->immutable_sampler_count)
-      return true;
-   if (memcmp(la->immutable_samplers, lb->immutable_samplers, a->immutable_sampler_count * sizeof(struct lp_descriptor)))
+
+   /* immutable sampler equal */
+   if (a->immutable_sampler_count != b->immutable_sampler_count)
       return false;
-   return !memcmp(la->immutable_ycbcr, lb->immutable_ycbcr, a->immutable_sampler_count * sizeof(struct vk_ycbcr_conversion_state));
+   if (a->immutable_sampler_count) {
+      size_t sampler_size = a->immutable_sampler_count * sizeof(struct lvp_sampler *);
+      if (memcmp(pa + binding_offset + binding_size, pb + binding_offset + binding_size, sampler_size)) {
+         struct lvp_sampler **sa = (struct lvp_sampler **)(pa + binding_offset);
+         struct lvp_sampler **sb = (struct lvp_sampler **)(pb + binding_offset);
+         for (unsigned i = 0; i < a->immutable_sampler_count; i++) {
+            if (memcmp(sa[i], sb[i], sizeof(struct lvp_sampler)))
+               return false;
+         }
+      }
+   }
+   return true;
 }
 #endif
 
@@ -1319,6 +1325,14 @@ create_shader_object(struct lvp_device *device, const VkShaderCreateInfoEXT *pCr
       shader->tess_ccw = lvp_create_pipeline_nir(nir_shader_clone(NULL, shader->pipeline_nir->nir));
       shader->tess_ccw->nir->info.tess.ccw = !shader->pipeline_nir->nir->info.tess.ccw;
       shader->tess_ccw_cso = lvp_shader_compile(device, shader, nir_shader_clone(NULL, shader->tess_ccw->nir), false);
+   } else if (stage == MESA_SHADER_FRAGMENT && nir->info.fs.uses_fbfetch_output) {
+      /* this is (currently) illegal */
+      assert(!nir->info.fs.uses_fbfetch_output);
+      shader_destroy(device, shader, false);
+
+      vk_object_base_finish(&shader->base);
+      vk_free2(&device->vk.alloc, pAllocator, shader);
+      return VK_NULL_HANDLE;
    }
    nir_serialize(&shader->blob, nir, true);
    shader->shader_cso = lvp_shader_compile(device, shader, nir_shader_clone(NULL, nir), false);

@@ -2824,12 +2824,12 @@ wsi_wl_swapchain_wait_for_present2(struct wsi_swapchain *wsi_chain,
       return result;
 
    while (1) {
-      err = mtx_lock(&chain->present_ids.lock);
-      if (err != thrd_success)
+      err = pthread_mutex_lock(&chain->present_ids.lock);
+      if (err != 0)
          return VK_ERROR_OUT_OF_DATE_KHR;
 
       bool completed = chain->present_ids.max_completed >= present_id;
-      mtx_unlock(&chain->present_ids.lock);
+      pthread_mutex_unlock(&chain->present_ids.lock);
 
       if (completed)
          return VK_SUCCESS;

@@ -86,8 +86,7 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorSetLayout(
 
    size_t size = sizeof(struct lvp_descriptor_set_layout) +
                  num_bindings * sizeof(set_layout->binding[0]) +
-                 immutable_sampler_count * sizeof(struct lp_descriptor) +
-                 immutable_sampler_count * sizeof(struct vk_ycbcr_conversion_state);
+                 immutable_sampler_count * sizeof(struct lvp_sampler *);
 
    set_layout = vk_descriptor_set_layout_zalloc(&device->vk, size, pCreateInfo);
    if (!set_layout)
@@ -95,9 +94,8 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorSetLayout(
 
    set_layout->immutable_sampler_count = immutable_sampler_count;
    /* We just allocate all the samplers at the end of the struct */
-   struct lp_descriptor *samplers =
-      (struct lp_descriptor *)&set_layout->binding[num_bindings];
-   struct vk_ycbcr_conversion_state *ycbcr = (void*)(samplers + immutable_sampler_count);
+   struct lvp_sampler **samplers =
+      (struct lvp_sampler **)&set_layout->binding[num_bindings];
 
    set_layout->binding_count = num_bindings;
    set_layout->shader_stages = 0;
@@ -138,17 +136,11 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_CreateDescriptorSetLayout(
       uint8_t max_plane_count = 1;
       if (binding_has_immutable_samplers(binding)) {
          set_layout->binding[b].immutable_samplers = samplers;
-         set_layout->binding[b].immutable_ycbcr = ycbcr;
          samplers += binding->descriptorCount;
-         ycbcr += binding->descriptorCount;
 
          for (uint32_t i = 0; i < binding->descriptorCount; i++) {
             VK_FROM_HANDLE(lvp_sampler, sampler, binding->pImmutableSamplers[i]);
-            set_layout->binding[b].immutable_samplers[i] = sampler->desc;
-            if (sampler->vk.ycbcr_conversion)
-               set_layout->binding[b].immutable_ycbcr[i] = sampler->vk.ycbcr_conversion->state;
-            else
-               memset(&set_layout->binding[b].immutable_ycbcr[i], 0, sizeof(struct vk_ycbcr_conversion_state));
+            set_layout->binding[b].immutable_samplers[i] = sampler;
             const uint8_t sampler_plane_count = sampler->vk.ycbcr_conversion ?
                vk_format_get_plane_count(sampler->vk.ycbcr_conversion->state.format) : 1;
             if (max_plane_count < sampler_plane_count)
@@ -374,9 +366,11 @@ lvp_descriptor_set_create(struct lvp_device *device,
       desc += bind_layout->descriptor_index;
 
       for (uint32_t sampler_index = 0; sampler_index < bind_layout->array_size; sampler_index++) {
-         for (uint32_t s = 0; s < bind_layout->stride; s++)  {
-            int idx = sampler_index * bind_layout->stride + s;
-            desc[idx] = bind_layout->immutable_samplers[sampler_index];
+         if (bind_layout->immutable_samplers[sampler_index]) {
+            for (uint32_t s = 0; s < bind_layout->stride; s++)  {
+               int idx = sampler_index * bind_layout->stride + s;
+               desc[idx] = bind_layout->immutable_samplers[sampler_index]->desc;
+            }
          }
       }
    }

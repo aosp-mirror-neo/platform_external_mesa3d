@@ -1698,7 +1698,6 @@ tu_autotune::~tu_autotune()
       at_log_base("finished processing all entries");
    }
 
-   active_batches.clear();
    tu_bo_suballocator_finish(&suballoc);
 }
 

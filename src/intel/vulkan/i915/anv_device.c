@@ -317,7 +317,6 @@ anv_i915_device_setup_context(struct anv_device *device,
 
    /* Check if client specified queue priority. */
    const VkDeviceQueueGlobalPriorityCreateInfoKHR *queue_priority =
-      num_queues == 0 ? NULL :
       vk_find_struct_const(pCreateInfo->pQueueCreateInfos[0].pNext,
                            DEVICE_QUEUE_GLOBAL_PRIORITY_CREATE_INFO_KHR);
 

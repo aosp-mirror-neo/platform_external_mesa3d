@@ -120,7 +120,7 @@ radv_create_descriptor_pool(struct radv_device *device, const VkDescriptorPoolCr
                   num_16byte_descriptors += pCreateInfo->pPoolSizes[i].descriptorCount;
             }
          } else {
-            const uint32_t max_desc_size = radv_get_sampled_image_desc_size(pdev);
+            const uint32_t max_desc_size = pdev->use_fmask ? 64 : 32;
             bo_size += max_desc_size * pCreateInfo->pPoolSizes[i].descriptorCount;
          }
          break;

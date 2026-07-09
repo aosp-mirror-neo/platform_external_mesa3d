@@ -2016,9 +2016,6 @@ static void pvr_init_fs_outputs_mrt(pco_data *data,
    unsigned u;
    pco_fs_data *fs = &data->fs;
 
-   if (!vk_render_pass_state_has_attachment_info(rp))
-      goto early_exit;
-
    for (u = 0; u < PVR_MAX_COLOR_ATTACHMENTS; u++) {
       if (!(rp->attachments & MESA_VK_RP_ATTACHMENT_COLOR_BIT(u)))
          continue;
@@ -2039,7 +2036,6 @@ static void pvr_init_fs_outputs_mrt(pco_data *data,
       }
    }
 
-early_exit:
    fs->z_replicate = ~0u;
 }
 
@@ -3480,7 +3476,7 @@ static uint32_t pvr_get_executable_count(struct pvr_pipeline *pipeline)
    return exe_count;
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutableStatisticsKHR)(
+VkResult pvr_GetPipelineExecutableStatisticsKHR(
    UNUSED VkDevice _device,
    const VkPipelineExecutableInfoKHR *pExecutableInfo,
    uint32_t *pStatisticCount,
@@ -3522,7 +3518,7 @@ VkResult PVR_PER_ARCH(GetPipelineExecutableStatisticsKHR)(
    return vk_outarray_status(&out);
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutablePropertiesKHR)(
+VkResult pvr_GetPipelineExecutablePropertiesKHR(
    VkDevice _device,
    const VkPipelineInfoKHR *pPipelineInfo,
    uint32_t *pExecutableCount,
@@ -3611,7 +3607,7 @@ write_ir_text(VkPipelineExecutableInternalRepresentationKHR *ir,
    return true;
 }
 
-VkResult PVR_PER_ARCH(GetPipelineExecutableInternalRepresentationsKHR)(
+VkResult pvr_GetPipelineExecutableInternalRepresentationsKHR(
    UNUSED VkDevice _device,
    UNUSED const VkPipelineExecutableInfoKHR *pExecutableInfo,
    uint32_t *pInternalRepresentationCount,

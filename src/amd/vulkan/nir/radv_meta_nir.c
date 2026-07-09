@@ -1008,10 +1008,9 @@ radv_meta_nir_build_dcc_retile_compute_shader(enum amd_gfx_level gfx_level, uint
 }
 
 nir_shader *
-radv_meta_nir_build_expand_depth_stencil_compute_shader(uint8_t samples)
+radv_meta_nir_build_expand_depth_stencil_compute_shader()
 {
-   const enum glsl_sampler_dim dim = samples > 1 ? GLSL_SAMPLER_DIM_MS : GLSL_SAMPLER_DIM_2D;
-   const struct glsl_type *img_type = glsl_image_type(dim, false, GLSL_TYPE_FLOAT);
+   const struct glsl_type *img_type = glsl_image_type(GLSL_SAMPLER_DIM_2D, false, GLSL_TYPE_FLOAT);
 
    nir_builder b = radv_meta_nir_init_shader(MESA_SHADER_COMPUTE, "expand_depth_stencil_compute");
 
@@ -1033,28 +1032,19 @@ radv_meta_nir_build_expand_depth_stencil_compute_shader(uint8_t samples)
 
    nir_def *global_id = nir_iadd(&b, nir_imul(&b, wg_id, block_size), invoc_id);
 
-   nir_def *data[8];
-   for (uint32_t i = 0; i < samples; i++) {
-      data[i] = nir_image_deref_load(&b, 4, 32, &nir_build_deref_var(&b, input_img)->def, global_id, nir_imm_int(&b, i),
-                                     nir_imm_int(&b, 0), .image_dim = dim, .dest_type = nir_type_uint32);
-   }
+   nir_def *data = nir_image_deref_load(&b, 4, 32, &nir_build_deref_var(&b, input_img)->def, global_id,
+                                        nir_undef(&b, 1, 32), nir_imm_int(&b, 0), .image_dim = GLSL_SAMPLER_DIM_2D,
+                                        .dest_type = nir_type_uint32);
 
    /* We need a SCOPE_DEVICE memory_scope because ACO will avoid
     * creating a vmcnt(0) because it expects the L1 cache to keep memory
     * operations in-order for the same workgroup. The vmcnt(0) seems
     * necessary however. */
-   /* TODO: Because it assumes memory operations within a wave are in-order, ACO only creates a
-    * vmcnt(0) before the stores in multisample shaders because the stores are all part of the same
-    * clause.
-    */
    nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_DEVICE,
-               .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_image);
+               .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_ssbo);
 
-   for (uint32_t i = 0; i < samples; i++) {
-      nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->def, global_id, nir_imm_int(&b, i), data[i],
-                            nir_imm_int(&b, 0), .image_dim = dim);
-   }
-
+   nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->def, global_id, nir_undef(&b, 1, 32), data,
+                         nir_imm_int(&b, 0), .image_dim = GLSL_SAMPLER_DIM_2D);
    return b.shader;
 }
 
@@ -1089,7 +1079,7 @@ radv_meta_nir_build_dcc_decompress_compute_shader()
     * operations in-order for the same workgroup. The vmcnt(0) seems
     * necessary however. */
    nir_barrier(&b, .execution_scope = SCOPE_WORKGROUP, .memory_scope = SCOPE_DEVICE,
-               .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_image);
+               .memory_semantics = NIR_MEMORY_ACQ_REL, .memory_modes = nir_var_mem_ssbo);
 
    nir_image_deref_store(&b, &nir_build_deref_var(&b, output_img)->def, img_coord, nir_undef(&b, 1, 32), data,
                          nir_imm_int(&b, 0), .image_dim = GLSL_SAMPLER_DIM_2D);

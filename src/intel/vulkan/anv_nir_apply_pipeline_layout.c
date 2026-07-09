@@ -1676,12 +1676,6 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
             offsetof(struct anv_storage_image_descriptor, format),
             1, 32, state);
          break;
-      case ISL_SURF_PARAM_MIN_ARRAY_ELEMENT:
-         desc = build_load_descriptor_mem(
-            b, desc_addr,
-            offsetof(struct anv_storage_image_descriptor, min_array_element),
-            1, 32, state);
-         break;
       default:
          UNREACHABLE("Invalid surface parameter");
       }
@@ -1692,7 +1686,7 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
       case ISL_SURF_PARAM_BASE_ADDRESSS: {
          desc = build_load_descriptor_mem(
             b, desc_addr,
-            4 * (RENDER_SURFACE_STATE_SurfaceBaseAddress_start(devinfo) / 32),
+            RENDER_SURFACE_STATE_SurfaceBaseAddress_start(devinfo) / 8,
             intrin->def.num_components,
             intrin->def.bit_size, state);
          break;
@@ -1701,8 +1695,7 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
          nir_def *dword =
             build_load_descriptor_mem(
                b, desc_addr,
-               4 * (RENDER_SURFACE_STATE_TileMode_start(devinfo) / 32),
-               1, 32, state);
+               RENDER_SURFACE_STATE_TileMode_start(devinfo) / 32, 1, 32, state);
          desc = nir_ubitfield_extract_imm(
             b, dword,
             RENDER_SURFACE_STATE_TileMode_start(devinfo) % 32,
@@ -1713,7 +1706,7 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
          assert(RENDER_SURFACE_STATE_SurfacePitch_start(devinfo) % 32 == 0);
          nir_def *pitch_dword = build_load_descriptor_mem(
             b, desc_addr,
-            4 * (RENDER_SURFACE_STATE_SurfacePitch_start(devinfo) / 32),
+            RENDER_SURFACE_STATE_SurfacePitch_start(devinfo) / 8,
             1, 32, state);
          desc = nir_ubitfield_extract_imm(
             b, pitch_dword,
@@ -1727,7 +1720,7 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
          assert(RENDER_SURFACE_STATE_SurfaceQPitch_start(devinfo) % 32 == 0);
          nir_def *pitch_dword = build_load_descriptor_mem(
             b, desc_addr,
-            4 * (RENDER_SURFACE_STATE_SurfaceQPitch_start(devinfo) / 32),
+            RENDER_SURFACE_STATE_SurfaceQPitch_start(devinfo) / 8,
             1, 32, state);
          desc = nir_ubitfield_extract_imm(
             b, pitch_dword,
@@ -1740,23 +1733,12 @@ lower_image_load_intel_intrinsic(nir_builder *b, nir_intrinsic_instr *intrin,
       case ISL_SURF_PARAM_FORMAT: {
          nir_def *format_dword = build_load_descriptor_mem(
             b, desc_addr,
-            4 * (RENDER_SURFACE_STATE_SurfaceFormat_start(devinfo) / 32),
+            RENDER_SURFACE_STATE_SurfaceFormat_start(devinfo) / 8,
             1, 32, state);
          desc = nir_ubitfield_extract_imm(
             b, format_dword,
             RENDER_SURFACE_STATE_SurfaceFormat_start(devinfo) % 32,
             RENDER_SURFACE_STATE_SurfaceFormat_bits(devinfo));
-         break;
-      }
-      case ISL_SURF_PARAM_MIN_ARRAY_ELEMENT: {
-         nir_def *min_arr_el_dword = build_load_descriptor_mem(
-            b, desc_addr,
-            4 * (RENDER_SURFACE_STATE_MinimumArrayElement_start(devinfo) / 32),
-            1, 32, state);
-         desc = nir_ubitfield_extract_imm(
-            b, min_arr_el_dword,
-            RENDER_SURFACE_STATE_MinimumArrayElement_start(devinfo) % 32,
-            RENDER_SURFACE_STATE_MinimumArrayElement_bits(devinfo));
          break;
       }
       default:

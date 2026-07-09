@@ -587,7 +587,7 @@ impl Program {
 
         // If the caller did not provide a callback, block until build finishes.
         if callback.is_none() {
-            Platform::get()
+            self.context
                 .worker_queue
                 .add_job_sync(create_build_closure(
                     Arc::clone(&self),
@@ -605,7 +605,7 @@ impl Program {
                 return Err(CL_BUILD_PROGRAM_FAILURE);
             }
         } else {
-            Platform::get().worker_queue.add_job(create_build_closure(
+            self.context.worker_queue.add_job(create_build_closure(
                 Arc::clone(&self),
                 devices,
                 options,
@@ -715,7 +715,7 @@ impl Program {
         // If the caller did not provide a callback, block until compile
         // finishes.
         if callback.is_none() {
-            Platform::get()
+            self.context
                 .worker_queue
                 .add_job_sync(create_compile_closure(
                     Arc::clone(&self),
@@ -734,7 +734,7 @@ impl Program {
                 return Err(CL_COMPILE_PROGRAM_FAILURE);
             }
         } else {
-            Platform::get().worker_queue.add_job(create_compile_closure(
+            self.context.worker_queue.add_job(create_compile_closure(
                 Arc::clone(&self),
                 devices,
                 options,
@@ -786,7 +786,8 @@ impl Program {
         // If the caller did not provide a callback, block until compile
         // finishes.
         let status = if callback.is_none() {
-            Platform::get()
+            program
+                .context
                 .worker_queue
                 .add_job_sync(create_link_closure(
                     Arc::clone(&program),
@@ -805,7 +806,7 @@ impl Program {
                 CL_LINK_PROGRAM_FAILURE
             }
         } else {
-            Platform::get().worker_queue.add_job(create_link_closure(
+            program.context.worker_queue.add_job(create_link_closure(
                 Arc::clone(&program),
                 devices,
                 input_programs,

@@ -70,10 +70,8 @@ emit_hw_vertex(struct i915_context *i915, const struct vertex_header *vertex)
    assert(!i915->dirty);
 
    for (i = 0; i < vinfo->num_attribs; i++) {
-      static const float zeros[4] = {0., 0., 0., 0.};
       const uint32_t j = vinfo->attrib[i].src_index;
-      const float *attrib =
-         likely(j != DRAW_ATTR_NONEXIST) ? vertex->data[j] : zeros;
+      const float *attrib = vertex->data[j];
       switch (vinfo->attrib[i].emit) {
       case EMIT_1F:
          OUT_BATCH(fui(attrib[0]));

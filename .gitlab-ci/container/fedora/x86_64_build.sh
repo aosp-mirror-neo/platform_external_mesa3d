@@ -38,7 +38,6 @@ DEPS=(
     gettext
     glslang
     kernel-headers
-    libstdc++-static
     llvm-devel
     ninja-build
     "pkgconfig(LLVMSPIRVLib)"

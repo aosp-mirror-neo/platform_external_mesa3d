@@ -1,4 +1,3 @@
-KHR-GL46.copy_image.smoke_test,Fail
 KHR-GL46.shader_image_size.basic-nonMS-tes-int,Fail
 KHR-GL46.tessellation_shader.tessellation_control_to_tessellation_evaluation.gl_tessLevel,Fail
 KHR-GL46.tessellation_shader.tessellation_shader_tessellation.TES,Fail
@@ -29,7 +28,10 @@ dynamic-dEQP-VK.renderpass2.depth_stencil_resolve.image_2d_32_32.samples_2.d32_s
 dynamic-dEQP-VK.renderpass2.depth_stencil_resolve.image_2d_32_32.samples_2.d32_sfloat_s8_uint_separate_layouts.compatibility_depth_zero_stencil_zero_testing_stencil,Fail
 
 # New failures with VKCTS 1.4.4.0
+dEQP-VK.binding_model.descriptor_buffer.traditional_buffer.capture_replay.sparse_buffer_descriptor_data_consistency_and_usage,Fail
+dEQP-VK.binding_model.descriptor_buffer.traditional_buffer.capture_replay.sparse_buffer_descriptor_data_consistency,Fail
 dEQP-VK.pipeline.monolithic.misc.identically_defined_layout,Fail
+gmem-dEQP-VK.binding_model.descriptor_buffer.traditional_buffer.capture_replay.sparse_buffer_descriptor_data_consistency_and_usage,Fail
 
 # New failures when updating kernel from msm-next at 6.16 to 6.19.5
 # https://gitlab.freedesktop.org/drm/msm/-/issues/93
@@ -77,13 +79,6 @@ program@execute@global-offset@3d- input dependent,Fail
 
 # Regressed between https://gitlab.freedesktop.org/mesa/mesa/-/jobs/70146138 and https://gitlab.freedesktop.org/mesa/mesa/-/jobs/70217173
 program@execute@vector-conversion,Fail
-
-# Piglit doesn't check subbuffer alignment requirements
-api@clgetmemobjectinfo,Fail
-
-# Piglit checks the pre 3.1 behavior
-api@clsetkernelarg,Fail
-api@clsetkernelarg@Input checks,Fail
 
 #
 ## freedreno issues:
