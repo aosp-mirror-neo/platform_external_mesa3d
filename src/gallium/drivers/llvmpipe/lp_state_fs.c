@@ -1846,7 +1846,11 @@ scale_bits(struct gallivm_state *gallivm,
 
       if (delta_bits <= dst_bits) {
 
-         if (dst_bits == 4) {
+         /*
+          * Low-bitdepth formats (<= 6 bits per channel, e.g., RGB565, RGBA5551, RGBA4444) suffer
+          * from truncation banding, so use float rounding path for them.
+          */
+         if (dst_bits <= 6) {
             struct lp_type flt_type =
                lp_type_float_vec(32, src_type.length * 32);
 
