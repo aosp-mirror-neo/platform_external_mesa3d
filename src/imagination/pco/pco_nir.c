@@ -12,6 +12,7 @@
 
 #include "nir/nir_builder.h"
 #include "nir/nir_lower_blend.h"
+#include "nir/nir_xfb_info.h"
 #include "pco.h"
 #include "pco_internal.h"
 #include "pvr_limits.h"
@@ -292,6 +293,20 @@ static void gather_fs_data(nir_shader *nir, pco_data *data)
    data->fs.uses.sample_shading |= data->fs.uses.sample_locations;
 }
 
+static void gather_vs_xfb_data(nir_shader *nir, pco_vs_data *vs_data)
+{
+   if (nir->info.internal)
+      return;
+
+   nir_gather_xfb_info_from_intrinsics(nir);
+   if (!nir->xfb_info)
+      return;
+
+   unsigned xfb_info_size = nir_xfb_info_size(nir->xfb_info->output_count);
+   vs_data->xfb_info = rzalloc_size(NULL, xfb_info_size);
+   memcpy(vs_data->xfb_info, nir->xfb_info, xfb_info_size);
+}
+
 /**
  * \brief Gathers vertex shader data.
  *
@@ -301,6 +316,7 @@ static void gather_fs_data(nir_shader *nir, pco_data *data)
 static void gather_vs_data(nir_shader *nir, pco_data *data)
 {
    pco_vs_data *vs_data = &data->vs;
+   gather_vs_xfb_data(nir, vs_data);
 
    vs_data->clip_count = nir->info.clip_distance_array_size;
    vs_data->cull_count = nir->info.cull_distance_array_size;
@@ -904,6 +920,9 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
 {
    bool internal = nir->info.internal;
 
+   if (nir->info.stage == MESA_SHADER_VERTEX && nir->xfb_info)
+      pco_nir_link_clip_cull_vars(nir, NULL);
+
    NIR_PASS(_,
             nir,
             nir_opt_access,
@@ -1053,6 +1072,10 @@ void pco_lower_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
       NIR_PASS(_, nir, nir_lower_is_helper_invocation);
       NIR_PASS(_, nir, pco_nir_lower_fs_intrinsics);
    } else if (nir->info.stage == MESA_SHADER_VERTEX) {
+      /* If needed, duplicate the point size for xfb prior to it being clamped.
+       */
+      NIR_PASS(_, nir, pco_nir_point_size_xfb);
+
       NIR_PASS(_,
                nir,
                nir_lower_point_size,
@@ -1205,6 +1228,8 @@ void pco_postprocess_nir(pco_ctx *ctx, nir_shader *nir, pco_data *data)
       NIR_PASS(_, nir, nir_opt_dce);
       NIR_PASS(_, nir, nir_opt_cse);
    } while (progress);
+
+   NIR_PASS(_, nir, nir_opt_uadd_carry, 32);
 
    pco_nir_opt(ctx, nir, data, false);
 

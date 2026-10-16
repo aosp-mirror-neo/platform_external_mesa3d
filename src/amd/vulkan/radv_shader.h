@@ -249,12 +249,12 @@ struct radv_llvm_compiler_options {
 #define NGG_STATE_QUERY__SHIFT              6
 #define NGG_STATE_QUERY__MASK               0x7
 
-#define PS_STATE_NUM_SAMPLES__SHIFT             0
-#define PS_STATE_NUM_SAMPLES__MASK              0xf
-#define PS_STATE_SMOOTH_LINES__SHIFT            4
-#define PS_STATE_SMOOTH_LINES__MASK             0x1
-#define PS_STATE_PS_ITER_MASK__SHIFT            5
-#define PS_STATE_PS_ITER_MASK__MASK             0xff
+#define PS_STATE_NUM_SAMPLES__SHIFT  0
+#define PS_STATE_NUM_SAMPLES__MASK   0xf
+#define PS_STATE_SMOOTH_LINES__SHIFT 4
+#define PS_STATE_SMOOTH_LINES__MASK  0x1
+#define PS_STATE_PS_ITER_MASK__SHIFT 5
+#define PS_STATE_PS_ITER_MASK__MASK  0xff
 /* gap: bits 13:21 */
 #define PS_STATE_RAST_PRIM__SHIFT               22
 #define PS_STATE_RAST_PRIM__MASK                0x3
@@ -440,6 +440,16 @@ struct radv_serialized_shader_arena_block {
    uint32_t arena_size;
 };
 
+struct radv_shader_binary_debug_info {
+   enum radv_shader_binary_type type;
+
+   char *disasm_string;
+   char *ir_string;
+   struct amd_stats *statistics;
+   struct ac_shader_debug_info *debug_info;
+   uint32_t debug_info_count;
+};
+
 struct radv_shader_debug_info {
    /* These are uncached. */
    bool dump_shader;
@@ -449,12 +459,7 @@ struct radv_shader_debug_info {
    char *spirv;
    uint32_t spirv_size;
    char *nir_string;
-   char *disasm_string;
-   char *ir_string;
    char *args_string;
-   struct amd_stats *statistics;
-   struct ac_shader_debug_info *debug_info;
-   uint32_t debug_info_count;
 };
 
 struct radv_shader {
@@ -477,9 +482,10 @@ struct radv_shader {
    uint32_t max_waves;
 
    blake3_hash hash;
-   void *code;
 
    struct radv_shader_debug_info dbg;
+
+   struct radv_shader_binary *binary;
 };
 
 struct radv_shader_part {
@@ -660,9 +666,7 @@ struct radv_shader_stage;
 void radv_optimize_nir(struct nir_shader *shader, bool optimize_conservatively);
 void radv_optimize_nir_algebraic_early(nir_shader *shader);
 void radv_optimize_nir_algebraic_late(nir_shader *shader);
-void radv_optimize_nir_algebraic(nir_shader *shader, bool opt_offsets, bool opt_mqsad,
-                                 enum amd_gfx_level gfx_level);
-
+void radv_optimize_nir_algebraic(nir_shader *shader, bool opt_offsets, bool opt_mqsad, enum amd_gfx_level gfx_level);
 
 struct radv_shader_stage;
 
@@ -676,8 +680,10 @@ void radv_destroy_shader_upload_queue(struct radv_device *device);
 
 struct radv_shader_args;
 
-VkResult radv_parse_binary_debug_info(const struct radv_compiler_info *compiler_info, const struct radv_shader_binary *binary,
-                                      struct radv_shader_debug_info *dbg);
+struct radv_shader_binary_debug_info radv_parse_binary_debug_info(const struct radv_compiler_info *compiler_info,
+                                                                  const struct radv_shader_binary *binary);
+
+void radv_free_binary_debug_info(struct radv_shader_binary_debug_info *dbg);
 
 VkResult radv_shader_create_uncached(struct radv_device *device, const struct radv_shader_binary *binary,
                                      bool replayable, struct radv_serialized_shader_arena_block *replay_block,
@@ -690,7 +696,8 @@ struct radv_shader_binary *radv_shader_nir_to_asm(const struct radv_compiler_inf
 void radv_shader_dump_asm(const struct radv_compiler_info *compiler_info, struct radv_shader_debug_info *debug,
                           const struct radv_shader_binary *binary, const struct radv_shader_info *info);
 
-char *radv_dump_nir_shaders(const struct radv_compiler_info *compiler_info, struct nir_shader *const *shaders, int shader_count);
+char *radv_dump_nir_shaders(const struct radv_compiler_info *compiler_info, struct nir_shader *const *shaders,
+                            int shader_count);
 
 VkResult radv_shader_wait_for_upload(struct radv_device *device, uint64_t seq);
 
@@ -757,7 +764,8 @@ VkResult radv_dump_shader_stats(struct radv_device *device, struct radv_pipeline
                                 FILE *output);
 
 /* Returns true on success and false on failure */
-bool radv_shader_reupload(struct radv_device *device, struct radv_shader *shader);
+bool radv_shader_get_code(struct radv_device *device, const struct radv_shader *shader, void *dest_ptr);
+bool radv_shader_upload(struct radv_device *device, struct radv_shader *shader);
 
 extern const struct vk_pipeline_cache_object_ops radv_shader_ops;
 

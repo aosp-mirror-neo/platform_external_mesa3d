@@ -440,11 +440,42 @@ class ResourceTracker {
         const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo,
         const VkAllocationCallbacks* pAllocator,
         VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate);
+    VkResult on_vkCreateDescriptorUpdateTemplateKHR(
+        void* context, VkResult input_result, VkDevice device,
+        const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo,
+        const VkAllocationCallbacks* pAllocator,
+        VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate);
 
     void on_vkUpdateDescriptorSetWithTemplate(void* context, VkDevice device,
                                               VkDescriptorSet descriptorSet,
                                               VkDescriptorUpdateTemplate descriptorUpdateTemplate,
                                               const void* pData);
+    void on_vkUpdateDescriptorSetWithTemplateKHR(
+        void* context, VkDevice device, VkDescriptorSet descriptorSet,
+        VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData);
+
+    void on_vkCmdPushDescriptorSet(void* context, VkCommandBuffer commandBuffer,
+                                   VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout,
+                                   uint32_t set, uint32_t descriptorWriteCount,
+                                   const VkWriteDescriptorSet* pDescriptorWrites);
+    void on_vkCmdPushDescriptorSetWithTemplate(void* context, VkCommandBuffer commandBuffer,
+                                               VkDescriptorUpdateTemplate descriptorUpdateTemplate,
+                                               VkPipelineLayout layout, uint32_t set,
+                                               const void* pData);
+    void on_vkCmdPushDescriptorSetWithTemplateKHR(
+        void* context, VkCommandBuffer commandBuffer,
+        VkDescriptorUpdateTemplate descriptorUpdateTemplate, VkPipelineLayout layout, uint32_t set,
+        const void* pData);
+    void on_vkCmdPushDescriptorSet2(void* context, VkCommandBuffer commandBuffer,
+                                    const VkPushDescriptorSetInfo* pPushDescriptorSetInfo);
+    void on_vkCmdPushDescriptorSet2KHR(void* context, VkCommandBuffer commandBuffer,
+                                       const VkPushDescriptorSetInfo* pPushDescriptorSetInfo);
+    void on_vkCmdPushDescriptorSetWithTemplate2(
+        void* context, VkCommandBuffer commandBuffer,
+        const VkPushDescriptorSetWithTemplateInfo* pPushDescriptorSetWithTemplateInfo);
+    void on_vkCmdPushDescriptorSetWithTemplate2KHR(
+        void* context, VkCommandBuffer commandBuffer,
+        const VkPushDescriptorSetWithTemplateInfo* pPushDescriptorSetWithTemplateInfo);
 
     void on_vkGetPhysicalDeviceFormatProperties2(void* context, VkPhysicalDevice physicalDevice,
                                                  VkFormat format,
@@ -536,8 +567,6 @@ class ResourceTracker {
                                           const VkAllocationCallbacks* pAllocator,
                                           VkPipeline* pPipelines);
 
-    uint8_t* getMappedPointer(VkDeviceMemory memory);
-    VkDeviceSize getMappedSize(VkDeviceMemory memory);
     VkDeviceSize getNonCoherentExtendedSize(VkDevice device, VkDeviceSize basicSize) const;
     bool isValidMemoryRange(const VkMappedMemoryRange& range);
 
@@ -548,8 +577,6 @@ class ResourceTracker {
     bool hostSupportsVulkan() const;
     bool usingDirectMapping() const;
     uint32_t getStreamFeatures() const;
-    uint32_t getApiVersionFromInstance(VkInstance instance);
-    uint32_t getApiVersionFromDevice(VkDevice device);
     VkDevice getDevice(VkCommandBuffer commandBuffer) const;
     void addToCommandPool(VkCommandPool commandPool, uint32_t commandBufferCount,
                           VkCommandBuffer* pCommandBuffers);
@@ -675,9 +702,6 @@ class ResourceTracker {
     VkResult exportSyncFdForQSRILocked(VkImage image, int* fd);
 #endif
 
-    void setInstanceInfo(VkInstance instance, uint32_t enabledExtensionCount,
-                         const char* const* ppEnabledExtensionNames, uint32_t apiVersion);
-
     void resetCommandBufferStagingInfo(VkCommandBuffer commandBuffer, bool alsoResetPrimaries,
                                        bool alsoClearPendingDescriptorSets);
 
@@ -725,7 +749,6 @@ class ResourceTracker {
     GOLDFISH_VK_LIST_TRIVIAL_HANDLE_TYPES(HANDLE_DEFINE_TRIVIAL_INFO_STRUCT)
 
     struct VkInstance_Info {
-        uint32_t highestApiVersion;
         // Fodder for vkEnumeratePhysicalDevices.
         std::vector<VkPhysicalDevice> physicalDevices;
     };
@@ -734,7 +757,6 @@ class ResourceTracker {
         VkPhysicalDevice physdev;
         VkPhysicalDeviceProperties props;
         VkPhysicalDeviceMemoryProperties memProps;
-        uint32_t apiVersion;
         std::vector<std::pair<PFN_vkDeviceMemoryReportCallbackEXT, void*>>
             deviceMemoryReportCallbacks;
     };
@@ -749,10 +771,7 @@ class ResourceTracker {
         zx_handle_t vmoHandle = ZX_HANDLE_INVALID;
         VkDevice device;
 
-        uint8_t* ptr = nullptr;
-
         uint64_t blobId = 0;
-        uint64_t allocationSize = 0;
         uint32_t memoryTypeIndex = 0;
         uint64_t coherentMemorySize = 0;
         uint64_t coherentMemoryOffset = 0;
@@ -824,6 +843,7 @@ class ResourceTracker {
     };
 
     struct VkDescriptorUpdateTemplate_Info {
+        VkPipelineBindPoint pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
         uint32_t templateEntryCount = 0;
         VkDescriptorUpdateTemplateEntry* templateEntries;
 
@@ -905,6 +925,11 @@ class ResourceTracker {
     };
 
     VkDescriptorImageInfo filterNonexistentSampler(const VkDescriptorImageInfo& inputInfo);
+
+    void sanitizePushDescriptorWrites(uint32_t descriptorWriteCount,
+                                      const VkWriteDescriptorSet* pDescriptorWrites,
+                                      std::vector<VkWriteDescriptorSet>& transformedWrites,
+                                      std::vector<VkDescriptorImageInfo>& transformedImageInfos);
 
     void emitDeviceMemoryReport(const VkDevice_Info& info, VkDeviceMemoryReportEventTypeEXT type,
                                 uint64_t memoryObjectId, VkDeviceSize size, VkObjectType objectType,

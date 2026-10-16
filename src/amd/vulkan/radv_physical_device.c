@@ -122,7 +122,7 @@ radv_transfer_queue_enabled(const struct radv_physical_device *pdev)
    if (!radv_compute_queue_enabled(pdev))
       return false;
 
-   return pdev->info.gfx_level >= GFX9 && !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_TRANSFER);
+   return pdev->info.gfx_level >= GFX7 && !(instance->queue_disable_flags & RADV_QUEUE_DISABLE_TRANSFER);
 }
 
 static bool
@@ -2815,9 +2815,9 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
       }
    }
 
-   pdev->use_ngg = (pdev->info.gfx_level >= GFX10 && pdev->info.family != CHIP_NAVI14 &&
-                    !(RADV_DEBUG(instance, NO_NGG))) ||
-                   pdev->info.gfx_level >= GFX11;
+   pdev->use_ngg =
+      (pdev->info.gfx_level >= GFX10 && pdev->info.family != CHIP_NAVI14 && !(RADV_DEBUG(instance, NO_NGG))) ||
+      pdev->info.gfx_level >= GFX11;
 
    /* TODO: Investigate if NGG culling helps on GFX11. */
    pdev->use_ngg_culling = pdev->use_ngg &&
@@ -3645,16 +3645,14 @@ fill_matrix_prop2_ext(struct __vk_outarray *base, struct matrix_prop *prop, void
 
    vk_outarray_append_typed(VkCooperativeMatrixProperties2EXT, out, p)
    {
-      *p = (struct VkCooperativeMatrixProperties2EXT){
-         .sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_2_EXT,
-         .MGranularity = 16,
-         .NGranularity = 16,
-         .KGranularity = 16,
-         .AType = prop->a_type,
-         .BType = prop->b_type,
-         .CType = prop->c_type,
-         .ResultType = prop->r_type
-      };
+      *p = (struct VkCooperativeMatrixProperties2EXT){.sType = VK_STRUCTURE_TYPE_COOPERATIVE_MATRIX_PROPERTIES_2_EXT,
+                                                      .MGranularity = 16,
+                                                      .NGranularity = 16,
+                                                      .KGranularity = 16,
+                                                      .AType = prop->a_type,
+                                                      .BType = prop->b_type,
+                                                      .CType = prop->c_type,
+                                                      .ResultType = prop->r_type};
    }
 }
 

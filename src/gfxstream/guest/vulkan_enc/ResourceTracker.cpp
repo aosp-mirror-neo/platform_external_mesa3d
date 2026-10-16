@@ -57,8 +57,6 @@ PERFETTO_DEFINE_CATEGORIES(perfetto::Category(GFXSTREAM_TRACE_DEFAULT_CATEGORY))
 static void zx_handle_close(zx_handle_t) {}
 #endif
 
-static constexpr uint32_t kDefaultApiVersion = VK_MAKE_VERSION(1, 1, 0);
-
 struct vk_struct_chain_iterator {
     VkBaseOutStructure* value;
 };
@@ -751,13 +749,16 @@ void ResourceTracker::transformImageMemoryRequirementsForGuestLocked(VkImage ima
 
 CoherentMemoryPtr ResourceTracker::freeCoherentMemoryLocked(VkDeviceMemory memory,
                                                             VkDeviceMemory_Info& info) {
-    if (info.coherentMemory && info.ptr) {
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, memory);
+
+    if (info.coherentMemory && gfxstream_memory->mapped) {
+        gfxstream_memory->mapped = nullptr;
+
         if (info.coherentMemory->getDeviceMemory() != memory) {
             delete_gfxstream_vk_device_memory(memory);
         }
 
         info.coherentMemory->release(info.coherentMemoryOffset);
-        info.ptr = nullptr;
 
         return std::move(info.coherentMemory);
     }
@@ -891,65 +892,136 @@ static void commitDescriptorSetUpdates(void* context, VkQueue queue,
 
         auto& writes = reified->allWrites;
 
-        for (size_t i = 0; i < writes.size(); ++i) {
+        for (size_t i = 0; i < writes.bindings.size(); ++i) {
             uint32_t binding = i;
+            auto& bindingWrite = writes.bindings[i];
 
-            for (size_t j = 0; j < writes[i].size(); ++j) {
-                auto& write = writes[i][j];
+            if (auto* elementWrites = std::get_if<std::vector<DescriptorBindingElementWrite>>(
+                    &bindingWrite.elements)) {
+                for (size_t j = 0; j < elementWrites->size(); ++j) {
+                    auto& write = (*elementWrites)[j];
 
-                if (write.type == DescriptorWriteType::Empty) continue;
+                    if (write.type == DescriptorWriteType::Empty) continue;
 
-                uint32_t dstArrayElement = 0;
+                    uint32_t dstArrayElement = 0;
+                    uint32_t descriptorCount = 1;
+                    const void* pNext = nullptr;
 
-                VkDescriptorImageInfo* imageInfo = nullptr;
-                VkDescriptorBufferInfo* bufferInfo = nullptr;
-                VkBufferView* bufferView = nullptr;
+                    VkDescriptorImageInfo* imageInfo = nullptr;
+                    VkDescriptorBufferInfo* bufferInfo = nullptr;
+                    VkBufferView* bufferView = nullptr;
 
-                switch (write.type) {
-                    case DescriptorWriteType::Empty:
-                        break;
-                    case DescriptorWriteType::ImageInfo:
-                        dstArrayElement = j;
-                        imageInfo = &write.imageInfo;
-                        break;
-                    case DescriptorWriteType::BufferInfo:
-                        dstArrayElement = j;
-                        bufferInfo = &write.bufferInfo;
-                        break;
-                    case DescriptorWriteType::BufferView:
-                        dstArrayElement = j;
-                        bufferView = &write.bufferView;
-                        break;
-                    case DescriptorWriteType::InlineUniformBlock:
-                    case DescriptorWriteType::AccelerationStructure:
-                        // TODO
-                        mesa_loge(
-                            "Encountered pending inline uniform block or acceleration structure "
-                            "desc write, abort (NYI)\n");
-                        abort();
-                    default:
-                        break;
+                    // VK_EXT_descriptor_indexing allows an application to update a descriptor
+                    // set and then destroy the corresponding descriptor resource before
+                    // submitting the command buffer if the descriptor is unused.
+                    //
+                    // VK_KHR_robustness2 allows an application to explicitly set VK_NULL_HANDLE
+                    // for unused resources in descriptors.
+                    //
+                    // Gfxstream should send writes with VK_NULL_HANDLE (the `!= VK_NULL_HANDLE`
+                    // checks below) but should not send writes for destroyed resources (the
+                    // `alive.expired()` checks below) to support both without trying to
+                    // dereference deleted handles on the host.
+                    switch (write.type) {
+                        case DescriptorWriteType::Empty:
+                            break;
+                        case DescriptorWriteType::ImageInfo: {
+                            bool resourcesAlive = true;
+                            if (bindingWrite.descriptorType != VK_DESCRIPTOR_TYPE_SAMPLER &&
+                                write.imageInfo.imageView != VK_NULL_HANDLE) {
+                                resourcesAlive &= !write.alive.expired();
+                            }
+                            if ((bindingWrite.descriptorType == VK_DESCRIPTOR_TYPE_SAMPLER ||
+                                 bindingWrite.descriptorType ==
+                                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) &&
+                                (binding >= reified->bindingIsImmutableSampler.size() ||
+                                 !reified->bindingIsImmutableSampler[binding]) &&
+                                write.imageInfo.sampler != VK_NULL_HANDLE) {
+                                resourcesAlive &= !write.samplerAlive.expired();
+                            }
+                            if (!resourcesAlive) {
+                                write.type = DescriptorWriteType::Empty;
+                                continue;
+                            }
+                            dstArrayElement = j;
+                            imageInfo = &write.imageInfo;
+                            break;
+                        }
+                        case DescriptorWriteType::BufferInfo:
+                            if (write.bufferInfo.buffer != VK_NULL_HANDLE &&
+                                write.alive.expired()) {
+                                write.type = DescriptorWriteType::Empty;
+                                continue;
+                            }
+                            dstArrayElement = j;
+                            bufferInfo = &write.bufferInfo;
+                            break;
+                        case DescriptorWriteType::BufferView:
+                            if (write.bufferView != VK_NULL_HANDLE && write.alive.expired()) {
+                                write.type = DescriptorWriteType::Empty;
+                                continue;
+                            }
+                            dstArrayElement = j;
+                            bufferView = &write.bufferView;
+                            break;
+                        case DescriptorWriteType::AccelerationStructure:
+                            // TODO
+                            mesa_loge(
+                                "Encountered pending acceleration structure "
+                                "desc write, abort (NYI)\n");
+                            abort();
+                        default:
+                            break;
+                    }
+
+                    // TODO: Combine multiple writes into one VkWriteDescriptorSet.
+                    VkWriteDescriptorSet forHost = {
+                        VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                        pNext,
+                        set,
+                        binding,
+                        dstArrayElement,
+                        descriptorCount,
+                        bindingWrite.descriptorType,
+                        imageInfo,
+                        bufferInfo,
+                        bufferView,
+                    };
+
+                    writesForHost.push_back(forHost);
+                    ++currentWriteIndex;
+
+                    // Set it back to empty.
+                    write.type = DescriptorWriteType::Empty;
                 }
+            } else if (auto* blockWrite =
+                           std::get_if<DescriptorInlineUniformBlockWrite>(&bindingWrite.elements)) {
+                if (!blockWrite->pendingWrite) continue;
 
-                // TODO: Combine multiple writes into one VkWriteDescriptorSet.
+                uint32_t descriptorCount = static_cast<uint32_t>(blockWrite->bytes.size());
+                blockWrite->writeInfo.sType =
+                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK;
+                blockWrite->writeInfo.pNext = nullptr;
+                blockWrite->writeInfo.dataSize = descriptorCount;
+                blockWrite->writeInfo.pData = blockWrite->bytes.data();
+
                 VkWriteDescriptorSet forHost = {
                     VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                    0 /* TODO: inline uniform block */,
+                    &blockWrite->writeInfo,
                     set,
                     binding,
-                    dstArrayElement,
-                    1,
-                    write.descriptorType,
-                    imageInfo,
-                    bufferInfo,
-                    bufferView,
+                    0,  // dstArrayElement
+                    descriptorCount,
+                    bindingWrite.descriptorType,
+                    nullptr,
+                    nullptr,
+                    nullptr,
                 };
 
                 writesForHost.push_back(forHost);
                 ++currentWriteIndex;
 
-                // Set it back to empty.
-                write.type = DescriptorWriteType::Empty;
+                blockWrite->pendingWrite = false;
             }
         }
     }
@@ -1329,25 +1401,21 @@ void ResourceTracker::transformImpl_VkExternalMemoryProperties_fromhost(
     }
 }
 
-void ResourceTracker::setInstanceInfo(VkInstance instance, uint32_t enabledExtensionCount,
-                                      const char* const* ppEnabledExtensionNames,
-                                      uint32_t apiVersion) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    auto& info = info_VkInstance[instance];
-    info.highestApiVersion = apiVersion;
-}
-
 void ResourceTracker::setDeviceInfo(VkDevice device, VkPhysicalDevice physdev,
                                     const VkPhysicalDeviceProperties& props,
                                     const VkPhysicalDeviceMemoryProperties& memProps,
                                     uint32_t enabledExtensionCount,
                                     const char* const* ppEnabledExtensionNames, const void* pNext) {
+    VK_FROM_HANDLE(gfxstream_vk_device, gfxstream_device, device);
+    if (gfxstream_device) {
+        gfxstream_device->api_version = props.apiVersion;
+    }
+
     std::lock_guard<std::recursive_mutex> lock(mLock);
     auto& info = info_VkDevice[device];
     info.physdev = physdev;
     info.props = props;
     info.memProps = memProps;
-    info.apiVersion = props.apiVersion;
 
     const VkBaseInStructure* extensionCreateInfo =
         reinterpret_cast<const VkBaseInStructure*>(pNext);
@@ -1372,12 +1440,14 @@ void ResourceTracker::setDeviceMemoryInfo(VkDevice device, VkDeviceMemory memory
                                           uint32_t memoryTypeIndex, void* ahw, bool imported,
                                           zx_handle_t vmoHandle, VirtGpuResourcePtr blobPtr,
                                           int importedFd) {
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, memory);
+    gfxstream_memory->mapped = ptr;
+    gfxstream_memory->mapped_size = allocationSize;
+
     std::lock_guard<std::recursive_mutex> lock(mLock);
     auto& info = info_VkDeviceMemory[memory];
 
     info.device = device;
-    info.allocationSize = allocationSize;
-    info.ptr = ptr;
     info.memoryTypeIndex = memoryTypeIndex;
 #ifdef VK_USE_PLATFORM_ANDROID_KHR
     info.ahw = (AHardwareBuffer*)ahw;
@@ -1397,40 +1467,19 @@ void ResourceTracker::setImageInfo(VkImage image, VkDevice device,
     info.createInfo = *pCreateInfo;
 }
 
-uint8_t* ResourceTracker::getMappedPointer(VkDeviceMemory memory) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    const auto it = info_VkDeviceMemory.find(memory);
-    if (it == info_VkDeviceMemory.end()) return nullptr;
-
-    const auto& info = it->second;
-    return info.ptr;
-}
-
-VkDeviceSize ResourceTracker::getMappedSize(VkDeviceMemory memory) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    const auto it = info_VkDeviceMemory.find(memory);
-    if (it == info_VkDeviceMemory.end()) return 0;
-
-    const auto& info = it->second;
-    return info.allocationSize;
-}
-
 bool ResourceTracker::isValidMemoryRange(const VkMappedMemoryRange& range) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    const auto it = info_VkDeviceMemory.find(range.memory);
-    if (it == info_VkDeviceMemory.end()) return false;
-    const auto& info = it->second;
-
-    if (!info.ptr) return false;
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, range.memory);
+    if (!gfxstream_memory) return false;
+    if (!gfxstream_memory->mapped) return false;
 
     VkDeviceSize offset = range.offset;
     VkDeviceSize size = range.size;
 
     if (size == VK_WHOLE_SIZE) {
-        return offset <= info.allocationSize;
+        return offset <= gfxstream_memory->mapped_size;
     }
 
-    return offset + size <= info.allocationSize;
+    return offset + size <= gfxstream_memory->mapped_size;
 }
 
 void ResourceTracker::setupCaps(uint32_t& noRenderControlEnc) {
@@ -1605,6 +1654,7 @@ void ResourceTracker::deviceMemoryTransform_tohost(VkDeviceMemory* memory, uint3
             if (!mem) {
                 return;
             }
+            VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, mem);
 
             auto it = info_VkDeviceMemory.find(mem);
             if (it == info_VkDeviceMemory.end()) {
@@ -1623,7 +1673,7 @@ void ResourceTracker::deviceMemoryTransform_tohost(VkDeviceMemory* memory, uint3
             }
 
             if (size && size[i] == VK_WHOLE_SIZE) {
-                size[i] = info.allocationSize;
+                size[i] = gfxstream_memory->mapped_size;
             }
         }
     }
@@ -1789,6 +1839,7 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_load_store_op_none",
         "VK_EXT_swapchain_colorspace",
         "VK_EXT_image_robustness",
+        "VK_EXT_robustness2",
         "VK_EXT_custom_border_color",
         "VK_EXT_border_color_swizzle",
         "VK_EXT_shader_stencil_export",
@@ -1874,6 +1925,17 @@ VkResult ResourceTracker::on_vkEnumerateDeviceExtensionProperties(
         "VK_EXT_texture_compression_astc_hdr",
         "VK_EXT_tooling_info",
         "VK_EXT_ycbcr_2plane_444_formats",
+
+        // Vulkan 1.4
+        "VK_KHR_global_priority",
+        "VK_KHR_index_type_uint8",
+        "VK_KHR_load_store_op_none",
+        "VK_KHR_maintenance5",
+        "VK_KHR_map_memory2",
+        "VK_KHR_shader_expect_assume",
+        "VK_KHR_shader_float_controls2",
+        "VK_KHR_shader_subgroup_rotate",
+        "VK_EXT_pipeline_robustness",
 
         // Android requirements
         "VK_EXT_pipeline_protected_access",
@@ -2344,7 +2406,7 @@ void ResourceTracker::on_vkGetPhysicalDeviceMemoryProperties2(
 }
 
 VkResult ResourceTracker::on_vkCreateInstance(void* context, VkResult input_result,
-                                              const VkInstanceCreateInfo* createInfo,
+                                              const VkInstanceCreateInfo*,
                                               const VkAllocationCallbacks*, VkInstance* pInstance) {
     if (input_result != VK_SUCCESS) return input_result;
 
@@ -2353,8 +2415,10 @@ VkResult ResourceTracker::on_vkCreateInstance(void* context, VkResult input_resu
     uint32_t apiVersion;
     input_result = enc->vkEnumerateInstanceVersion(&apiVersion, false /* no lock */);
 
-    setInstanceInfo(*pInstance, createInfo->enabledExtensionCount,
-                    createInfo->ppEnabledExtensionNames, apiVersion);
+    VK_FROM_HANDLE(gfxstream_vk_instance, gfxstream_instance, *pInstance);
+    if (gfxstream_instance) {
+        gfxstream_instance->api_version = apiVersion;
+    }
 
     return input_result;
 }
@@ -3321,10 +3385,11 @@ VkResult ResourceTracker::allocateCoherentMemory(VkDevice device,
                   host_res);
         return host_res;
     }
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, mem);
 
     struct VkDeviceMemory_Info info;
     if (mCaps.vulkanCapset.deferredMapping || mCaps.params[kParamCreateGuestHandle]) {
-        info.allocationSize = pAllocateInfo->allocationSize;
+        gfxstream_memory->mapped_size = pAllocateInfo->allocationSize;
         info.blobId = createBlobInfo.blobId;
     }
 
@@ -3341,7 +3406,7 @@ VkResult ResourceTracker::allocateCoherentMemory(VkDevice device,
         coherentMemory->subAllocate(pAllocateInfo->allocationSize, &ptr, offset);
         info.coherentMemoryOffset = offset;
         info.coherentMemory = coherentMemory;
-        info.ptr = ptr;
+        gfxstream_memory->mapped = ptr;
     }
 
     info.coherentMemorySize = hostAllocationInfo.allocationSize;
@@ -3364,10 +3429,10 @@ VkResult ResourceTracker::allocateCoherentMemory(VkDevice device,
     if (coherentMemory) {
         std::lock_guard<std::recursive_mutex> lock(mLock);
         coherentMemory->subAllocate(pAllocateInfo->allocationSize, &ptr, offset);
-        info.allocationSize = pAllocateInfo->allocationSize;
+        gfxstream_memory->mapped_size = pAllocateInfo->allocationSize;
         info.coherentMemoryOffset = offset;
         info.coherentMemory = coherentMemory;
-        info.ptr = ptr;
+        gfxstream_memory->mapped = ptr;
         info_VkDeviceMemory[mem] = info;
         *pMemory = mem;
     } else {
@@ -3416,9 +3481,7 @@ VkResult ResourceTracker::getCoherentMemory(const VkMemoryAllocateInfo* pAllocat
         if (coherentMemory) {
             struct VkDeviceMemory_Info info;
             info.coherentMemoryOffset = offset;
-            info.ptr = ptr;
             info.memoryTypeIndex = pAllocateInfo->memoryTypeIndex;
-            info.allocationSize = pAllocateInfo->allocationSize;
             info.coherentMemory = coherentMemory;
             info.device = device;
 
@@ -3426,6 +3489,9 @@ VkResult ResourceTracker::getCoherentMemory(const VkMemoryAllocateInfo* pAllocat
             // memory used for suballocations will still be VkDeviceMemory associated with
             // CoherentMemory
             auto mem = create_gfxstream_vk_device_memory(0);
+            VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, mem);
+            gfxstream_memory->mapped = ptr;
+            gfxstream_memory->mapped_size = pAllocateInfo->allocationSize;
             info_VkDeviceMemory[mem] = info;
             *pMemory = mem;
             return VK_SUCCESS;
@@ -3443,10 +3509,10 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
         auto it = info_VkDevice.find(device);                                                  \
         if (it == info_VkDevice.end()) return result;                                          \
         mesa_logw("%s:%d: Allocation failure %d", __func__, __LINE__, result);                 \
-        emitDeviceMemoryReport(it->second,                                                     \
-                               VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT, 0,    \
-                               pAllocateInfo->allocationSize, VK_OBJECT_TYPE_DEVICE_MEMORY, 0, \
-                               pAllocateInfo->memoryTypeIndex);                                \
+        emitDeviceMemoryReport(                                                                \
+            it->second, VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATION_FAILED_EXT, 0,           \
+            pAllocateInfo->allocationSize, VK_OBJECT_TYPE_DEVICE_MEMORY, 0,                    \
+            it->second.memProps.memoryTypes[pAllocateInfo->memoryTypeIndex].heapIndex);        \
         return result;                                                                         \
     }
 
@@ -4171,12 +4237,14 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
             memoryObjectId = getAHardwareBufferId(ahw);
         }
 #endif
-        emitDeviceMemoryReport(info_VkDevice[device],
-                               isImport ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT
-                                        : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
-                               memoryObjectId, pAllocateInfo->allocationSize,
-                               VK_OBJECT_TYPE_DEVICE_MEMORY, (uint64_t)(void*)*pMemory,
-                               pAllocateInfo->memoryTypeIndex);
+        const auto& deviceInfo = info_VkDevice[device];
+        emitDeviceMemoryReport(
+            deviceInfo,
+            isImport ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT
+                     : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+            memoryObjectId, pAllocateInfo->allocationSize, VK_OBJECT_TYPE_DEVICE_MEMORY,
+            (uint64_t)(void*)*pMemory,
+            deviceInfo.memProps.memoryTypes[pAllocateInfo->memoryTypeIndex].heapIndex);
         return VK_SUCCESS;
     }
 
@@ -4228,17 +4296,22 @@ VkResult ResourceTracker::on_vkAllocateMemory(void* context, VkResult input_resu
     }
 #endif
 
-    emitDeviceMemoryReport(info_VkDevice[device],
-                           isImport ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT
-                                    : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
-                           memoryObjectId, pAllocateInfo->allocationSize,
-                           VK_OBJECT_TYPE_DEVICE_MEMORY, (uint64_t)(void*)*pMemory,
-                           pAllocateInfo->memoryTypeIndex);
+    const auto& deviceInfo = info_VkDevice[device];
+    emitDeviceMemoryReport(
+        deviceInfo,
+        isImport ? VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_IMPORT_EXT
+                 : VK_DEVICE_MEMORY_REPORT_EVENT_TYPE_ALLOCATE_EXT,
+        memoryObjectId, pAllocateInfo->allocationSize, VK_OBJECT_TYPE_DEVICE_MEMORY,
+        (uint64_t)(void*)*pMemory,
+        deviceInfo.memProps.memoryTypes[pAllocateInfo->memoryTypeIndex].heapIndex);
     return VK_SUCCESS;
 }
 
 void ResourceTracker::on_vkFreeMemory(void* context, VkDevice device, VkDeviceMemory memory,
                                       const VkAllocationCallbacks* pAllocateInfo) {
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, memory);
+    if (!gfxstream_memory) return;
+
     std::unique_lock<std::recursive_mutex> lock(mLock);
 
     auto it = info_VkDeviceMemory.find(memory);
@@ -4262,13 +4335,15 @@ void ResourceTracker::on_vkFreeMemory(void* context, VkDevice device, VkDeviceMe
                            (uint64_t)(void*)memory);
 
 #ifdef VK_USE_PLATFORM_FUCHSIA
-    if (info.vmoHandle && info.ptr) {
-        zx_status_t status = zx_vmar_unmap(
-            zx_vmar_root_self(), reinterpret_cast<zx_paddr_t>(info.ptr), info.allocationSize);
+    if (info.vmoHandle && gfxstream_memory->mapped) {
+        zx_status_t status =
+            zx_vmar_unmap(zx_vmar_root_self(),
+                          reinterpret_cast<zx_paddr_t>(gfxstream_memory->mapped),
+                          gfxstream_memory->mapped_size);
         if (status != ZX_OK) {
             mesa_loge("%s: Cannot unmap ptr: status %d", __func__, status);
         }
-        info.ptr = nullptr;
+        gfxstream_memory->mapped = nullptr;
     }
 #endif
 
@@ -4294,6 +4369,12 @@ VkResult ResourceTracker::on_vkMapMemory(void* context, VkResult host_result, Vk
     if (host_result != VK_SUCCESS) {
         mesa_loge("%s: Host failed to map", __func__);
         return host_result;
+    }
+
+    VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, memory);
+    if (!gfxstream_memory) {
+        mesa_loge("%s: Failed to find VkDeviceMemory.", __func__);
+        return VK_ERROR_MEMORY_MAP_FAILED;
     }
 
     std::unique_lock<std::recursive_mutex> lock(mLock);
@@ -4342,29 +4423,30 @@ VkResult ResourceTracker::on_vkMapMemory(void* context, VkResult host_result, Vk
 
         uint8_t* ptr;
         uint64_t offset;
-        coherentMemory->subAllocate(deviceMemoryInfo.allocationSize, &ptr, offset);
+        coherentMemory->subAllocate(gfxstream_memory->mapped_size, &ptr, offset);
 
         deviceMemoryInfo.coherentMemoryOffset = offset;
         deviceMemoryInfo.coherentMemory = coherentMemory;
-        deviceMemoryInfo.ptr = ptr;
+        gfxstream_memory->mapped = ptr;
     }
 
-    if (!deviceMemoryInfo.ptr) {
+    if (!gfxstream_memory->mapped) {
         mesa_loge("%s: VkDeviceMemory has nullptr.", __func__);
         return VK_ERROR_MEMORY_MAP_FAILED;
     }
 
-    if (size != VK_WHOLE_SIZE && (deviceMemoryInfo.ptr + offset + size >
-                                  deviceMemoryInfo.ptr + deviceMemoryInfo.allocationSize)) {
+    uint8_t* mappedPtr = static_cast<uint8_t*>(gfxstream_memory->mapped);
+    if (size != VK_WHOLE_SIZE &&
+        (mappedPtr + offset + size > mappedPtr + gfxstream_memory->mapped_size)) {
         mesa_loge(
             "%s: size is too big. alloc size 0x%llx while we wanted offset 0x%llx size 0x%llx "
             "total 0x%llx",
-            __func__, (unsigned long long)deviceMemoryInfo.allocationSize,
+            __func__, (unsigned long long)gfxstream_memory->mapped_size,
             (unsigned long long)offset, (unsigned long long)size, (unsigned long long)offset);
         return VK_ERROR_MEMORY_MAP_FAILED;
     }
 
-    *ppData = deviceMemoryInfo.ptr + offset;
+    *ppData = mappedPtr + offset;
 
     return host_result;
 }
@@ -6951,6 +7033,7 @@ VkResult ResourceTracker::initDescriptorUpdateTemplateBuffers(
     }
 
     auto& info = it->second;
+    info.pipelineBindPoint = pCreateInfo->pipelineBindPoint;
     uint32_t inlineUniformBlockBufferSize = 0;
 
     for (uint32_t i = 0; i < pCreateInfo->descriptorUpdateEntryCount; ++i) {
@@ -7049,6 +7132,15 @@ VkResult ResourceTracker::on_vkCreateDescriptorUpdateTemplate(
     if (input_result != VK_SUCCESS) return input_result;
 
     return initDescriptorUpdateTemplateBuffers(pCreateInfo, *pDescriptorUpdateTemplate);
+}
+
+VkResult ResourceTracker::on_vkCreateDescriptorUpdateTemplateKHR(
+    void* context, VkResult input_result, VkDevice device,
+    const VkDescriptorUpdateTemplateCreateInfo* pCreateInfo,
+    const VkAllocationCallbacks* pAllocator,
+    VkDescriptorUpdateTemplate* pDescriptorUpdateTemplate) {
+    return on_vkCreateDescriptorUpdateTemplate(context, input_result, device, pCreateInfo,
+                                               pAllocator, pDescriptorUpdateTemplate);
 }
 
 void ResourceTracker::on_vkUpdateDescriptorSetWithTemplate(
@@ -7193,6 +7285,272 @@ void ResourceTracker::on_vkUpdateDescriptorSetWithTemplate(
         bufferViewCount, static_cast<uint32_t>(info.inlineUniformBlockBuffer.size()),
         imageInfoIndices, bufferInfoIndices, bufferViewIndices, imageInfos, bufferInfos,
         bufferViews, inlineUniformBlockBuffer, true /* do lock */);
+}
+
+void ResourceTracker::on_vkUpdateDescriptorSetWithTemplateKHR(
+    void* context, VkDevice device, VkDescriptorSet descriptorSet,
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate, const void* pData) {
+    on_vkUpdateDescriptorSetWithTemplate(context, device, descriptorSet, descriptorUpdateTemplate,
+                                         pData);
+}
+
+// VK_KHR_push_descriptor (core in VK_VERSION_1_4) allows applications to leave
+// some fields of VkWriteDescriptorSet unset (e.g. `dstSet`) and some other
+// fields unset based on the descriptor type (e.g. `pImageInfo` for
+// `VK_DESCRIPTOR_TYPE_SAMPLER`). The pre-existing guest marshaling code for
+// `VkWriteDescriptorSet` will try to lookup the host handles of those various
+// fields if they are not VK_NULL_HANDLE, so we clear them out here.
+void ResourceTracker::sanitizePushDescriptorWrites(
+    uint32_t descriptorWriteCount, const VkWriteDescriptorSet* pDescriptorWrites,
+    std::vector<VkWriteDescriptorSet>& transformedWrites,
+    std::vector<VkDescriptorImageInfo>& transformedImageInfos) {
+    std::lock_guard<std::recursive_mutex> lock(mLock);
+
+    transformedWrites.resize(descriptorWriteCount);
+    size_t imageInfosNeeded = 0;
+    for (uint32_t i = 0; i < descriptorWriteCount; ++i) {
+        if (isDescriptorTypeImageInfo(pDescriptorWrites[i].descriptorType) &&
+            pDescriptorWrites[i].pImageInfo) {
+            imageInfosNeeded += pDescriptorWrites[i].descriptorCount;
+        }
+    }
+    transformedImageInfos.resize(imageInfosNeeded);
+    size_t imageInfoIndex = 0;
+    for (uint32_t i = 0; i < descriptorWriteCount; ++i) {
+        VkWriteDescriptorSet& write = transformedWrites[i];
+        write = pDescriptorWrites[i];
+        write.dstSet = VK_NULL_HANDLE;
+
+        VkDescriptorType descType = write.descriptorType;
+        if (isDescriptorTypeImageInfo(descType) && write.pImageInfo && write.descriptorCount > 0) {
+            VkDescriptorImageInfo* dstImageInfos = &transformedImageInfos[imageInfoIndex];
+            for (uint32_t j = 0; j < write.descriptorCount; ++j) {
+                VkDescriptorImageInfo imgInfo = write.pImageInfo[j];
+                if (descType == VK_DESCRIPTOR_TYPE_SAMPLER) {
+                    // If the descriptor type is VK_DESCRIPTOR_TYPE_SAMPLER, the pImageInfo
+                    // parameter is ignored and the immutable sampler is taken from the push
+                    // descriptor set layout in the pipeline layout.
+                    imgInfo.imageView = VK_NULL_HANDLE;
+                    imgInfo = filterNonexistentSampler(imgInfo);
+                } else if (descType == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
+                    imgInfo = filterNonexistentSampler(imgInfo);
+                } else {
+                    // The descriptor type is VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                    // the samplermember of the pImageInfo parameter is ignored and the
+                    // immutable sampler is taken from the push descriptor set layout in
+                    // the pipeline layout.
+                    imgInfo.sampler = VK_NULL_HANDLE;
+                }
+                dstImageInfos[j] = imgInfo;
+            }
+            write.pImageInfo = dstImageInfos;
+            imageInfoIndex += write.descriptorCount;
+        }
+    }
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSet(void* context, VkCommandBuffer commandBuffer,
+                                                VkPipelineBindPoint pipelineBindPoint,
+                                                VkPipelineLayout layout, uint32_t set,
+                                                uint32_t descriptorWriteCount,
+                                                const VkWriteDescriptorSet* pDescriptorWrites) {
+    VkEncoder* enc = (VkEncoder*)context;
+    std::vector<VkDescriptorImageInfo> transformedImageInfos;
+    std::vector<VkWriteDescriptorSet> transformedWrites;
+    sanitizePushDescriptorWrites(descriptorWriteCount, pDescriptorWrites, transformedWrites,
+                                 transformedImageInfos);
+    enc->vkCmdPushDescriptorSet(commandBuffer, pipelineBindPoint, layout, set, descriptorWriteCount,
+                                transformedWrites.data(), true /* do lock */);
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSetWithTemplate(
+    void* context, VkCommandBuffer commandBuffer,
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate, VkPipelineLayout layout, uint32_t set,
+    const void* pData) {
+    VkPushDescriptorSetWithTemplateInfo pushInfo = {
+        .sType = VK_STRUCTURE_TYPE_PUSH_DESCRIPTOR_SET_WITH_TEMPLATE_INFO,
+        .pNext = nullptr,
+        .descriptorUpdateTemplate = descriptorUpdateTemplate,
+        .layout = layout,
+        .set = set,
+        .pData = pData,
+    };
+    on_vkCmdPushDescriptorSetWithTemplate2(context, commandBuffer, &pushInfo);
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSetWithTemplateKHR(
+    void* context, VkCommandBuffer commandBuffer,
+    VkDescriptorUpdateTemplate descriptorUpdateTemplate, VkPipelineLayout layout, uint32_t set,
+    const void* pData) {
+    on_vkCmdPushDescriptorSetWithTemplate(context, commandBuffer, descriptorUpdateTemplate, layout,
+                                          set, pData);
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSet2(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkPushDescriptorSetInfo* pPushDescriptorSetInfo) {
+    if (!pPushDescriptorSetInfo) return;
+    VkEncoder* enc = (VkEncoder*)context;
+    std::vector<VkDescriptorImageInfo> transformedImageInfos;
+    std::vector<VkWriteDescriptorSet> transformedWrites;
+    sanitizePushDescriptorWrites(pPushDescriptorSetInfo->descriptorWriteCount,
+                                 pPushDescriptorSetInfo->pDescriptorWrites, transformedWrites,
+                                 transformedImageInfos);
+    VkPushDescriptorSetInfo modifiedInfo = *pPushDescriptorSetInfo;
+    modifiedInfo.pDescriptorWrites = transformedWrites.data();
+    enc->vkCmdPushDescriptorSet2(commandBuffer, &modifiedInfo, true /* do lock */);
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSet2KHR(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkPushDescriptorSetInfo* pPushDescriptorSetInfo) {
+    if (!pPushDescriptorSetInfo) return;
+    VkEncoder* enc = (VkEncoder*)context;
+    std::vector<VkDescriptorImageInfo> transformedImageInfos;
+    std::vector<VkWriteDescriptorSet> transformedWrites;
+    sanitizePushDescriptorWrites(pPushDescriptorSetInfo->descriptorWriteCount,
+                                 pPushDescriptorSetInfo->pDescriptorWrites, transformedWrites,
+                                 transformedImageInfos);
+    VkPushDescriptorSetInfo modifiedInfo = *pPushDescriptorSetInfo;
+    modifiedInfo.pDescriptorWrites = transformedWrites.data();
+    enc->vkCmdPushDescriptorSet2KHR(commandBuffer, &modifiedInfo, true);
+}
+
+// VkPushDescriptorSetWithTemplateInfo has an opaque `const void* pData` field
+// whose size is determined from the VkDescriptorUpdateTemplateEntry referenced.
+// Instead of trying to make the marhsaling code more stateful, the template
+// writes are expanded into vkCmdPushDescriptorSet() calls in the guest.
+void ResourceTracker::on_vkCmdPushDescriptorSetWithTemplate2(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkPushDescriptorSetWithTemplateInfo* pPushDescriptorSetWithTemplateInfo) {
+    if (!pPushDescriptorSetWithTemplateInfo) return;
+    const uint8_t* userBuffer =
+        static_cast<const uint8_t*>(pPushDescriptorSetWithTemplateInfo->pData);
+
+    VkPipelineBindPoint pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    std::vector<VkWriteDescriptorSet> writes;
+    std::vector<VkDescriptorImageInfo> imageInfos;
+    std::vector<VkDescriptorBufferInfo> bufferInfos;
+    std::vector<VkBufferView> bufferViews;
+    std::vector<VkWriteDescriptorSetInlineUniformBlock> inlineUniformBlocks;
+
+    {
+        std::lock_guard<std::recursive_mutex> lock(mLock);
+        auto it = info_VkDescriptorUpdateTemplate.find(
+            pPushDescriptorSetWithTemplateInfo->descriptorUpdateTemplate);
+        if (it == info_VkDescriptorUpdateTemplate.end()) {
+            return;
+        }
+        const auto& info = it->second;
+        if (!userBuffer && info.templateEntryCount > 0) {
+            return;
+        }
+
+        pipelineBindPoint = info.pipelineBindPoint;
+        writes.resize(info.templateEntryCount);
+        imageInfos.resize(info.imageInfoCount);
+        bufferInfos.resize(info.bufferInfoCount);
+        bufferViews.resize(info.bufferViewCount);
+        inlineUniformBlocks.resize(info.inlineUniformBlockCount);
+
+        uint32_t currImageInfoIndex = 0;
+        uint32_t currBufferInfoIndex = 0;
+        uint32_t currBufferViewIndex = 0;
+        uint32_t currInlineUniformBlockIndex = 0;
+
+        for (uint32_t i = 0; i < info.templateEntryCount; ++i) {
+            const auto& entry = info.templateEntries[i];
+            VkDescriptorType descType = entry.descriptorType;
+            uint32_t descCount = entry.descriptorCount;
+            size_t offset = entry.offset;
+            size_t stride = entry.stride;
+
+            VkWriteDescriptorSet& write = writes[i];
+            write = {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = VK_NULL_HANDLE,
+                .dstBinding = entry.dstBinding,
+                .dstArrayElement = entry.dstArrayElement,
+                .descriptorCount = descCount,
+                .descriptorType = descType,
+                .pImageInfo = nullptr,
+                .pBufferInfo = nullptr,
+                .pTexelBufferView = nullptr,
+            };
+
+            if (isDescriptorTypeImageInfo(descType)) {
+                if (!stride) stride = sizeof(VkDescriptorImageInfo);
+                write.pImageInfo = &imageInfos[currImageInfoIndex];
+                for (uint32_t j = 0; j < descCount; ++j) {
+                    imageInfos[currImageInfoIndex++] =
+                        *reinterpret_cast<const VkDescriptorImageInfo*>(userBuffer + offset +
+                                                                        j * stride);
+                }
+            } else if (isDescriptorTypeBufferInfo(descType)) {
+                if (!stride) stride = sizeof(VkDescriptorBufferInfo);
+                write.pBufferInfo = &bufferInfos[currBufferInfoIndex];
+                for (uint32_t j = 0; j < descCount; ++j) {
+                    bufferInfos[currBufferInfoIndex++] =
+                        *reinterpret_cast<const VkDescriptorBufferInfo*>(userBuffer + offset +
+                                                                         j * stride);
+                }
+            } else if (isDescriptorTypeBufferView(descType)) {
+                if (!stride) stride = sizeof(VkBufferView);
+                write.pTexelBufferView = &bufferViews[currBufferViewIndex];
+                for (uint32_t j = 0; j < descCount; ++j) {
+                    bufferViews[currBufferViewIndex++] =
+                        *reinterpret_cast<const VkBufferView*>(userBuffer + offset + j * stride);
+                }
+            } else if (isDescriptorTypeInlineUniformBlock(descType)) {
+                VkWriteDescriptorSetInlineUniformBlock& iub =
+                    inlineUniformBlocks[currInlineUniformBlockIndex++];
+                iub = {
+                    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_INLINE_UNIFORM_BLOCK,
+                    .pNext = nullptr,
+                    .dataSize = descCount,
+                    .pData = userBuffer + offset,
+                };
+                write.pNext = &iub;
+            }
+        }
+    }
+
+    if (!pPushDescriptorSetWithTemplateInfo->pNext &&
+        pPushDescriptorSetWithTemplateInfo->layout != VK_NULL_HANDLE) {
+        on_vkCmdPushDescriptorSet(context, commandBuffer, pipelineBindPoint,
+                                  pPushDescriptorSetWithTemplateInfo->layout,
+                                  pPushDescriptorSetWithTemplateInfo->set,
+                                  static_cast<uint32_t>(writes.size()), writes.data());
+        return;
+    }
+
+    VkShaderStageFlags stageFlags = VK_SHADER_STAGE_ALL;
+    if (pipelineBindPoint == VK_PIPELINE_BIND_POINT_GRAPHICS) {
+        stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+    } else if (pipelineBindPoint == VK_PIPELINE_BIND_POINT_COMPUTE) {
+        stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+    } else if (pipelineBindPoint == VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR) {
+        stageFlags = VK_SHADER_STAGE_RAYGEN_BIT_KHR;
+    }
+
+    VkPushDescriptorSetInfo pushInfo = {
+        .sType = VK_STRUCTURE_TYPE_PUSH_DESCRIPTOR_SET_INFO,
+        .pNext = pPushDescriptorSetWithTemplateInfo->pNext,
+        .stageFlags = stageFlags,
+        .layout = pPushDescriptorSetWithTemplateInfo->layout,
+        .set = pPushDescriptorSetWithTemplateInfo->set,
+        .descriptorWriteCount = static_cast<uint32_t>(writes.size()),
+        .pDescriptorWrites = writes.data(),
+    };
+    on_vkCmdPushDescriptorSet2(context, commandBuffer, &pushInfo);
+}
+
+void ResourceTracker::on_vkCmdPushDescriptorSetWithTemplate2KHR(
+    void* context, VkCommandBuffer commandBuffer,
+    const VkPushDescriptorSetWithTemplateInfo* pPushDescriptorSetWithTemplateInfo) {
+    on_vkCmdPushDescriptorSetWithTemplate2(context, commandBuffer,
+                                           pPushDescriptorSetWithTemplateInfo);
 }
 
 #ifdef LINUX_GUEST_BUILD
@@ -7520,18 +7878,13 @@ CommandBufferStagingStream::Alloc ResourceTracker::getAlloc() {
             // getCoherentMemory() uses suballocations.
             // To retrieve the suballocated memory address, look up
             // VkDeviceMemory filled in by getCoherentMemory()
-            // scope of mLock
-            {
-                std::lock_guard<std::recursive_mutex> lock(mLock);
-                const auto it = info_VkDeviceMemory.find(vkDeviceMem);
-                if (it == info_VkDeviceMemory.end()) {
-                    mesa_loge("Coherent memory allocated %u not found", result);
-                    return {.deviceMemory = VK_NULL_HANDLE, .ptr = nullptr};
-                };
-
-                const auto& info = it->second;
-                return {.deviceMemory = vkDeviceMem, .ptr = info.ptr};
+            VK_FROM_HANDLE(gfxstream_vk_device_memory, gfxstream_memory, vkDeviceMem);
+            if (!gfxstream_memory) {
+                mesa_loge("Coherent memory allocated %u not found", result);
+                return {.deviceMemory = VK_NULL_HANDLE, .ptr = nullptr};
             }
+
+            return {.deviceMemory = vkDeviceMem, .ptr = gfxstream_memory->mapped};
         };
     }
     return nullptr;
@@ -7717,7 +8070,15 @@ void ResourceTracker::on_vkCmdBindDescriptorSets2(
 void ResourceTracker::on_vkCmdBindDescriptorSets2KHR(
     void* context, VkCommandBuffer commandBuffer,
     const VkBindDescriptorSetsInfo* pBindDescriptorSetsInfo) {
-    on_vkCmdBindDescriptorSets2(context, commandBuffer, pBindDescriptorSetsInfo);
+    if (!pBindDescriptorSetsInfo) return;
+    VkEncoder* enc = (VkEncoder*)context;
+
+    if (mFeatureInfo.hasVulkanBatchedDescriptorSetUpdate) {
+        addPendingDescriptorSets(commandBuffer, pBindDescriptorSetsInfo->descriptorSetCount,
+                                 pBindDescriptorSetsInfo->pDescriptorSets);
+    }
+
+    enc->vkCmdBindDescriptorSets2KHR(commandBuffer, pBindDescriptorSetsInfo, true);
 }
 
 void ResourceTracker::on_vkCmdPipelineBarrier(
@@ -8006,31 +8367,6 @@ VkResult ResourceTracker::on_vkCreateGraphicsPipelines(
     return enc->vkCreateGraphicsPipelines(device, pipelineCache, localCreateInfos.size(),
                                           localCreateInfos.data(), pAllocator, pPipelines,
                                           true /* do lock */);
-}
-
-uint32_t ResourceTracker::getApiVersionFromInstance(VkInstance instance) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-    uint32_t api = kDefaultApiVersion;
-
-    auto it = info_VkInstance.find(instance);
-    if (it == info_VkInstance.end()) return api;
-
-    api = it->second.highestApiVersion;
-
-    return api;
-}
-
-uint32_t ResourceTracker::getApiVersionFromDevice(VkDevice device) {
-    std::lock_guard<std::recursive_mutex> lock(mLock);
-
-    uint32_t api = kDefaultApiVersion;
-
-    auto it = info_VkDevice.find(device);
-    if (it == info_VkDevice.end()) return api;
-
-    api = it->second.apiVersion;
-
-    return api;
 }
 
 #ifdef LINUX_GUEST_BUILD

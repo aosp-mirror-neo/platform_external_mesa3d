@@ -2506,11 +2506,9 @@ optimizations.extend([
    # Misc. lowering
    (('fmod', a, b), ('fsub', a, ('fmul', b, ('ffloor', ('fdiv', a, b)))), 'options->lower_fmod'),
    (('frem', a, b), ('fsub', a, ('fmul', b, ('ftrunc', ('fdiv', a, b)))), 'options->lower_fmod'),
-   (('uadd_carry', a, b), ('b2i', ('ult', ('iadd', a, b), a)), 'options->lower_uadd_carry'),
-   (('usub_borrow', a, b), ('b2i', ('ult', a, b)), 'options->lower_usub_borrow'),
 
    # hand-rolled iadd64
-   (('vec2', ('iadd@32', a, c), ('iadd', ('iadd', b, d), ('uadd_carry', a, c))),
+   (('vec2', ('iadd@32', a, c), ('iadd', ('iadd', b, d), ('b2i', ('ult', ('iadd', a, c), a)))),
      ('unpack_64_2x32', ('iadd', ('pack_64_2x32_split', a, b), ('pack_64_2x32_split', c, d))), '!(options->lower_int64_options & nir_lower_iadd64)'),
 
    (('ihadd', a, b), ('iadd', ('iand', a, b), ('ishr', ('ixor', a, b), 1)), 'options->lower_hadd'),
@@ -2898,8 +2896,6 @@ for bit_size in [8, 16, 32, 64]:
    optimizations += [
       (('bcsel', ('ult', ('iadd', a, b), a), -1, (add, a, b)), ('uadd_sat', a, b), cond),
       (('bcsel', ('uge', ('iadd', a, b), a), (add, a, b), -1), ('uadd_sat', a, b), cond),
-      (('bcsel', ('ieq', ('uadd_carry', a, b), 0), (add, a, b), -1), ('uadd_sat', a, b), cond),
-      (('bcsel', ('ine', ('uadd_carry', a, b), 0), -1, (add, a, b)), ('uadd_sat', a, b), cond),
    ]
 
 optimizations += [
@@ -2972,8 +2968,6 @@ for bit_size in [8, 16, 32, 64]:
    optimizations += [
       (('bcsel', ('ult', a, b), 0, (add, a, ('ineg', b))), ('usub_sat', a, b), cond),
       (('bcsel', ('uge', a, b), (add, a, ('ineg', b)), 0), ('usub_sat', a, b), cond),
-      (('bcsel', ('ieq', ('usub_borrow', a, b), 0), (add, a, ('ineg', b)), 0), ('usub_sat', a, b), cond),
-      (('bcsel', ('ine', ('usub_borrow', a, b), 0), 0, (add, a, ('ineg', b))), ('usub_sat', a, b), cond),
    ]
 
 # bit_size dependent lowerings
@@ -3028,15 +3022,28 @@ for t in ['int', 'uint', 'float', 'bool']:
 # upcasts where the type differs from the other cast
 for N, M in itertools.product(type_sizes('uint'), type_sizes('uint')):
    if N < M:
-      # The outer cast is a down-cast.  It doesn't matter what the size of the
-      # argument of the inner cast is because we'll never been in the upcast
-      # of downcast case.  Regardless of types, we'll always end up with y2yN
-      # in the end.
-      for x, y in itertools.product(['i', 'u'], ['i', 'u']):
-         x2xN = '{0}2{0}{1}'.format(x, N)
-         y2yM = '{0}2{0}{1}'.format(y, M)
-         y2yN = '{0}2{0}{1}'.format(y, N)
-         optimizations.append(((x2xN, (y2yM, a)), (y2yN, a)))
+      # Down-casts are always in the u2uN form
+      u2uN = 'u2u{0}'.format(N)
+
+      if N == 1:
+         for y in ['i', 'u']:
+            y2yM = '{0}2{0}{1}'.format(y, M)
+            optimizations.append(((u2uN, (y2yM, a)), (u2uN, a)))
+         continue
+
+      u2uM = 'u2u{0}'.format(M)
+      optimizations.append(((u2uN, (u2uM, a)), (u2uN, a)))
+
+      for P in type_sizes('uint'):
+         if P > M:
+            continue
+
+         # Keep the sign extension for down-casts of signed up-casts.
+         res = u2uN if P >= N else 'i2i{0}'.format(N)
+
+         i2iM = 'i2i{0}'.format(M)
+         aP = 'a@{0}'.format(P)
+         optimizations.append(((u2uN, (i2iM, aP)), (res, a)))
    elif N > M:
       # If the outer cast is an up-cast, we have to be more careful about the
       # size of the argument of the inner cast and with types.  In this case,

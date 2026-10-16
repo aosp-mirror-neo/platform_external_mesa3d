@@ -3655,16 +3655,10 @@ genX(flush_binding_mode)(struct anv_cmd_buffer *cmd_buffer,
          assert((offset & ~ANV_DESCRIPTOR_SET_OFFSET_MASK) == 0);
          assert((dyn_set_offset & ANV_DESCRIPTOR_SET_OFFSET_MASK) == 0);
 
-         /* Plaforms with LSC will use descriptor buffer push constant
-          * offsets, also with device generated commands, shaders are much
-          * more likely to access the offset on pre-LSC platforms.
-          */
-         if (cmd_buffer->device->vk.enabled_features.deviceGeneratedCommands || GFX_VERx10 >= 125) {
-            UPDATE_PUSH(push->legacy.sets[i].surfaces_offset, offset | dyn_set_offset);
-            UPDATE_PUSH(push->legacy.sets[i].samplers_offset,
-                        anv_address_physical(set->desc_sampler_addr) -
-                        anv_physical_device_get_dynamic_state_pool_va(cmd_buffer->device->physical)->addr);
-         }
+         UPDATE_PUSH(push->legacy.sets[i].surfaces_offset, offset | dyn_set_offset);
+         UPDATE_PUSH(push->legacy.sets[i].samplers_offset,
+                     anv_address_physical(set->desc_sampler_addr) -
+                     anv_physical_device_get_dynamic_state_pool_va(cmd_buffer->device->physical)->addr);
          for (uint32_t j = 0; j < set->layout->vk.dynamic_descriptor_count; j++) {
             UPDATE_PUSH(push->legacy.dynamic_offsets[dyn_set_offset + j],
                         bind_state->dynamic_offsets[i].offsets[j]);
@@ -6604,7 +6598,7 @@ void genX(CmdBeginRendering)(
             anv_layout_to_aux_usage(cmd_buffer->device->info,
                                     d_iview->image,
                                     VK_IMAGE_ASPECT_DEPTH_BIT,
-                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                    VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR,
                                     depth_layout,
                                     cmd_buffer->queue_family->queueFlags);
          clear_value.depth = d_att->clearValue.depthStencil.depth;
@@ -6618,7 +6612,7 @@ void genX(CmdBeginRendering)(
             anv_layout_to_aux_usage(cmd_buffer->device->info,
                                     s_iview->image,
                                     VK_IMAGE_ASPECT_STENCIL_BIT,
-                                    VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+                                    VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR,
                                     stencil_layout,
                                     cmd_buffer->queue_family->queueFlags);
          clear_value.stencil = s_att->clearValue.depthStencil.stencil;
@@ -6825,7 +6819,7 @@ void genX(CmdBeginRendering)(
       att->layout = vk_att->imageLayout;
       att->aux_usage = anv_layout_to_aux_usage(
          cmd_buffer->device->info, iview->image,
-         iview->vk.aspects, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+         iview->vk.aspects, VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR,
          vk_att->imageLayout, cmd_buffer->queue_family->queueFlags);
 
       att->skip_srgb_decode = vk_att_flags_info &&
@@ -6977,7 +6971,7 @@ void genX(CmdBeginRendering)(
                                    ISL_SURF_USAGE_RENDER_TARGET_BIT,
                                    att->aux_usage, &att_clear->clear_color,
                                    0, /* anv_image_view_state_flags */
-                                   &att->surface_state);
+                                   &att->surface_state, NULL);
 
       add_surface_state_relocs(cmd_buffer, &att->surface_state);
 

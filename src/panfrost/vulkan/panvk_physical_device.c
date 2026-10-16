@@ -89,14 +89,18 @@ create_kmod_dev(struct panvk_physical_device *device,
       flags |= PAN_KMOD_DEV_FLAG_MMAP_SYNC_THROUGH_KERNEL;
 
    device->kmod.dev = pan_kmod_dev_create(fd, flags, &instance->kmod.allocator);
-
-   if (PANVK_DEBUG(STARTUP) && device->kmod.dev) {
-      mesa_logi("Found compatible device '%s'.", path);
-   } else if (!device->kmod.dev) {
+   if (!device->kmod.dev) {
       close(fd);
+
+      if (errno != -ENOMEM)
+         return VK_ERROR_INCOMPATIBLE_DRIVER;
+
       return panvk_errorf(instance, VK_ERROR_OUT_OF_HOST_MEMORY,
                           "cannot create device");
    }
+
+   if (PANVK_DEBUG(STARTUP))
+      mesa_logi("Found compatible device '%s'.", path);
 
    return VK_SUCCESS;
 }
@@ -370,8 +374,12 @@ panvk_physical_device_init(struct panvk_physical_device *device,
    if (result != VK_SUCCESS)
       return result;
 
+   unsigned core_count =
+      pan_query_core_count(&device->kmod.dev->props);
    device->model = pan_get_model(device->kmod.dev->props.gpu_id,
-                                 device->kmod.dev->props.gpu_variant);
+                                 device->kmod.dev->props.gpu_variant,
+                                 core_count,
+                                 device->kmod.dev->props.gpu_features);
 
    unsigned arch = pan_arch(device->kmod.dev->props.gpu_id);
 
@@ -415,11 +423,7 @@ panvk_physical_device_init(struct panvk_physical_device *device,
    device->formats.all = pan_format_table(arch);
    device->formats.blendable = pan_blendable_format_table(arch);
 
-   unsigned core_count =
-      pan_query_core_count(&device->kmod.dev->props);
-
-   memset(device->name, 0, sizeof(device->name));
-   sprintf(device->name, "%s MC%u", device->model->name, core_count);
+   pan_model_device_name(device->name, sizeof(device->name), device->model, core_count, "");
 
    result = get_core_masks(device, instance);
    if (result != VK_SUCCESS)
@@ -577,6 +581,12 @@ panvk_GetPhysicalDeviceQueueFamilyProperties2(
             vk_find_struct(p->pNext, QUEUE_FAMILY_GLOBAL_PRIORITY_PROPERTIES_KHR);
          if (prio)
             panvk_fill_global_priority(physical_device, family, prio);
+
+         VkQueueFamilyOptimalImageTransferGranularityPropertiesKHR *gran =
+            vk_find_struct(p->pNext,
+                           QUEUE_FAMILY_OPTIMAL_IMAGE_TRANSFER_GRANULARITY_PROPERTIES_KHR);
+         if (gran)
+            gran->optimalImageTransferGranularity = (VkExtent3D){1, 1, 1};
       }
    }
 }

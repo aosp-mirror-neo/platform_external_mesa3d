@@ -2020,6 +2020,9 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
    case nir_texop_sample_pos_nv:
       fprintf(fp, "sample_pos_nv ");
       break;
+   case nir_texop_dual_pan:
+      fprintf(fp, "dual_pan ");
+      break;
    case nir_texop_gradient_pan:
       fprintf(fp, "gradient_pan ");
       break;
@@ -2035,6 +2038,9 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
    case nir_texop_block_match_ssd_qcom:
       fprintf(fp, "block_match_ssd_qcom ");
       break;
+   case nir_texop_txs_lod0_intel:
+      fprintf(fp, "txs_lod0_intel ");
+      break;
    case nir_texop_resinfo_intel:
       fprintf(fp, "resinfo_intel ");
       break;
@@ -2049,7 +2055,8 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       break;
    }
 
-   bool has_texture_deref = false, has_sampler_deref = false;
+   bool has_texture_deref = false, has_sampler_deref = false,
+        has_sampler_2_deref = false;
    for (unsigned i = 0; i < instr->num_srcs; i++) {
       if (i > 0) {
          fprintf(fp, ", ");
@@ -2127,6 +2134,7 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
          fprintf(fp, "(sampler_deref)");
          break;
       case nir_tex_src_sampler_2_deref:
+         has_sampler_2_deref = true;
          fprintf(fp, "(sampler_2_deref)");
          break;
       case nir_tex_src_texture_offset:
@@ -2156,11 +2164,23 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       case nir_tex_src_texture_heap_offset:
          fprintf(fp, "(texture_heap_offset)");
          break;
+      case nir_tex_src_texture_2_heap_offset:
+         fprintf(fp, "(texture_2_heap_offset)");
+         break;
       case nir_tex_src_sampler_heap_offset:
          fprintf(fp, "(sampler_heap_offset)");
          break;
+      case nir_tex_src_sampler_2_heap_offset:
+         fprintf(fp, "(sampler_2_heap_offset)");
+         break;
       case nir_tex_src_plane:
          fprintf(fp, "(plane)");
+         break;
+      case nir_tex_src_var_handle_pan:
+         fprintf(fp, "(var_handle_pan)");
+         break;
+      case nir_tex_src_var_buf_offset_pan:
+         fprintf(fp, "(var_buf_offset_pan)");
          break;
 
       default:
@@ -2184,12 +2204,30 @@ print_tex_instr(nir_tex_instr *instr, print_state *state)
       fprintf(fp, " } (offsets)");
    }
 
-   if (instr->op != nir_texop_txf_ms_fb && !has_texture_deref) {
+   if (instr->op != nir_texop_txf_ms_fb &&
+       (!has_texture_deref || instr->input_attachment_index)) {
       fprintf(fp, ", %u (texture)", instr->texture_index);
+   }
+
+   if (instr->input_attachment_index) {
+      fprintf(fp, ", %u (texture array size), input attachment",
+              instr->texture_array_size);
+   }
+
+   if (instr->input_attachment_depth) {
+      fprintf(fp, ", input attachment depth");
+   }
+
+   if (instr->input_attachment_stencil) {
+      fprintf(fp, ", input attachment stencil");
    }
 
    if (nir_tex_instr_need_sampler(instr) && !has_sampler_deref) {
       fprintf(fp, ", %u (sampler)", instr->sampler_index);
+   }
+
+   if (nir_tex_instr_need_texture_2(instr) && !has_sampler_2_deref) {
+      fprintf(fp, ", %u (sampler_2)", instr->sampler_2_index);
    }
 
    if (instr->texture_non_uniform) {

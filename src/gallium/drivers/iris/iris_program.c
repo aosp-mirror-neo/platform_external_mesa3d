@@ -73,7 +73,6 @@ get_new_program_id(struct iris_screen *screen)
 
 static const unsigned *
 iris_backend_compile(const struct iris_screen *screen,
-                     void *mem_ctx,
                      struct brw_compile_params *params)
 {
    assert(screen->brw);
@@ -84,12 +83,14 @@ iris_backend_compile(const struct iris_screen *screen,
    params->prog_data->source_hash = *(uint64_t *)nir->info.source_blake3;
 
    if (intel_use_jay(devinfo, nir)) {
-      struct jay_shader_bin *bin =
-         jay_compile(devinfo, mem_ctx, nir,
-                     (union brw_any_prog_data *)params->prog_data,
-                     (union brw_any_prog_key *)params->key,
-                     params->archiver,
-                     NULL);
+      const struct jay_compile_params jc_params = {
+         .mem_ctx = params->mem_ctx,
+         .nir = nir,
+         .key = (union brw_any_prog_key *)params->key,
+         .prog_data = (union brw_any_prog_data *)params->prog_data,
+         .archiver = params->archiver,
+      };
+      struct jay_shader_bin *bin = jay_compile(devinfo, &jc_params);
 
       return bin->kernel;
    } else {
@@ -2203,19 +2204,17 @@ iris_compile_vs(struct iris_screen *screen,
 
       struct brw_vs_prog_key brw_key = iris_to_brw_vs_key(screen, key);
 
-      struct brw_compile_vs_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
-         },
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .archiver = debug_archiver,
       };
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
          iris_apply_brw_prog_data(shader, &brw_prog_data->base.base, ubo_ranges);
@@ -2462,19 +2461,17 @@ iris_compile_tcs(struct iris_screen *screen,
       struct iris_ubo_range ubo_ranges[4] = {};
       brw_apply_ubo_ranges(screen, nir, ubo_ranges, &brw_prog_data->base.base);
 
-      struct brw_compile_tcs_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
-         },
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .archiver = debug_archiver,
       };
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
 
       if (program) {
          iris_debug_recompile(dbg, ish, key);
@@ -2671,20 +2668,20 @@ iris_compile_tes(struct iris_screen *screen,
 
       struct brw_tes_prog_key brw_key = iris_to_brw_tes_key(screen, key);
 
-      struct brw_compile_tes_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .tes = {
+            .input_vue_map = &input_vue_map,
          },
-         .input_vue_map = &input_vue_map,
+         .archiver = debug_archiver,
       };
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
 
       if (program) {
          iris_debug_recompile(dbg, ish, key);
@@ -2860,19 +2857,17 @@ iris_compile_gs(struct iris_screen *screen,
 
       struct brw_gs_prog_key brw_key = iris_to_brw_gs_key(screen, key);
 
-      struct brw_compile_gs_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
-         },
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .archiver = debug_archiver,
       };
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
          iris_apply_brw_prog_data(shader, &brw_prog_data->base.base, ubo_ranges);
@@ -3016,7 +3011,7 @@ iris_rt_write_efficient_64bit(nir_builder *b, signed rt, void *data)
       nir_def *addr_hi = nir_unpack_64_2x32_split_y(b, addr);
 
       nir_def *new_lo = nir_iadd(b, addr_lo, offset);
-      nir_def *carry = nir_uadd_carry(b, addr_lo, offset);
+      nir_def *carry = nir_b2i32(b, nir_ult(b, new_lo, addr_lo));
       nir_def *new_hi = nir_iadd(b, addr_hi, carry);
 
       addr = nir_pack_64_2x32_split(b, new_lo, new_hi);
@@ -3085,27 +3080,26 @@ iris_compile_fs(struct iris_screen *screen,
       brw_apply_ubo_ranges(screen, nir, ubo_ranges, &brw_prog_data->base);
 
       struct brw_fs_prog_key brw_key = iris_to_brw_fs_key(screen, key);
-      struct brw_compile_fs_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .fs = {
+            .vue_map = vue_map,
+            .max_polygons = UCHAR_MAX,
          },
-
-         .max_polygons = UCHAR_MAX,
-         .vue_map = vue_map,
+         .archiver = debug_archiver,
       };
 
       if (key->base.use_efficient_64bit) {
-         params.rt_write_cb = iris_rt_write_efficient_64bit;
-         params.rt_write_data = (void *)&screen->isl_dev;
+         params.fs.rt_write_cb = iris_rt_write_efficient_64bit;
+         params.fs.rt_write_data = (void *)&screen->isl_dev;
       }
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
          iris_apply_brw_prog_data(shader, &brw_prog_data->base, ubo_ranges);
@@ -3441,19 +3435,17 @@ iris_compile_cs(struct iris_screen *screen,
          brw_cs_fill_push_const_info(devinfo, brw_prog_data, -1);
       }
 
-      struct brw_compile_cs_params params = {
-         .base = {
-            .mem_ctx = mem_ctx,
-            .nir = nir,
-            .key = &brw_key.base,
-            .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
-            .log_data = dbg,
-            .archiver = debug_archiver,
-         },
+      struct brw_compile_params params = {
+         .mem_ctx = mem_ctx,
+         .nir = nir,
+         .key = &brw_key.base,
+         .prog_data = (struct brw_stage_prog_data *)brw_prog_data,
+         .log_data = dbg,
+         .archiver = debug_archiver,
       };
 
-      program = iris_backend_compile(screen, mem_ctx, &params.base);
-      error = params.base.error_str;
+      program = iris_backend_compile(screen, &params);
+      error = params.error_str;
       if (program) {
          iris_debug_recompile(dbg, ish, key);
          iris_apply_brw_prog_data(shader, &brw_prog_data->base, NULL);
@@ -3490,6 +3482,7 @@ iris_compile_cs(struct iris_screen *screen,
 
    if (program == NULL) {
       dbg_printf("Failed to compile compute shader: %s\n", error);
+      ralloc_free(mem_ctx);
 
       shader->compilation_failed = true;
       util_queue_fence_signal(&shader->ready);

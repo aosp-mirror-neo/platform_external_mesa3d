@@ -59,8 +59,8 @@ nir_shader *radv_meta_nir_build_blit2d_copy_fragment_shader_depth_stencil(radv_m
                                                                           bool is_multisampled);
 
 void radv_meta_nir_build_clear_color_shaders(struct nir_shader **out_vs, struct nir_shader **out_fs,
-                                             uint32_t frag_output);
-nir_shader *radv_meta_nir_build_clear_depthstencil_vertex_shader(void);
+                                             uint32_t frag_output, bool multiview);
+nir_shader *radv_meta_nir_build_clear_depthstencil_vertex_shader(bool multiview);
 nir_shader *radv_meta_nir_build_clear_htile_mask_shader(void);
 nir_shader *radv_meta_nir_build_clear_dcc_comp_to_single_shader(bool is_msaa);
 
@@ -88,8 +88,8 @@ enum radv_meta_resolve_compute_type {
 
 nir_shader *radv_meta_nir_build_resolve_cs(bool use_fmask, enum radv_meta_resolve_compute_type type, uint8_t samples,
                                            VkImageAspectFlags aspects, VkResolveModeFlagBits resolve_mode);
-nir_shader *radv_meta_nir_build_resolve_fs(bool use_fmask, uint32_t samples, bool is_integer, VkImageAspectFlags aspects,
-                                           VkResolveModeFlagBits resolve_mode);
+nir_shader *radv_meta_nir_build_resolve_fs(bool use_fmask, uint32_t samples, bool is_integer,
+                                           VkImageAspectFlags aspects, VkResolveModeFlagBits resolve_mode);
 
 nir_shader *radv_meta_nir_build_clear_hiz_compute_shader(uint32_t samples);
 

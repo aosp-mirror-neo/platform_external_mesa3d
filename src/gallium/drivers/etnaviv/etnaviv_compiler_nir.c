@@ -984,7 +984,7 @@ lower_alu(struct etna_compile *c, nir_alu_instr *alu)
    case nir_op_vec4:
       break;
    default:
-      if (c->specs->has_no_oneconst_limit)
+      if (etna_core_has_feature(c->info, ETNA_FEATURE_SH_NO_ONECONST_LIMIT))
          return;
 
       nir_const_value value[4] = {};
@@ -1510,7 +1510,7 @@ compile_shader(struct etna_shader_variant *v, bool spill_constants)
 
    NIR_PASS(_, s, etna_nir_lower_bitfield_insert);
    NIR_PASS(_, s, nir_lower_bool_to_int32);
-   NIR_PASS(_, s, etna_lower_alu, c->specs->has_new_transcendentals);
+   NIR_PASS(_, s, etna_lower_alu, etna_core_has_feature(c->info, ETNA_FEATURE_HAS_FAST_TRANSCENDENTALS));
 
    if (spill_constants)
       NIR_PASS(_, s, etna_nir_spill_constants);
@@ -1537,13 +1537,14 @@ compile_shader(struct etna_shader_variant *v, bool spill_constants)
       emit_inst(c, &(struct etna_inst) { .opcode = ISA_OPC_NOP });
 
    /* assemble instructions, fixing up labels */
+   const bool has_no_oneconst_limit = etna_core_has_feature(c->info, ETNA_FEATURE_SH_NO_ONECONST_LIMIT);
    uint32_t *code = MALLOC(c->inst_ptr * 16);
    for (unsigned i = 0; i < c->inst_ptr; i++) {
       struct etna_inst *inst = &c->code[i];
       if (inst->opcode == ISA_OPC_BRANCH || inst->opcode == ISA_OPC_BRANCH_UNARY || inst->opcode == ISA_OPC_BRANCH_BINARY)
          inst->imm = block_ptr[inst->imm];
 
-      etna_assemble(&code[i * 4], inst, specs->has_no_oneconst_limit);
+      etna_assemble(&code[i * 4], inst, has_no_oneconst_limit);
    }
 
    v->code_size = c->inst_ptr * 4;

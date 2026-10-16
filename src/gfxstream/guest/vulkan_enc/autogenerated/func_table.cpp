@@ -2261,8 +2261,9 @@ void gfxstream_vk_CmdPushDescriptorSet(VkCommandBuffer commandBuffer,
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSet");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSet(commandBuffer, pipelineBindPoint, layout, set,
-                                      descriptorWriteCount, pDescriptorWrites, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSet(vkEnc, commandBuffer, pipelineBindPoint, layout, set,
+                                             descriptorWriteCount, pDescriptorWrites);
     }
 }
 void gfxstream_vk_CmdPushDescriptorSetWithTemplate(
@@ -2271,8 +2272,10 @@ void gfxstream_vk_CmdPushDescriptorSetWithTemplate(
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSetWithTemplate");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSetWithTemplate(commandBuffer, descriptorUpdateTemplate, layout,
-                                                  set, pData, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSetWithTemplate(vkEnc, commandBuffer,
+                                                         descriptorUpdateTemplate, layout, set,
+                                                         pData);
     }
 }
 void gfxstream_vk_CmdBindDescriptorSets2(VkCommandBuffer commandBuffer,
@@ -2297,7 +2300,8 @@ void gfxstream_vk_CmdPushDescriptorSet2(VkCommandBuffer commandBuffer,
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSet2");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSet2(commandBuffer, pPushDescriptorSetInfo, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSet2(vkEnc, commandBuffer, pPushDescriptorSetInfo);
     }
 }
 void gfxstream_vk_CmdPushDescriptorSetWithTemplate2(
@@ -2306,8 +2310,9 @@ void gfxstream_vk_CmdPushDescriptorSetWithTemplate2(
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSetWithTemplate2");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSetWithTemplate2(
-            commandBuffer, pPushDescriptorSetWithTemplateInfo, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSetWithTemplate2(vkEnc, commandBuffer,
+                                                          pPushDescriptorSetWithTemplateInfo);
     }
 }
 #endif
@@ -2589,8 +2594,9 @@ void gfxstream_vk_UpdateDescriptorSetWithTemplateKHR(
     MESA_TRACE_SCOPE("vkUpdateDescriptorSetWithTemplateKHR");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getThreadLocalEncoder();
-        vkEnc->vkUpdateDescriptorSetWithTemplateKHR(device, descriptorSet, descriptorUpdateTemplate,
-                                                    pData, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkUpdateDescriptorSetWithTemplateKHR(vkEnc, device, descriptorSet,
+                                                           descriptorUpdateTemplate, pData);
     }
 }
 void gfxstream_vk_CmdPushDescriptorSetWithTemplateKHR(
@@ -2599,8 +2605,10 @@ void gfxstream_vk_CmdPushDescriptorSetWithTemplateKHR(
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSetWithTemplateKHR");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSetWithTemplateKHR(commandBuffer, descriptorUpdateTemplate,
-                                                     layout, set, pData, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSetWithTemplateKHR(vkEnc, commandBuffer,
+                                                            descriptorUpdateTemplate, layout, set,
+                                                            pData);
     }
 }
 #endif
@@ -3106,8 +3114,8 @@ void gfxstream_vk_CmdPushDescriptorSet2KHR(VkCommandBuffer commandBuffer,
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSet2KHR");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSet2KHR(commandBuffer, pPushDescriptorSetInfo,
-                                          true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSet2KHR(vkEnc, commandBuffer, pPushDescriptorSetInfo);
     }
 }
 void gfxstream_vk_CmdPushDescriptorSetWithTemplate2KHR(
@@ -3116,8 +3124,9 @@ void gfxstream_vk_CmdPushDescriptorSetWithTemplate2KHR(
     MESA_TRACE_SCOPE("vkCmdPushDescriptorSetWithTemplate2KHR");
     {
         auto vkEnc = gfxstream::vk::ResourceTracker::getCommandBufferEncoder(commandBuffer);
-        vkEnc->vkCmdPushDescriptorSetWithTemplate2KHR(
-            commandBuffer, pPushDescriptorSetWithTemplateInfo, true /* do lock */);
+        auto resources = gfxstream::vk::ResourceTracker::get();
+        resources->on_vkCmdPushDescriptorSetWithTemplate2KHR(vkEnc, commandBuffer,
+                                                             pPushDescriptorSetWithTemplateInfo);
     }
 }
 void gfxstream_vk_CmdSetDescriptorBufferOffsets2EXT(
