@@ -121,6 +121,7 @@ cc_binary {
     srcs: select((arch(), os()), {
         ("arm64", "android"): [
             "a4xx.cc",
+            "a5xx.cc",
             "a6xx.cc",
             "ir3_asm.cc",
             "main.cc",
