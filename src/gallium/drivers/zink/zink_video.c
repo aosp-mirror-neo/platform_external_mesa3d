@@ -467,8 +467,8 @@ convert_pps_sps(struct pipe_picture_desc *picture,
    vsps->max_num_ref_frames = h264->num_ref_frames;
    vsps->chroma_format_idc = sps->chroma_format_idc;
    vsps->pic_width_in_mbs_minus1 = sps->pic_width_in_mbs_minus1;
-   /* no interlace support */
-   vsps->pic_height_in_map_units_minus1 = sps->pic_height_in_mbs_minus1;
+   /* the frontend passes the frame height; map units are macroblock pairs without frame_mbs_only_flag */
+   vsps->pic_height_in_map_units_minus1 = ((sps->pic_height_in_mbs_minus1 + 1) >> !sps->frame_mbs_only_flag) - 1;
 }
 
 static void
@@ -615,14 +615,18 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    if (zvc->error)
       return -1;
 
-   /* sessions are created for progressive content only */
-   if (h264->field_pic_flag || !h264->pps->sps->frame_mbs_only_flag)
+   /* the progressive layout can't decode interlaced content */
+   if (!screen->video_interlaced && (h264->field_pic_flag || !h264->pps->sps->frame_mbs_only_flag))
       return -1;
 
    int ref_slots[ARRAY_SIZE(h264->ref)];
    int cur_slot = -1;
    for (unsigned j = 0; j < ARRAY_SIZE(h264->ref); j++)
       ref_slots[j] = -1;
+
+   /* the second field of a pair, reference or not, follows the first into the same picture */
+   bool second_field = h264->field_pic_flag && zvc->last_field && zvc->last_target == target &&
+                       zvc->last_bottom != h264->bottom_field_flag && zvc->last_frame_num == h264->frame_num;
 
    /* drop pictures that are no longer referenced, and find the slots of the ones that are */
    for (unsigned i = 0; i < ARRAY_SIZE(zvc->render_pic_list); i++) {
@@ -634,7 +638,7 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
                found = true;
             }
          }
-         if (!found)
+         if (!found && !(second_field && zvc->render_pic_list[i] == target))
             zvc->render_pic_list[i] = NULL;
       }
       /* the target can also be a reference (other field) */
@@ -673,7 +677,9 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
       h264_ref_info[n].PicOrderCnt[0] = h264->field_order_cnt_list[j][0];
       h264_ref_info[n].PicOrderCnt[1] = h264->field_order_cnt_list[j][1];
       h264_ref_info[n].FrameNum = h264->frame_num_list[j];
-      /* interlaced content is rejected, so references are frames and the field flags stay clear */
+      /* both flags clear means a frame */
+      h264_ref_info[n].flags.top_field_flag = h264->is_field[j] && h264->top_is_reference[j];
+      h264_ref_info[n].flags.bottom_field_flag = h264->is_field[j] && h264->bottom_is_reference[j];
       h264_ref_info[n].flags.used_for_long_term_reference = h264->is_long_term[j];
 
       h264_dpb_info[n].sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR;
@@ -691,6 +697,8 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    h264_setup_info.PicOrderCnt[0] = h264->field_order_cnt[0];
    h264_setup_info.PicOrderCnt[1] = h264->field_order_cnt[1];
    h264_setup_info.FrameNum = h264->frame_num;
+   h264_setup_info.flags.top_field_flag = h264->field_pic_flag && !h264->bottom_field_flag;
+   h264_setup_info.flags.bottom_field_flag = h264->field_pic_flag && h264->bottom_field_flag;
 
    h264_dpb_setup_info.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_DPB_SLOT_INFO_KHR;
    h264_dpb_setup_info.pStdReferenceInfo = &h264_setup_info;
@@ -699,9 +707,15 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    setup_info.slotIndex = cur_slot;
    setup_info.pPictureResource = zvc->coincide_dpb ? &dst_pic : &zvc->dpb_resources[cur_slot];
    setup_info.pNext = &h264_dpb_setup_info;
-   /* this must be added to the list of 'bound resources' */
-   ref_info[num_ref_frames] = setup_info;
-   ref_info[num_ref_frames++].slotIndex = -1;
+   /* this must be added to the list of 'bound resources', unless the other field already bound it */
+   unsigned num_bound = num_ref_frames;
+   bool setup_bound = false;
+   for (unsigned i = 0; i < num_ref_frames; i++)
+      setup_bound |= ref_info[i].slotIndex == cur_slot;
+   if (!setup_bound) {
+      ref_info[num_bound] = setup_info;
+      ref_info[num_bound++].slotIndex = -1;
+   }
 
    StdVideoH264SequenceParameterSet sps = { 0 };
    StdVideoH264PictureParameterSet pps = { 0 };
@@ -733,6 +747,10 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
 
    /* only take the slot once the decode will be recorded, or later frames would reference an inactive slot */
    zvc->render_pic_list[cur_slot] = target;
+   zvc->last_target = target;
+   zvc->last_frame_num = h264->frame_num;
+   zvc->last_field = h264->field_pic_flag;
+   zvc->last_bottom = h264->bottom_field_flag;
 
    if (!ctx->bs->is_video) {
       ctx->video_batch = true;
@@ -765,7 +783,7 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    bci.sType = VK_STRUCTURE_TYPE_VIDEO_BEGIN_CODING_INFO_KHR;
    bci.videoSession = zvc->session;
    bci.videoSessionParameters = zvc->params;
-   bci.referenceSlotCount = num_ref_frames;
+   bci.referenceSlotCount = num_bound;
    bci.pReferenceSlots = ref_info;
 
    VKSCR(CmdBeginVideoCodingKHR)(cmdbuf, &bci);
@@ -805,6 +823,7 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    pi.PicOrderCnt[1] = h264->field_order_cnt[1];
    pi.flags.field_pic_flag = h264->field_pic_flag;
    pi.flags.bottom_field_flag = h264->bottom_field_flag;
+   pi.flags.complementary_field_pair = second_field;
    pi.flags.is_reference = h264->is_reference;
 
    VkVideoDecodeH264PictureInfoKHR hpi = { 0 };
@@ -822,7 +841,7 @@ zink_end_frame_h264(struct pipe_video_codec *codec,
    VkVideoDecodeInfoKHR vdi = { 0 };
    vdi.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_INFO_KHR;
    vdi.pNext = &hpi;
-   vdi.referenceSlotCount = num_ref_frames - 1;
+   vdi.referenceSlotCount = num_ref_frames;
    vdi.pReferenceSlots = ref_info;
    vdi.pSetupReferenceSlot = &setup_info;
    vdi.dstPictureResource = dst_pic;
@@ -975,7 +994,11 @@ zink_video_fill_single_profile(struct zink_screen *screen,
    case PIPE_VIDEO_FORMAT_MPEG4_AVC:
       out_prof->h264.sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR;
       out_prof->h264.stdProfileIdc = h264_profile_conv(profile);
-      out_prof->h264.pictureLayout = VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR;
+      /* baseline has no interlaced coding tools, so drivers only accept it as progressive */
+      out_prof->h264.pictureLayout = screen->video_interlaced &&
+                                     out_prof->h264.stdProfileIdc != STD_VIDEO_H264_PROFILE_IDC_BASELINE ?
+                                     VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_INTERLACED_INTERLEAVED_LINES_BIT_KHR :
+                                     VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR;
       out_prof->profile.pNext = &out_prof->h264;
       break;
    default:
@@ -1078,8 +1101,18 @@ void
 zink_video_init_format_props(struct zink_screen *screen)
 {
    struct zink_video_caps_info caps_info = { 0 };
-   bool coincide = zink_video_fill_caps(screen, PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH,
-                                        PIPE_VIDEO_ENTRYPOINT_BITSTREAM, false, &caps_info) &&
+   /* VA creates surfaces before the stream is known, and every image and session has to use the same
+    * profile, so use interleaved lines whenever the driver supports it: it decodes progressive content too
+    */
+   screen->video_interlaced = true;
+   bool supported = zink_video_fill_caps(screen, PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH,
+                                         PIPE_VIDEO_ENTRYPOINT_BITSTREAM, false, &caps_info);
+   if (!supported) {
+      screen->video_interlaced = false;
+      supported = zink_video_fill_caps(screen, PIPE_VIDEO_PROFILE_MPEG4_AVC_HIGH,
+                                       PIPE_VIDEO_ENTRYPOINT_BITSTREAM, false, &caps_info);
+   }
+   bool coincide = supported &&
                    (caps_info.dec_caps.flags & VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR);
    screen->video_output_usage = VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR;
    if (coincide)

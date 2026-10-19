@@ -83,14 +83,14 @@ bool zink_tracing = false;
 #endif
 #endif
 
-#ifdef __APPLE__
+#ifdef HAVE_MOLTENVK
 #include "MoltenVK/mvk_vulkan.h"
 // Source of MVK_VERSION
 #include "MoltenVK/mvk_config.h"
 #define VK_NO_PROTOTYPES
 #include "MoltenVK/mvk_deprecated_api.h"
 #include "MoltenVK/mvk_private_api.h"
-#endif /* __APPLE__ */
+#endif /* HAVE_MOLTENVK */
 
 #ifdef HAVE_LIBDRM
 #include "drm-uapi/dma-buf.h"
@@ -1297,7 +1297,13 @@ zink_init_screen_caps(struct zink_screen *screen)
          caps->shader_subgroup_supported_stages = screen->info.subgroup.supportedStages & BITFIELD_MASK(MESA_SHADER_MESH_STAGES);
       else
          caps->shader_subgroup_supported_stages = screen->info.subgroup.supportedStages & BITFIELD_MASK(MESA_SHADER_STAGES);
-      caps->shader_subgroup_supported_features = screen->info.subgroup.supportedOperations & PIPE_SHADER_SUBGROUP_FEATURE_MASK;
+      uint32_t subgroup_ops = screen->info.subgroup.supportedOperations;
+      /* rotates can only be used if their features are enabled */
+      if (!screen->info.subgroup_rotate_feats.shaderSubgroupRotate)
+         subgroup_ops &= ~VK_SUBGROUP_FEATURE_ROTATE_BIT_KHR;
+      if (!screen->info.subgroup_rotate_feats.shaderSubgroupRotateClustered)
+         subgroup_ops &= ~VK_SUBGROUP_FEATURE_ROTATE_CLUSTERED_BIT_KHR;
+      caps->shader_subgroup_supported_features = subgroup_ops & PIPE_SHADER_SUBGROUP_FEATURE_MASK;
       caps->shader_subgroup_quad_all_stages = screen->info.subgroup.quadOperationsInAllStages;
    }
 
@@ -3146,9 +3152,24 @@ init_driver_workarounds(struct zink_screen *screen)
    /* EXT_vertex_input_dynamic_state is only used with EDS2 and above */
    if (!screen->info.have_EXT_extended_dynamic_state2)
       screen->info.have_EXT_vertex_input_dynamic_state = false;
-   if (screen->info.line_rast_feats.stippledRectangularLines &&
-       screen->info.line_rast_feats.stippledBresenhamLines &&
-       screen->info.line_rast_feats.stippledSmoothLines &&
+   if ((!screen->info.have_EXT_line_rasterization ||
+        !screen->info.line_rast_feats.stippledBresenhamLines) &&
+       screen->info.feats.features.geometryShader &&
+       screen->info.feats.features.sampleRateShading) {
+      /* we're using stippledBresenhamLines as a proxy for all of these, to
+       * avoid accidentally changing behavior on VK-drivers where we don't
+       * want to add emulation.
+       */
+      screen->driver_workarounds.no_linestipple = true;
+   }
+
+   /* hardware line stipple needs a dynamic enable, since EDS3 pipelines keep the enable
+    * they were created with
+    */
+   if (!screen->driver_workarounds.no_linestipple &&
+       (screen->info.line_rast_feats.stippledRectangularLines ||
+        screen->info.line_rast_feats.stippledBresenhamLines ||
+        screen->info.line_rast_feats.stippledSmoothLines) &&
        !screen->info.dynamic_state3_feats.extendedDynamicState3LineStippleEnable)
       screen->info.have_EXT_extended_dynamic_state3 = false;
    if (!screen->info.dynamic_state3_feats.extendedDynamicState3PolygonMode ||
@@ -3182,17 +3203,6 @@ init_driver_workarounds(struct zink_screen *screen)
    if (zink_driverid(screen) == VK_DRIVER_ID_MESA_TURNIP) {
       /* performance */
       screen->info.border_color_feats.customBorderColorWithoutFormat = VK_FALSE;
-   }
-
-   if ((!screen->info.have_EXT_line_rasterization ||
-        !screen->info.line_rast_feats.stippledBresenhamLines) &&
-       screen->info.feats.features.geometryShader &&
-       screen->info.feats.features.sampleRateShading) {
-      /* we're using stippledBresenhamLines as a proxy for all of these, to
-       * avoid accidentally changing behavior on VK-drivers where we don't
-       * want to add emulation.
-       */
-      screen->driver_workarounds.no_linestipple = true;
    }
 
    if (zink_driverid(screen) ==
