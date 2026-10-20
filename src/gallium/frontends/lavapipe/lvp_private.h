@@ -256,6 +256,7 @@ enum lvp_device_memory_type {
    LVP_DEVICE_MEMORY_TYPE_USER_PTR,
    LVP_DEVICE_MEMORY_TYPE_OPAQUE_FD,
    LVP_DEVICE_MEMORY_TYPE_DMA_BUF,
+   LVP_DEVICE_MEMORY_TYPE_OPAQUE_WIN32,
 };
 
 struct lvp_device_memory {
@@ -267,6 +268,9 @@ struct lvp_device_memory {
    void *map;
    enum lvp_device_memory_type memory_type;
    int backed_fd;
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   HANDLE backed_handle;
+#endif
 };
 
 struct lvp_pipe_sync {
