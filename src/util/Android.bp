@@ -314,6 +314,7 @@ cc_library_static {
         "texcompress_astc.cpp",
         "texcompress_astc_luts.cpp",
         "texcompress_astc_luts_wrap.cpp",
+        "texcompress_etc.c",
         "thread_sched.c",
         "u_atomic.c",
         "u_call_once.c",
