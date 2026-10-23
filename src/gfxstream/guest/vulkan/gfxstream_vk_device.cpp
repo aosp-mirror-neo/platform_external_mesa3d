@@ -346,6 +346,18 @@ VkResult gfxstream_vk_CreateInstance(const VkInstanceCreateInfo* pCreateInfo,
         localCreateInfo.enabledExtensionCount = static_cast<uint32_t>(filteredExts.size());
         localCreateInfo.ppEnabledExtensionNames = filteredExts.data();
 
+        // Inform the host about what capabilities this guest supports.
+        VkGuestCapabilitiesGOOGLE guestCapabilities = {
+            .sType = VK_STRUCTURE_TYPE_GUEST_CAPABILITIES_GOOGLE,
+            .pNext = localCreateInfo.pNext,
+            // The guest can support inline uniform block descriptors after
+            // https://gitlab.freedesktop.org/mesa/mesa/-/merge_requests/45069.
+            .capabilities = VK_GUEST_CAPABILITY_BATCHED_INLINE_UNIFORM_BLOCK_BIT_GOOGLE,
+        };
+        if (gfxstream::vk::ResourceTracker::get()->supportsGuestCapabilities()) {
+            localCreateInfo.pNext = &guestCapabilities;
+        }
+
         auto vkEnc = gfxstream::vk::ResourceTracker::getThreadLocalEncoder();
         result = vkEnc->vkCreateInstance(&localCreateInfo, nullptr, pInstance, true /* do lock */);
         if (result != VK_SUCCESS) {
@@ -562,6 +574,7 @@ static void adjust_entrypoints_by_api_version(struct gfxstream_vk_device* gfxstr
             gfxstream_device->base.dispatch_table.GetImageSubresourceLayout2KHR =
                 gfxstream_vk_device_entrypoints.GetImageSubresourceLayout2KHR;
         }
+
         if (gfxstream_device->base.enabled_extensions.KHR_maintenance6) {
             gfxstream_device->base.dispatch_table.CmdBindDescriptorSets2KHR =
                 gfxstream_vk_device_entrypoints.CmdBindDescriptorSets2KHR;
@@ -572,12 +585,21 @@ static void adjust_entrypoints_by_api_version(struct gfxstream_vk_device* gfxstr
             gfxstream_device->base.dispatch_table.CmdPushDescriptorSetWithTemplate2KHR =
                 gfxstream_vk_device_entrypoints.CmdPushDescriptorSetWithTemplate2KHR;
         }
+
         if (gfxstream_device->base.enabled_extensions.KHR_push_descriptor) {
             gfxstream_device->base.dispatch_table.CmdPushDescriptorSetKHR =
                 gfxstream_vk_device_entrypoints.CmdPushDescriptorSetKHR;
             gfxstream_device->base.dispatch_table.CmdPushDescriptorSetWithTemplateKHR =
                 gfxstream_vk_device_entrypoints.CmdPushDescriptorSetWithTemplateKHR;
         }
+
+        if (gfxstream_device->base.enabled_extensions.KHR_dynamic_rendering_local_read) {
+            gfxstream_device->base.dispatch_table.CmdSetRenderingAttachmentLocationsKHR =
+                gfxstream_vk_device_entrypoints.CmdSetRenderingAttachmentLocationsKHR;
+            gfxstream_device->base.dispatch_table.CmdSetRenderingInputAttachmentIndicesKHR =
+                gfxstream_vk_device_entrypoints.CmdSetRenderingInputAttachmentIndicesKHR;
+        }
+
         if (gfxstream_device->base.enabled_extensions.KHR_line_rasterization) {
             gfxstream_device->base.dispatch_table.CmdSetLineStippleKHR =
                 gfxstream_vk_device_entrypoints.CmdSetLineStippleKHR;

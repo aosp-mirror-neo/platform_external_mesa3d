@@ -673,7 +673,7 @@ struct zink_batch_state {
    struct util_dynarray swapchain_obj; //this doesn't have a zink_bo and must be handled differently
    struct util_dynarray swapchain_obj_unsync; //this doesn't have a zink_bo and must be handled differently
 
-   struct util_dynarray bindless_releases[2];
+   struct util_dynarray bindless_unrefs; //zink_bindless_descriptor
 
    struct util_dynarray zombie_samplers;
 
@@ -1390,6 +1390,7 @@ struct zink_resource {
    bool copies_warned;
    bool deleted; //resource_release
    bool swapchain;
+   bool kopper_front; //this is the drawable's front buffer
    bool dmabuf;
    bool unflushed_transient; //format view transient has newer data than parent
    bool subdata; //doing subdata call
@@ -1517,6 +1518,15 @@ struct zink_screen {
    uint64_t db_size[ZINK_DESCRIPTOR_ALL_TYPES];
    unsigned base_descriptor_size;
    VkDescriptorSetLayout bindless_layout;
+
+   /* bindless handles are valid in every context of a share group */
+   struct {
+      simple_mtx_t lock;
+      struct {
+         struct util_idalloc slots;
+         struct hash_table handles;
+      } table[2][2]; //[is_image][is_buffer]
+   } bindless_handles;
 
    struct {
       struct pb_cache bo_cache;
@@ -1766,7 +1776,6 @@ struct zink_descriptor_db_info {
 struct zink_descriptor_surface {
    union {
       struct zink_surface *surface;
-      struct zink_buffer_view *bufferview;
       struct zink_descriptor_db_info db;
    };
    bool is_buffer;
@@ -1776,10 +1785,18 @@ struct zink_bindless_descriptor {
    struct zink_descriptor_surface ds;
    struct pipe_resource *pres;
    struct zink_sampler_state *sampler;
+   /* the handle and each context it is resident in hold a reference */
+   uint32_t refcount;
+   bool is_image;
    uint32_t handle;
-   uint32_t access; //PIPE_ACCESS_...
    uint16_t first_layer;
    uint16_t last_layer;
+};
+
+struct zink_bindless_resident {
+   struct zink_bindless_descriptor *bd;
+   /* PIPE_IMAGE_ACCESS_*, per context since each can use a different one */
+   unsigned access;
 };
 
 struct zink_rendering_info {
@@ -1895,7 +1912,7 @@ struct zink_context {
    bool oom_flush;
    bool oom_stall;
    bool track_renderpasses;
-   bool no_reorder;
+   unsigned no_reorder; //nonzero while reordering is disabled
    struct zink_batch_state *bs;
 
    unsigned shader_has_inlinable_uniforms_mask;
@@ -2079,10 +2096,6 @@ struct zink_context {
       struct zink_resource *descriptor_res[ZINK_DESCRIPTOR_BASE_TYPES][MESA_SHADER_MESH_STAGES][PIPE_MAX_SAMPLERS];
 
       struct {
-         struct util_idalloc tex_slots; //img, buffer
-         struct util_idalloc img_slots; //img, buffer
-         struct hash_table tex_handles; //img, buffer
-         struct hash_table img_handles; //img, buffer
          union {
             struct {
                VkBufferView *buffer_infos; //tex, img

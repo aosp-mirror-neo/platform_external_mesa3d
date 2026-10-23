@@ -17,6 +17,7 @@ def declare_options():
 
     B = drirc_gen.DrircBool
     I = drirc_gen.DrircInt
+    F = drirc_gen.DrircFloat
     S = drirc_gen.DrircString
 
     debug_options = [
@@ -105,6 +106,9 @@ def declare_options():
     ]
 
     performance_options = [
+        S("radv_cs_domain",
+          description="Choose where command buffers and upload buffers are allocated. Accepted values are: auto, vram or gtt",
+          c_name="cs_domain"),
         B("radv_disable_ngg_gs", False,
           "Disable NGG GS on GFX10/GFX10.3.",
           c_name="disable_ngg_gs"),
@@ -134,6 +138,11 @@ def declare_options():
           ("Override the codepath for framebuffer clears, image clears, copies, blits, and MSAA resolves. " +
            "(0 = default, 1 = fragment shader, 2 = compute shader, 3 = fast clear)"),
           c_name="image_meta_path"),
+        F("radv_max_clip_discard_watermark", 0.0, 0.0, 8191.875,
+          ("Keep the guardband clip discard distance at the largest point/line distance seen, up to this value, " +
+           "for all primitive types. This reduces context rolls when switching between lines and triangles. " +
+           "(0 = disabled)"),
+          c_name="max_clip_discard_watermark"),
     ]
 
     features_options = [

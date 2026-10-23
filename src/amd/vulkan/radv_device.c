@@ -1123,10 +1123,6 @@ radv_device_is_cache_disabled(const struct radv_device *device)
    if (device->debug_nir.valid_va.buffer_addr)
       return true;
 
-   /* The buffer address used for shader abort is hardcoded. */
-   if (device->shader_abort.buffer_addr)
-      return true;
-
    /* Pipeline caches can be disabled with RADV_DEBUG=nocache, with MESA_GLSL_CACHE_DISABLE=1 and
     * when ACO_DEBUG is used. MESA_GLSL_CACHE_DISABLE is done elsewhere.
     */
@@ -1290,7 +1286,6 @@ radv_device_init_compiler_info(struct radv_device *device)
             .trap_excp_flags = instance->trap_excp_flags,
             .debug_report = &instance->vk.debug_report,
             .debug_nir = &device->debug_nir,
-            .shader_abort = &device->shader_abort,
             .shader_dump_mtx = &instance->shader_dump_mtx,
             .keep_shader_info = device->keep_shader_info,
             .capture_shaders = RADV_DEBUG_DUMP_SHADERS(instance) || device->keep_shader_info,
@@ -1334,6 +1329,53 @@ radv_device_init_compiler_info(struct radv_device *device)
    device->compiler_info = info;
 }
 
+#ifndef _WIN32
+static enum radv_amdgpu_cs_domain_mode
+radv_get_cs_domain_mode(const struct radv_physical_device *pdev)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+   const char *cs_domain_str = pdev->drirc.performance.cs_domain;
+
+   if (instance->perftest_flags & RADV_PERFTEST_SAM)
+      return RADV_AMDGPU_CS_DOMAIN_VRAM;
+   if (instance->perftest_flags & RADV_PERFTEST_NO_SAM)
+      return RADV_AMDGPU_CS_DOMAIN_GTT;
+
+   if (strlen(cs_domain_str) > 0) {
+      if (!strcmp(cs_domain_str, "vram")) {
+         return RADV_AMDGPU_CS_DOMAIN_VRAM;
+      } else if (!strcmp(cs_domain_str, "gtt")) {
+         return RADV_AMDGPU_CS_DOMAIN_GTT;
+      } else if (strcmp(cs_domain_str, "auto")) {
+         fprintf(stderr, "radv: Invalid value found for radv_cs_domain. "
+                         "Accepted values are: auto, vram or gtt.\n");
+      }
+   }
+
+   return RADV_AMDGPU_CS_DOMAIN_AUTO;
+}
+
+static void
+radv_get_winsys_options(const struct radv_physical_device *pdev, struct radv_amdgpu_winsys_options *options)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   *options = (struct radv_amdgpu_winsys_options){
+      .is_virtio =
+         pdev->drm_device_type == RADV_DRM_DEVICE_AMDGPU_VPIPE || pdev->drm_device_type == RADV_DRM_DEVICE_VIRTIO,
+      .chain_ib = !RADV_DEBUG(instance, NO_IB_CHAINING),
+      .debug_all_bos = RADV_DEBUG(instance, ALL_BOS),
+      .debug_log_bos = RADV_DEBUG(instance, HANG),
+      .debug_vm = RADV_DEBUG(instance, VM),
+      .dump_ibs = RADV_DEBUG(instance, DUMP_IBS),
+      .dump_bo_history = RADV_DEBUG(instance, DUMP_BO_HISTORY),
+      .gtt_spill = !(instance->perftest_flags & RADV_PERFTEST_NO_GTT_SPILL),
+      .always_valid_bos = !!(instance->perftest_flags & RADV_PERFTEST_LOCAL_BOS),
+      .cs_domain_mode = radv_get_cs_domain_mode(pdev),
+   };
+}
+#endif
+
 static VkResult
 radv_create_winsys(struct radv_device *device)
 {
@@ -1341,7 +1383,6 @@ radv_create_winsys(struct radv_device *device)
    return VK_ERROR_INCOMPATIBLE_DRIVER;
 #else
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    drmDevicePtr drm_device;
    VkResult result;
    int fd = -1;
@@ -1360,11 +1401,10 @@ radv_create_winsys(struct radv_device *device)
          return VK_ERROR_INITIALIZATION_FAILED;
    }
 
-   const bool is_virtio =
-      pdev->drm_device_type == RADV_DRM_DEVICE_AMDGPU_VPIPE || pdev->drm_device_type == RADV_DRM_DEVICE_VIRTIO;
+   struct radv_amdgpu_winsys_options options;
+   radv_get_winsys_options(pdev, &options);
 
-   result = radv_amdgpu_winsys_create(fd, &pdev->info, instance->debug_flags, instance->perftest_flags, is_virtio,
-                                      &device->ws);
+   result = radv_amdgpu_winsys_create(fd, &pdev->info, &options, &device->ws);
 
    if (fd != -1)
       close(fd);

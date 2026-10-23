@@ -949,8 +949,6 @@ dri2_initialize(_EGLDisplay *disp)
    dri2_dpy = dri2_egl_display(disp);
    p_atomic_inc(&dri2_dpy->ref_count);
 
-   mtx_init(&dri2_dpy->lock, mtx_plain);
-
    return EGL_TRUE;
 }
 
@@ -1037,6 +1035,7 @@ dri2_display_destroy(_EGLDisplay *disp)
          free((struct dri_config *)dri2_dpy->driver_configs[i]);
       free(dri2_dpy->driver_configs);
    }
+   mtx_destroy(&dri2_dpy->lock);
    free(dri2_dpy);
    disp->DriverData = NULL;
 }
@@ -1049,6 +1048,8 @@ dri2_display_create(_EGLDisplay *disp)
       _eglError(EGL_BAD_ALLOC, "eglInitialize");
       return NULL;
    }
+
+   mtx_init(&dri2_dpy->lock, mtx_plain);
 
    dri2_dpy->fd_render_gpu = -1;
    dri2_dpy->fd_display_gpu = -1;
@@ -2169,7 +2170,8 @@ dri2_check_dma_buf_attribs(const _EGLImageAttribs *attrs)
 static unsigned
 dri2_num_fourcc_format_planes(EGLint format)
 {
-   switch (format) {
+   /* The driver decides which formats it takes in big-endian form. */
+   switch (format & ~DRM_FORMAT_BIG_ENDIAN) {
    case DRM_FORMAT_R8:
    case DRM_FORMAT_RG88:
    case DRM_FORMAT_GR88:
