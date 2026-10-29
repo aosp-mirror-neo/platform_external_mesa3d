@@ -235,13 +235,9 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MALLINFO2",
             "-DHAVE_MEMFD_CREATE",
-            "-DHAVE_REALLOCARRAY",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
-        ],
-        "linux_musl": [
-            "-DHAVE_REALLOCARRAY",
         ],
         "linux_glibc": [
             "-DHAVE_XLOCALE_H",
@@ -440,13 +436,9 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MALLINFO2",
             "-DHAVE_MEMFD_CREATE",
-            "-DHAVE_REALLOCARRAY",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
-        ],
-        "linux_musl": [
-            "-DHAVE_REALLOCARRAY",
         ],
         "linux_glibc": [
             "-DHAVE_XLOCALE_H",
