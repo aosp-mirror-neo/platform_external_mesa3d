@@ -814,6 +814,7 @@ zink_init_screen_caps(struct zink_screen *screen)
    caps->can_bind_const_buffer_as_vertex = true;
    caps->allow_mapped_buffers_during_execution = true;
    caps->map_unsynchronized_thread_safe = true;
+   caps->map_unsynchronized_texture_thread_safe = true;
    caps->shareable_shaders = true;
    caps->device_reset_status_query = true;
    caps->query_memory_info = true;
@@ -1090,6 +1091,12 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->video_memory = get_video_mem(screen) >> 20;
    caps->uma = screen->info.props.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU;
+   /* a quarter of vram like radeonsi, but an image still needs a single allocation, so an
+    * unreported allocation limit keeps the default */
+   if (!caps->uma && !screen->is_cpu && screen->info.props11.maxMemoryAllocationSize) {
+      unsigned max_mb = MIN2(caps->video_memory / 4, screen->info.props11.maxMemoryAllocationSize >> 20);
+      caps->max_texture_mb = MAX2(caps->max_texture_mb, max_mb);
+   }
 
    caps->max_vertex_attrib_stride =
       screen->info.props.limits.maxVertexInputBindingStride;
@@ -1302,7 +1309,7 @@ zink_init_screen_caps(struct zink_screen *screen)
 
    caps->mesh.pipeline_statistic_queries = screen->info.mesh_feats.meshShaderQueries;
 
-   if (screen->info.feats12.subgroupBroadcastDynamicId && screen->info.feats12.shaderSubgroupExtendedTypes && screen->info.feats.features.shaderFloat64) {
+   if (screen->info.feats12.subgroupBroadcastDynamicId && screen->info.feats12.shaderSubgroupExtendedTypes) {
       caps->shader_subgroup_size = screen->info.subgroup.subgroupSize;
       if (screen->info.have_EXT_mesh_shader)
          caps->shader_subgroup_supported_stages = screen->info.subgroup.supportedStages & BITFIELD_MASK(MESA_SHADER_MESH_STAGES);
@@ -2023,7 +2030,7 @@ zink_flush_frontbuffer(struct pipe_screen *pscreen,
 
    ctx = zink_tc_context_unwrap(pctx);
 
-   if (!zink_kopper_acquired(res->obj->dt, res->obj->dt_idx)) {
+   if (!zink_kopper_acquired(res->obj->dt, zink_kopper_get_dt_idx(res))) {
       /* swapbuffers to an undefined surface: acquire and present garbage */
       if (!zink_kopper_acquire(ctx, res, UINT64_MAX))
          return;
@@ -3225,6 +3232,26 @@ init_driver_workarounds(struct zink_screen *screen)
                                                          screen->info.gpl_props.graphicsPipelineLibraryFastLinking ||
                                                          screen->is_cpu);
    screen->driver_workarounds.broken_l4a4 = zink_driverid(screen) == VK_DRIVER_ID_NVIDIA_PROPRIETARY;
+   /* the NVIDIA GL driver rewrites index buffers, the NVIDIA and NVK Vulkan drivers are slow for list topologies
+    * with restart indices */
+   screen->driver_workarounds.compact_list_restart = (zink_driverid(screen) == VK_DRIVER_ID_NVIDIA_PROPRIETARY ||
+                                                      zink_driverid(screen) == VK_DRIVER_ID_MESA_NVK) &&
+                                                     screen->info.subgroup.subgroupSize == 32 &&
+                                                     (screen->info.subgroup.supportedStages & VK_SHADER_STAGE_COMPUTE_BIT) &&
+                                                     (screen->info.subgroup.supportedOperations &
+                                                      (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT)) ==
+                                                     (VK_SUBGROUP_FEATURE_BASIC_BIT | VK_SUBGROUP_FEATURE_ARITHMETIC_BIT) &&
+                                                     /* the index buffers are loaded with their own element size */
+                                                     screen->info.have_KHR_8bit_storage && screen->info.have_KHR_16bit_storage &&
+                                                     screen->info.have_KHR_shader_float16_int8 &&
+                                                     screen->info.shader_float16_int8_feats.shaderInt8 &&
+                                                     screen->info.feats.features.shaderInt16;
+   /* the NVIDIA GL driver draws plain lines into float targets, and the proprietary Vulkan smooth
+    * lines cost about 50x more than plain ones; only the dynamic line mode path can switch them */
+   screen->driver_workarounds.no_float_linesmooth = (zink_driverid(screen) == VK_DRIVER_ID_NVIDIA_PROPRIETARY ||
+                                                     zink_driverid(screen) == VK_DRIVER_ID_MESA_NVK) &&
+                                                    screen->info.have_EXT_extended_dynamic_state3 &&
+                                                    screen->info.dynamic_state3_feats.extendedDynamicState3LineRasterizationMode;
    if (zink_driverid(screen) == VK_DRIVER_ID_MESA_TURNIP) {
       /* performance */
       screen->info.border_color_feats.customBorderColorWithoutFormat = VK_FALSE;
@@ -3429,6 +3456,20 @@ init_driver_workarounds(struct zink_screen *screen)
       break;
    default:
       screen->driver_workarounds.general_layout = screen->info.have_KHR_unified_image_layouts;
+      break;
+   }
+
+   /* only these drivers were checked to not bias line and point draws in fill polygon mode */
+   switch (zink_driverid(screen)) {
+   case VK_DRIVER_ID_MESA_RADV:
+   case VK_DRIVER_ID_MESA_NVK:
+   case VK_DRIVER_ID_INTEL_OPEN_SOURCE_MESA:
+   case VK_DRIVER_ID_MESA_TURNIP:
+   case VK_DRIVER_ID_MESA_LLVMPIPE:
+   case VK_DRIVER_ID_NVIDIA_PROPRIETARY:
+      screen->driver_workarounds.fill_mode_no_line_point_bias = true;
+      break;
+   default:
       break;
    }
 
@@ -3898,6 +3939,14 @@ zink_internal_create_screen(const struct pipe_screen_config *config, int64_t dev
       /* a small bar is scarce, so host allocations use it last */
       sort_mem_types(screen, ZINK_HEAP_HOST_VISIBLE_COHERENT);
       sort_mem_types(screen, ZINK_HEAP_HOST_VISIBLE_COHERENT_CACHED);
+   } else {
+      /* coherent maps may only use host-visible VRAM if every memory type for it is coherent */
+      screen->vis_vram_coherent = true;
+      for (unsigned i = 0; i < screen->heap_count[ZINK_HEAP_DEVICE_LOCAL_VISIBLE]; i++) {
+         if (!(screen->info.mem_props.memoryTypes[screen->heap_map[ZINK_HEAP_DEVICE_LOCAL_VISIBLE][i]].propertyFlags &
+               VK_MEMORY_PROPERTY_HOST_COHERENT_BIT))
+            screen->vis_vram_coherent = false;
+      }
    }
 
    setup_renderdoc(screen);

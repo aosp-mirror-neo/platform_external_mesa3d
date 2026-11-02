@@ -1402,6 +1402,10 @@ zink_screen_init_compiler(struct zink_screen *screen)
       if (screen->info.fma_feats.shaderFmaFloat64)
          screen->nir_options.float_mul_add64 |= nir_float_muladd_support_has_ffma;
    }
+   /* fuse mul and add in NIR like radeonsi */
+   if (zink_driverid(screen) == VK_DRIVER_ID_MESA_RADV &&
+       (screen->nir_options.float_mul_add32 & nir_float_muladd_support_has_ffma))
+      screen->nir_options.float_mul_add32 |= nir_float_muladd_support_fuse;
 }
 
 struct nir_shader *
@@ -4105,8 +4109,6 @@ compile_module(struct zink_screen *screen, struct zink_shader *zs, nir_shader *n
 {
    prune_io(nir);
 
-   NIR_PASS(_, nir, nir_convert_from_ssa, true, false);
-
    if (zink_debug & (ZINK_DEBUG_NIR | ZINK_DEBUG_SPIRV))
       nir_index_ssa_defs(nir_shader_get_entrypoint(nir));
    if (zink_debug & ZINK_DEBUG_NIR) {
@@ -4141,15 +4143,15 @@ remove_interpolate_at_sample(struct nir_builder *b, nir_intrinsic_instr *interp,
    return true;
 }
 
-/* with color writes disabled, the color outputs and everything that only they need are dead;
- * this is per fragment shader draw variant, so the previous stage still writes the varyings
+/* the color outputs in the mask and everything that only they need are dead;
+ * this is per fragment shader variant, so the previous stage still writes the varyings
  */
 static bool
-remove_color_outputs(nir_shader *nir)
+remove_color_outputs(nir_shader *nir, uint64_t outputs)
 {
    bool progress = false;
    nir_foreach_shader_out_variable(var, nir) {
-      if (BITFIELD64_BIT(var->data.location) & ZINK_FS_COLOR_OUTPUTS) {
+      if (BITFIELD64_BIT(var->data.location) & outputs) {
          var->data.mode = nir_var_shader_temp;
          progress = true;
       }
@@ -4158,7 +4160,7 @@ remove_color_outputs(nir_shader *nir)
       return false;
    nir_fixup_deref_modes(nir);
    NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_shader_temp, NULL);
-   nir->info.outputs_written &= ~ZINK_FS_COLOR_OUTPUTS;
+   nir->info.outputs_written &= ~outputs;
    return true;
 }
 
@@ -4282,8 +4284,10 @@ zink_shader_compile(struct zink_screen *screen, bool can_shobj, struct zink_shad
          if (zink_fs_key(key)->robust_access)
             NIR_PASS(need_optimize, nir, lower_txf_lod_robustness);
 
-         if (zink_fs_key_base(key)->no_color_outputs && zink_shader_has_removable_color_outputs(zs))
-            need_optimize |= remove_color_outputs(nir);
+         if (zink_fs_key_base(key)->color_mode == ZINK_FS_COLOR_NONE && zink_shader_has_removable_color_outputs(zs))
+            need_optimize |= remove_color_outputs(nir, ZINK_FS_COLOR_OUTPUTS);
+         else if (zink_fs_key_base(key)->color_mode == ZINK_FS_COLOR_SINGLE && zink_shader_has_extra_color_outputs(zs))
+            need_optimize |= remove_color_outputs(nir, ZINK_FS_EXTRA_COLOR_OUTPUTS);
 
          if (!zink_fs_key_base(key)->samples && zink_shader_uses_samples(zs)) {
             /* VK will always use gl_SampleMask[] values even if sample count is 0,
@@ -4300,7 +4304,7 @@ zink_shader_compile(struct zink_screen *screen, bool can_shobj, struct zink_shad
 
             need_optimize = true;
          }
-         if (zink_fs_key_base(key)->force_dual_color_blend && nir->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_DATA1)) {
+         if (zink_fs_key_base(key)->color_mode == ZINK_FS_COLOR_DUAL && nir->info.outputs_written & BITFIELD64_BIT(FRAG_RESULT_DATA1)) {
             NIR_PASS(_, nir, lower_dual_blend);
          }
          if (zink_fs_key_base(key)->coord_replace_bits)
@@ -4415,7 +4419,7 @@ zink_shader_compile_separate(struct zink_screen *screen, struct zink_shader *zs)
          zs->non_fs.generated_tcs = zink_shader_tcs_create(screen, 32);
          zink_shader_tcs_init(screen, zs->non_fs.generated_tcs, nir_clone, &nir_tcs);
          nir_tcs->info.separate_shader = true;
-         zs->non_fs.generated_tcs->precompile.obj = zink_shader_compile_separate(screen, zs->non_fs.generated_tcs);
+         zink_shader_set_precompiled(screen, zs->non_fs.generated_tcs, zink_shader_compile_separate(screen, zs->non_fs.generated_tcs));
          ralloc_free(nir_tcs);
          zs->non_fs.generated_tcs->nir = NULL;
       }
@@ -5867,6 +5871,11 @@ zink_shader_init(struct zink_screen *screen, struct zink_shader *zs)
          subgroup_options.lower_vote_trivial = true;
       }
       subgroup_options.lower_inverse_ballot = true;
+
+      /* fp64 scan/reduce lowering requires (relative) shuffles */
+      subgroup_options.lower_relative_shuffle = !(screen->base.caps.shader_subgroup_supported_features & PIPE_SHADER_SUBGROUP_FEATURE_SHUFFLE_RELATIVE);
+      subgroup_options.lower_shuffle = !(screen->base.caps.shader_subgroup_supported_features & PIPE_SHADER_SUBGROUP_FEATURE_SHUFFLE);
+
       NIR_PASS(_, nir, nir_lower_subgroups, &subgroup_options);
    }
 
@@ -6024,6 +6033,30 @@ zink_shader_finalize(struct pipe_screen *pscreen, struct nir_shader *nir, bool o
 }
 
 void
+zink_shobj_reference(struct zink_screen *screen, struct zink_shobj **dst, struct zink_shobj *src)
+{
+   struct zink_shobj *old = *dst;
+   if (src)
+      p_atomic_inc(&src->refcount);
+   *dst = src;
+   if (old && !p_atomic_dec_return(&old->refcount)) {
+      VKSCR(DestroyShaderEXT)(screen->dev, old->obj, NULL);
+      FREE(old);
+   }
+}
+
+void
+zink_shader_set_precompiled(struct zink_screen *screen, struct zink_shader *zs, struct zink_shader_object obj)
+{
+   zs->precompile.obj = obj;
+   if (screen->info.have_EXT_shader_object && obj.obj) {
+      zs->precompile.shobj = CALLOC_STRUCT(zink_shobj);
+      zs->precompile.shobj->obj = obj.obj;
+      zs->precompile.shobj->refcount = 1;
+   }
+}
+
+void
 zink_shader_free(struct zink_screen *screen, struct zink_shader *shader)
 {
    _mesa_set_destroy(shader->programs, NULL);
@@ -6031,7 +6064,7 @@ zink_shader_free(struct zink_screen *screen, struct zink_shader *shader)
    util_queue_fence_destroy(&shader->precompile.fence);
    zink_descriptor_shader_deinit(screen, shader);
    if (screen->info.have_EXT_shader_object) {
-      VKSCR(DestroyShaderEXT)(screen->dev, shader->precompile.obj.obj, NULL);
+      zink_shobj_reference(screen, &shader->precompile.shobj, NULL);
    } else {
       if (shader->precompile.obj.mod)
          VKSCR(DestroyShaderModule)(screen->dev, shader->precompile.obj.mod, NULL);
@@ -6155,9 +6188,15 @@ struct zink_shader_object
 zink_shader_tcs_compile(struct zink_screen *screen, struct zink_shader *zs, unsigned patch_vertices, bool can_shobj, struct zink_program *pg)
 {
    assert(zs->info.stage == MESA_SHADER_TESS_CTRL);
-   /* shortcut all the nir passes since we just have to change this one word */
-   zs->spirv->words[zs->spirv->tcs_vertices_out_word] = patch_vertices;
-   return zink_shader_spirv_compile(screen, zs, NULL, can_shobj, pg);
+   /* shortcut all the nir passes since we just have to change this one word;
+    * patch a private copy since variants can be compiled from multiple threads
+    */
+   struct spirv_shader spirv = *zs->spirv;
+   spirv.words = mem_dup(zs->spirv->words, zs->spirv->num_words * sizeof(uint32_t));
+   spirv.words[spirv.tcs_vertices_out_word] = patch_vertices;
+   struct zink_shader_object obj = zink_shader_spirv_compile(screen, zs, &spirv, can_shobj, pg);
+   free(spirv.words);
+   return obj;
 }
 
 /* creating a passthrough tcs shader that's roughly:
@@ -6247,7 +6286,6 @@ zink_shader_tcs_init(struct zink_screen *screen, struct zink_shader *zs, nir_sha
 
    optimize_nir(nir, NULL, true);
    NIR_PASS(_, nir, nir_remove_dead_variables, nir_var_function_temp, NULL);
-   NIR_PASS(_, nir, nir_convert_from_ssa, true, false);
 
    *nir_ret = nir;
    zink_shader_serialize_blob(nir, &zs->blob);

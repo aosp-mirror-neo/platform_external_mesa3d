@@ -365,11 +365,13 @@ struct zink_rasterizer_hw_state {
 struct zink_rasterizer_state {
    struct pipe_rasterizer_state base;
    bool offset_fill;
+   bool offset_all_prims; //line and point draws keep the offset in fill polygon mode
    float offset_units, offset_clamp, offset_scale;
    float line_width;
    VkFrontFace front_face;
    VkCullModeFlags cull_mode;
    VkLineRasterizationModeEXT dynamic_line_mode;
+   VkLineRasterizationModeEXT dynamic_line_mode_float; //dynamic_line_mode with smooth lines made plain
    struct zink_rasterizer_hw_state hw_state;
 };
 
@@ -647,7 +649,6 @@ struct zink_batch_state {
    VkVideoSessionParametersKHR video_params;
 
    VkSemaphore present;
-   struct zink_resource *swapchain;
    struct util_dynarray acquires;
    struct util_dynarray acquire_flags;
 
@@ -849,6 +850,12 @@ enum zink_rast_prim {
    ZINK_PRIM_MAX,
 };
 
+/* refcounted so programs can outlive the shader whose precompiled object they borrow */
+struct zink_shobj {
+   VkShaderEXT obj;
+   uint32_t refcount;
+};
+
 struct zink_shader_object {
    union {
       VkShaderEXT obj;
@@ -889,6 +896,7 @@ struct zink_shader {
    struct {
       struct util_queue_fence fence;
       struct zink_shader_object obj;
+      struct zink_shobj *shobj; //owns obj.obj with shader objects
       VkDescriptorSetLayout dsl;
       VkPipelineLayout layout;
       VkPipeline gpl;
@@ -1195,6 +1203,7 @@ struct zink_gfx_program {
 
    /* full */
    VkShaderEXT objects[MESA_SHADER_MESH_STAGES];
+   struct zink_shobj *shobj_refs[MESA_SHADER_MESH_STAGES]; //keep borrowed precompiled objects alive
    uint32_t module_hash[MESA_SHADER_MESH_STAGES];
    struct blob blobs[MESA_SHADER_MESH_STAGES];
    struct util_dynarray shader_cache[MESA_SHADER_MESH_STAGES][2][2]; //normal, nonseamless cubes, inline uniforms
@@ -1337,6 +1346,7 @@ struct zink_resource_object {
    struct kopper_displaytarget *dt;
    uint32_t dt_idx;
    uint32_t last_dt_idx;
+   uint32_t dt_serial; //swapchain generation that dt_idx and last_dt_idx index into
    VkSemaphore present;
    bool new_dt;
    bool indefinite_acquire;
@@ -1610,6 +1620,7 @@ struct zink_screen {
    uint8_t heap_count[ZINK_HEAP_MAX];  // number of memory types per zink heap
    bool resizable_bar;
    bool vis_vram_full;
+   bool vis_vram_coherent; //resizable_bar and all host-visible VRAM memory types are coherent
 
    uint64_t total_video_mem;
    uint64_t clamp_video_mem;
@@ -1704,6 +1715,8 @@ struct zink_screen {
    } driver_compiler_workarounds;
    struct {
       bool broken_l4a4;
+      bool compact_list_restart;
+      bool no_float_linesmooth; //dynamic line mode drops smooth lines for float cbufs, see also no_linesmooth
       /* https://gitlab.khronos.org/vulkan/vulkan/-/issues/3306
        * HI TURNIP
        */
@@ -1726,6 +1739,8 @@ struct zink_screen {
       bool general_layout;
       /* render passes per batch before a flush, UINT32_MAX means no limit */
       unsigned max_batch_rps;
+      /* line and point draws are not biased in fill polygon mode */
+      bool fill_mode_no_line_point_bias;
       /* intel driver is somehow broken for srgb-compatible dmabufs...but only in mesa CI */
       bool srgb_dmabufs;
    } driver_workarounds;
@@ -1963,6 +1978,31 @@ enum zink_atom {
 #define ZINK_DYNAMIC_STATE_ATOMS BITFIELD_RANGE(ZINK_ATOM_VIEWPORT, ZINK_ATOM_COUNT - ZINK_ATOM_VIEWPORT)
 #define ZINK_DRAW_ATOMS BITFIELD_MASK(ZINK_ATOM_VIEWPORT)
 
+#define ZINK_LIST_RESTART_STATS_SLOTS 256
+
+struct zink_list_restart {
+   void *scan;
+   void *cs[2][3][6]; //count and scatter by index size and vertices per primitive
+   struct pipe_resource *out; //the compacted indices
+   struct pipe_resource *args; //the indirect commands
+   struct pipe_resource *counts; //the kept primitives of each chunk
+   unsigned out_size, args_size, counts_size;
+   unsigned small_draws; //draws in a row which need a quarter or less of the compacted indices
+   /* what was learned about the draws */
+   struct pipe_resource *stats; //reports of the passes, mapped
+   const uint32_t *stats_map;
+   struct pipe_transfer *stats_xfer;
+   struct hash_table_u64 *entries;
+   void *entries_mem;
+   unsigned num_entries;
+   unsigned pending_head, pending_count;
+   struct {
+      uint64_t key;
+      struct zink_batch_usage *usage; //the batch which writes the report
+      unsigned count, prim_verts;
+   } pending[ZINK_LIST_RESTART_STATS_SLOTS];
+};
+
 /* draws read and write members all over this struct, and with tc the members marked
  * "app thread" are used from another thread at the same time: moving or resizing members
  * changes which of them share a cache line, so benchmark such changes on their own
@@ -2021,9 +2061,11 @@ struct zink_context {
    struct zink_vertex_elements_state *element_state;
    struct zink_rasterizer_state *rast_state;
    struct zink_depth_stencil_alpha_state *dsa_state;
+   struct zink_list_restart *list_restart; //only with compact_list_restart
 
    bool transient_msrtss; //transient_attachments is for msrtss
    bool has_swapchain;
+   bool fb_float_cbuf; //float cbuf bound and no_float_linesmooth applies
    bool pipeline_changed[ZINK_PIPELINE_MAX]; //gfx, compute, mesh
 
    struct zink_shader *gfx_stages[MESA_SHADER_MESH_STAGES];

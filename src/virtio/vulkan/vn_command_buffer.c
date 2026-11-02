@@ -988,8 +988,7 @@ vn_fix_command_buffer_begin_info(struct vn_command_buffer *cmd,
     * VkCommandBufferBeginInfo::flags, parameters of this structure are
     * ignored.
     */
-   void *head = NULL;
-   void *tail = NULL;
+   void *cur = &local->inheritance;
    vk_foreach_struct_const(sType, src, local->inheritance.pNext) {
       void *pnext = NULL;
       switch (sType) {
@@ -1015,15 +1014,11 @@ vn_fix_command_buffer_begin_info(struct vn_command_buffer *cmd,
       }
 
       if (pnext) {
-         if (!head)
-            head = pnext;
-         else
-            vk_pnext_set_next(tail, pnext);
-
-         tail = pnext;
+         vk_pnext_set_next(cur, pnext);
+         cur = pnext;
       }
    }
-   local->inheritance.pNext = head;
+   vk_pnext_set_next(cur, NULL);
 
    return &local->begin;
 }
@@ -2322,6 +2317,8 @@ vn_CmdPushDescriptorSetWithTemplate(
                templ->iub_count);
    STACK_ARRAY(VkWriteDescriptorSetAccelerationStructureKHR, accels,
                templ->accel_count);
+   STACK_ARRAY(VkAccelerationStructureKHR, accel_handles,
+               templ->accel_handle_count);
    struct vn_descriptor_set_update update = {
       .writes = writes,
       .img_infos = img_infos,
@@ -2329,6 +2326,7 @@ vn_CmdPushDescriptorSetWithTemplate(
       .bview_handles = bview_handles,
       .iubs = iubs,
       .accels = accels,
+      .accel_handles = accel_handles,
    };
    vn_descriptor_set_fill_update_with_template(templ, VK_NULL_HANDLE, pData,
                                                &update);
@@ -2343,6 +2341,7 @@ vn_CmdPushDescriptorSetWithTemplate(
    STACK_ARRAY_FINISH(bview_handles);
    STACK_ARRAY_FINISH(iubs);
    STACK_ARRAY_FINISH(accels);
+   STACK_ARRAY_FINISH(accel_handles);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -2362,6 +2361,8 @@ vn_CmdPushDescriptorSetWithTemplate2(VkCommandBuffer commandBuffer,
                templ->iub_count);
    STACK_ARRAY(VkWriteDescriptorSetAccelerationStructureKHR, accels,
                templ->accel_count);
+   STACK_ARRAY(VkAccelerationStructureKHR, accel_handles,
+               templ->accel_handle_count);
    struct vn_descriptor_set_update update = {
       .writes = writes,
       .img_infos = img_infos,
@@ -2369,6 +2370,7 @@ vn_CmdPushDescriptorSetWithTemplate2(VkCommandBuffer commandBuffer,
       .bview_handles = bview_handles,
       .iubs = iubs,
       .accels = accels,
+      .accel_handles = accel_handles,
    };
    vn_descriptor_set_fill_update_with_template(
       templ, VK_NULL_HANDLE, pPushDescriptorSetWithTemplateInfo->pData,
@@ -2416,6 +2418,7 @@ vn_CmdPushDescriptorSetWithTemplate2(VkCommandBuffer commandBuffer,
    STACK_ARRAY_FINISH(bview_handles);
    STACK_ARRAY_FINISH(iubs);
    STACK_ARRAY_FINISH(accels);
+   STACK_ARRAY_FINISH(accel_handles);
 }
 
 VKAPI_ATTR void VKAPI_CALL

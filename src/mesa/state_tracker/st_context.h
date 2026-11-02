@@ -296,6 +296,12 @@ struct st_context
     */
    bool fp_stipple_polygon;
 
+   /* _NEW_LIGHT_STATE dependent parts of the fragment shader key */
+   bool fp_lower_flatshade;
+   bool fp_lower_two_sided_color;
+   /* ctx->Light._ClampVertexColor at the last validation of each stage */
+   bool vert_color_clamped[MESA_SHADER_GEOMETRY + 1];
+
    /** for glDraw/CopyPixels */
    struct {
       void *zs_shaders[6];
@@ -362,6 +368,9 @@ struct st_context
 
    /** passthrough vertex shader matching the util_velem attributes */
    void *passthrough_vs;
+
+   /** fragment shaders that st_read_egl_image samples YUV images with */
+   struct hash_table *egl_image_read_shaders;
 
    enum pipe_texture_target internal_target;
 

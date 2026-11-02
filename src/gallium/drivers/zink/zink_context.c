@@ -29,6 +29,7 @@
 #include "zink_helpers.h"
 #include "zink_inlines.h"
 #include "zink_kopper.h"
+#include "zink_list_restart.h"
 #include "zink_program.h"
 #include "zink_query.h"
 #include "zink_render_pass.h"
@@ -58,7 +59,6 @@
 
 #include "vk_format.h"
 
-#include "driver_trace/tr_context.h"
 
 #include "util/u_memory.h"
 #include "util/u_upload_mgr.h"
@@ -118,6 +118,7 @@ zink_context_destroy(struct pipe_context *pctx)
 
    struct pipe_framebuffer_state fb = {0};
    pctx->set_framebuffer_state(pctx, &fb);
+   zink_list_restart_deinit(ctx);
 
    /* handles outlive the context in its share group, so only drop its residency;
     * the frontend may have deleted them already, so this can't look them up
@@ -193,6 +194,7 @@ zink_context_destroy(struct pipe_context *pctx)
       util_blitter_destroy(ctx->blitter);
 
    pipe_resource_reference(&ctx->dummy_xfb_buffer, NULL);
+   zink_resource_reference(&ctx->swapchain, NULL);
 
    zink_descriptors_deinit_bindless(ctx);
 
@@ -4578,6 +4580,7 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
    }
 
    util_copy_framebuffer_state(&ctx->fb_state, state);
+   zink_update_fs_key_color_mode(ctx);
    ctx->rp_changed |= zink_update_fbfetch(ctx);
    ctx->transient_attachments = 0;
    ctx->transient_msrtss = false;
@@ -4596,8 +4599,12 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
 
    ctx->void_clears = 0;
    ctx->has_swapchain = false;
+
+   bool fb_float_cbuf = false;
    for (int i = 0; i < ctx->fb_state.nr_cbufs; i++) {
       const struct pipe_surface *psurf = &ctx->fb_state.cbufs[i];
+      if (screen->driver_workarounds.no_float_linesmooth)
+         fb_float_cbuf |= util_format_is_float(psurf->format);
       struct zink_resource *res = zink_resource(psurf->texture);
       ctx->fb_formats[i] = zink_get_format(screen, ctx->fb_state.cbufs[i].format);
       if (res) {
@@ -4634,6 +4641,13 @@ zink_set_framebuffer_state(struct pipe_context *pctx,
             if (!res->valid && !zink_fb_clear_full_exists(ctx, i))
                ctx->void_clears |= (PIPE_CLEAR_COLOR0 << i);
          }
+      }
+   }
+   if (ctx->fb_float_cbuf != fb_float_cbuf) {
+      ctx->fb_float_cbuf = fb_float_cbuf;
+      if (ctx->rast_state && ctx->rast_state->dynamic_line_mode != ctx->rast_state->dynamic_line_mode_float) {
+         ctx->ds3_states |= BITFIELD_BIT(ZINK_DS3_RAST_LINE);
+         zink_mark_atom_dirty(ctx, ZINK_ATOM_RASTERIZER);
       }
    }
    if (ctx->fb_state.zsbuf.texture) {
@@ -4764,8 +4778,8 @@ zink_flush(struct pipe_context *pctx,
 #if HAVE_RENDERDOC_INTEGRATION
       p_atomic_inc(&screen->renderdoc_frame);
 #endif
-      if (ctx->needs_present && ctx->needs_present->obj->dt_idx != UINT32_MAX &&
-          zink_is_swapchain(ctx->needs_present)) {
+      if (ctx->needs_present && zink_is_swapchain(ctx->needs_present) &&
+          zink_kopper_get_dt_idx(ctx->needs_present) != UINT32_MAX) {
          zink_kopper_readback_update(ctx, ctx->needs_present);
          screen->image_barrier(ctx, ctx->needs_present, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
       }
@@ -4980,19 +4994,6 @@ zink_texture_barrier(struct pipe_context *pctx, unsigned flags)
    ctx->bs->has_work = true;
 }
 
-static inline void
-mem_barrier(struct zink_context *ctx, VkPipelineStageFlags src_stage, VkPipelineStageFlags dst_stage, VkAccessFlags src, VkAccessFlags dst)
-{
-   VkMemoryBarrier mb;
-   mb.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
-   mb.pNext = NULL;
-   mb.srcAccessMask = src;
-   mb.dstAccessMask = dst;
-   zink_batch_no_rp(ctx);
-   VKCTX(CmdPipelineBarrier)(ctx->bs->cmdbuf, src_stage, dst_stage, 0, 1, &mb, 0, NULL, 0, NULL);
-   ctx->bs->has_work = true;
-}
-
 void
 zink_flush_memory_barrier(struct zink_context *ctx)
 {
@@ -5008,27 +5009,47 @@ zink_flush_memory_barrier(struct zink_context *ctx)
    VkPipelineStageFlags src = ctx->last_work_was_compute ? cs_flags : gfx_flags;
    VkPipelineStageFlags dst = cs_flags | gfx_flags;
 
-   if (ctx->memory_barrier & (PIPE_BARRIER_TEXTURE | PIPE_BARRIER_SHADER_BUFFER | PIPE_BARRIER_IMAGE))
-      mem_barrier(ctx, src, dst, VK_ACCESS_SHADER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT);
+   /* these all share a source scope, so they only differ in where they make the
+    * writes visible. widening that destination scope covers every one of them with
+    * a single barrier instead of one barrier per bit.
+    */
+   VkMemoryBarrier mb = {
+      .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
+      .srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT,
+   };
+   VkPipelineStageFlags dst_stage = 0;
 
-   if (ctx->memory_barrier & PIPE_BARRIER_CONSTANT_BUFFER)
-      mem_barrier(ctx, src, dst,
-                  VK_ACCESS_SHADER_WRITE_BIT,
-                  VK_ACCESS_UNIFORM_READ_BIT);
+   if (ctx->memory_barrier & (PIPE_BARRIER_TEXTURE | PIPE_BARRIER_SHADER_BUFFER |
+                              PIPE_BARRIER_IMAGE)) {
+      dst_stage |= dst;
+      mb.dstAccessMask |= VK_ACCESS_SHADER_READ_BIT;
+   }
 
-   if (ctx->memory_barrier & PIPE_BARRIER_INDIRECT_BUFFER)
-      mem_barrier(ctx, src, VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT,
-                  VK_ACCESS_SHADER_WRITE_BIT,
-                  VK_ACCESS_INDIRECT_COMMAND_READ_BIT);
-   if (ctx->memory_barrier & PIPE_BARRIER_VERTEX_BUFFER)
-      mem_barrier(ctx, src, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-                  VK_ACCESS_SHADER_WRITE_BIT,
-                  VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT);
+   if (ctx->memory_barrier & PIPE_BARRIER_CONSTANT_BUFFER) {
+      dst_stage |= dst;
+      mb.dstAccessMask |= VK_ACCESS_UNIFORM_READ_BIT;
+   }
 
-   if (ctx->memory_barrier & PIPE_BARRIER_INDEX_BUFFER)
-      mem_barrier(ctx, src, VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-                  VK_ACCESS_SHADER_WRITE_BIT,
-                  VK_ACCESS_INDEX_READ_BIT);
+   if (ctx->memory_barrier & PIPE_BARRIER_INDIRECT_BUFFER) {
+      dst_stage |= VK_PIPELINE_STAGE_DRAW_INDIRECT_BIT;
+      mb.dstAccessMask |= VK_ACCESS_INDIRECT_COMMAND_READ_BIT;
+   }
+
+   if (ctx->memory_barrier & PIPE_BARRIER_VERTEX_BUFFER) {
+      dst_stage |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+      mb.dstAccessMask |= VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+   }
+
+   if (ctx->memory_barrier & PIPE_BARRIER_INDEX_BUFFER) {
+      dst_stage |= VK_PIPELINE_STAGE_VERTEX_INPUT_BIT;
+      mb.dstAccessMask |= VK_ACCESS_INDEX_READ_BIT;
+   }
+
+   if (mb.dstAccessMask) {
+      zink_batch_no_rp(ctx);
+      VKCTX(CmdPipelineBarrier)(ctx->bs->cmdbuf, src, dst_stage, 0, 1, &mb, 0, NULL, 0, NULL);
+      ctx->bs->has_work = true;
+   }
    if (ctx->memory_barrier & PIPE_BARRIER_FRAMEBUFFER)
       zink_texture_barrier(&ctx->base, 0);
    if (ctx->memory_barrier & PIPE_BARRIER_STREAMOUT_BUFFER) {
@@ -5037,11 +5058,14 @@ zink_flush_memory_barrier(struct zink_context *ctx)
          so_src |= VK_PIPELINE_STAGE_TESSELLATION_EVALUATION_SHADER_BIT;
       if (screen->info.feats.features.geometryShader)
          so_src |= VK_PIPELINE_STAGE_GEOMETRY_SHADER_BIT;
-      mem_barrier(ctx, so_src,
-                  VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT,
-                  VK_ACCESS_SHADER_READ_BIT,
-                  VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
-                  VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT);
+      mb.srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
+      mb.dstAccessMask = VK_ACCESS_TRANSFORM_FEEDBACK_WRITE_BIT_EXT |
+                         VK_ACCESS_TRANSFORM_FEEDBACK_COUNTER_WRITE_BIT_EXT;
+      zink_batch_no_rp(ctx);
+      VKCTX(CmdPipelineBarrier)(ctx->bs->cmdbuf, so_src,
+                                VK_PIPELINE_STAGE_TRANSFORM_FEEDBACK_BIT_EXT,
+                                0, 1, &mb, 0, NULL, 0, NULL);
+      ctx->bs->has_work = true;
    }
    ctx->memory_barrier = 0;
 }
@@ -5082,7 +5106,7 @@ zink_flush_resource(struct pipe_context *pctx,
       res->unflushed_transient = false;
    }
    if (res->obj->dt) {
-      if (zink_kopper_acquired(res->obj->dt, res->obj->dt_idx) && (!ctx->clears_enabled || !res->fb_bind_count)) {
+      if (zink_kopper_acquired(res->obj->dt, zink_kopper_get_dt_idx(res)) && (!ctx->clears_enabled || !res->fb_bind_count)) {
          zink_batch_no_rp_safe(ctx);
          zink_kopper_readback_update(ctx, res);
          zink_screen(ctx->base.screen)->image_barrier(ctx, res, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 0, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
@@ -5090,7 +5114,7 @@ zink_flush_resource(struct pipe_context *pctx,
       } else {
          zink_resource_reference(&ctx->needs_present, res);
       }
-      ctx->swapchain = res;
+      zink_resource_reference(&ctx->swapchain, res);
    } else if (res->dmabuf)
       res->queue = VK_QUEUE_FAMILY_FOREIGN_EXT;
 }
@@ -6215,6 +6239,8 @@ zink_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
       goto fail;
 
    ctx->flags = flags;
+   if (screen->driver_workarounds.compact_list_restart && !zink_list_restart_init(ctx))
+      goto fail;
    if (is_robust)
       screen->has_robust_ctx = true;
    memset(ctx->pipeline_changed, 1, sizeof(ctx->pipeline_changed));
@@ -6595,7 +6621,7 @@ zink_tc_context_unwrap(struct pipe_context *pctx)
 {
    /* need to get the actual zink_context, not the threaded context */
    pctx = threaded_context_unwrap_sync(pctx);
-   pctx = trace_get_possibly_threaded_context(pctx);
+   pctx = pipe_get_driver_context(pctx);
    return zink_context(pctx);
 }
 

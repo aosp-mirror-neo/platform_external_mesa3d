@@ -820,7 +820,10 @@ add_aux_surface_if_supported(struct anv_device *device,
          return add_aux_state_tracking_buffer(device, image, aux_state_offset,
                                               plane);
       }
-   } else if (main_surf->usage & (ISL_SURF_USAGE_STENCIL_BIT | ISL_SURF_USAGE_CPB_BIT)) {
+   } else if ((main_surf->usage & ISL_SURF_USAGE_STENCIL_BIT) ||
+              ((main_surf->usage & ISL_SURF_USAGE_CPB_BIT) &&
+               device->info->ver < 20)) {
+      /* <= GFX12.5 are handled in anv_blorp_execute_on_companion() */
       if (!isl_surf_supports_ccs(&device->isl_dev, main_surf)) {
          if (device->info->ver >= 12) {
             anv_perf_warn(VK_LOG_OBJS(&device->vk.base),
@@ -2538,7 +2541,7 @@ resolve_ahb_image(struct anv_device *device,
                   struct anv_image *image,
                   struct anv_device_memory *mem)
 {
-#if DETECT_OS_ANDROID && ANDROID_API_LEVEL >= 26
+#if defined(VK_USE_PLATFORM_ANDROID_KHR) && ANDROID_API_LEVEL >= 26
    assert(mem->vk.ahardware_buffer);
    VkResult result;
 
@@ -2593,7 +2596,7 @@ resolve_anb_image(struct anv_device *device,
                   struct anv_image *image,
                   const VkNativeBufferANDROID *gralloc_info)
 {
-#if DETECT_OS_ANDROID && ANDROID_API_LEVEL >= 29
+#if defined(VK_USE_PLATFORM_ANDROID_KHR) && ANDROID_API_LEVEL >= 29
    VkResult result;
 
    /* Query DRM modifier. */

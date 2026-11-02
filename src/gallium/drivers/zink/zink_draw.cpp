@@ -9,6 +9,7 @@
 #include "zink_screen.h"
 #include "zink_state.h"
 #include "zink_inlines.h"
+#include "zink_list_restart.h"
 
 #include "util/hash_table.h"
 #include "util/u_cpu_detect.h"
@@ -479,7 +480,9 @@ emit_dynamic_atoms(struct zink_context *ctx, uint32_t atoms, unsigned num_viewpo
                                                    VK_PROVOKING_VERTEX_MODE_LAST_VERTEX_EXT :
                                                    VK_PROVOKING_VERTEX_MODE_FIRST_VERTEX_EXT);
             if (ctx->ds3_states & BITFIELD_BIT(ZINK_DS3_RAST_LINE))
-               VKCTX(CmdSetLineRasterizationModeEXT)(bs->cmdbuf, rast_state->dynamic_line_mode);
+               VKCTX(CmdSetLineRasterizationModeEXT)(bs->cmdbuf, ctx->fb_float_cbuf ?
+                                                     rast_state->dynamic_line_mode_float :
+                                                     rast_state->dynamic_line_mode);
             if (ctx->ds3_states & BITFIELD_BIT(ZINK_DS3_RAST_STIPPLE_ON))
                VKCTX(CmdSetLineStippleEnableEXT)(bs->cmdbuf, rast_state->hw_state.line_stipple_enable);
             ctx->ds3_states &= ~BITFIELD_RANGE(ZINK_DS3_RAST_STIPPLE, ZINK_DS3_RAST_STIPPLE_ON - ZINK_DS3_RAST_STIPPLE + 1);
@@ -620,6 +623,16 @@ validate_atoms(const struct zink_context *ctx)
    assert((!ctx->dd.push_state_changed[ZINK_PIPELINE_GFX] && !ctx->dd.state_changed[ZINK_PIPELINE_GFX]) ||
           zink_is_atom_dirty(ctx, ZINK_ATOM_DESCRIPTORS) || zink_is_atom_dirty(ctx, ZINK_ATOM_PIPELINE) ||
           !zink_program_has_descriptors(&ctx->curr_program->base));
+}
+
+/* offset_all_prims keeps the offset for lines and points, which the driver ignores in fill polygon mode,
+ * but prim_is_rasterized must be false when prim is not what the rasterizer draws
+ */
+ALWAYS_INLINE static bool
+zink_uses_depth_bias(const struct zink_rasterizer_state *rast_state, enum mesa_prim prim, bool prim_is_rasterized)
+{
+   return rast_state->offset_fill &&
+          (prim == MESA_PRIM_TRIANGLES || (rast_state->offset_all_prims && prim_is_rasterized));
 }
 
 /* dirty the atoms for the inputs of this draw which differ from the last one */
@@ -1002,7 +1015,9 @@ zink_draw_atoms(struct zink_context *ctx,
             if (strip_psiz != zink_get_last_vertex_key(ctx)->strip_psiz)
                zink_set_last_vertex_key(ctx)->strip_psiz = strip_psiz;
 
-            bool using_depth_bias = zink_prim_type(ctx, dinfo) == MESA_PRIM_TRIANGLES && rast_state->offset_fill;
+            /* a generated geometry shader may turn lines and points into triangles */
+            bool using_depth_bias = zink_uses_depth_bias(rast_state, zink_prim_type(ctx, dinfo),
+                                                         !(ctx->last_vertex_stage && ctx->last_vertex_stage->non_fs.is_generated));
             if (using_depth_bias != ctx->was_using_depth_bias) {
                ctx->was_using_depth_bias = using_depth_bias;
                zink_mark_atom_dirty(ctx, ZINK_ATOM_DEPTH_BIAS);
@@ -1380,10 +1395,12 @@ zink_draw_mesh_tasks(struct pipe_context *pctx, const struct pipe_grid_info *inf
          return;
    }
 
-   bool using_depth_bias = !!ctx->rast_state->offset_fill;
+   bool using_depth_bias = zink_uses_depth_bias(ctx->rast_state, ctx->gfx_stages[MESA_SHADER_MESH]->info.mesh.primitive_type, true);
    if (using_depth_bias != ctx->was_using_depth_bias) {
       ctx->was_using_depth_bias = using_depth_bias;
       zink_mark_atom_dirty(ctx, ZINK_ATOM_DEPTH_BIAS);
+      /* the next zink_draw decides this from its own primitive */
+      zink_mark_atom_dirty(ctx, ZINK_ATOM_PRIMITIVE);
    }
    /* the line width is only set by zink_draw */
    emit_dynamic_state<ZINK_DYNAMIC_STATE3, BATCH_CHANGED>(ctx, pipeline_changed, ctx->vp_state.mesh_num_viewports, ctx->mesh_program->base.uses_shobj,
@@ -1440,6 +1457,22 @@ zink_draw_mesh_tasks(struct pipe_context *pctx, const struct pipe_grid_info *inf
       pctx->flush(pctx, NULL, 0);
 }
 
+/* NVIDIA and NVK are slow for list topologies with restart indices: draw a compacted copy instead */
+static ALWAYS_INLINE bool
+zink_list_restart_compact(struct zink_context *ctx, const struct pipe_draw_info *dinfo,
+                          unsigned drawid_offset, const struct pipe_draw_indirect_info *indirect,
+                          const struct pipe_draw_start_count_bias *draws, unsigned num_draws,
+                          struct pipe_draw_info *info_out, struct pipe_draw_indirect_info *indirect_out,
+                          struct pipe_draw_start_count_bias *draw_out)
+{
+   const struct zink_screen *screen = zink_screen(ctx->base.screen);
+   return screen->driver_workarounds.compact_list_restart && !indirect && !drawid_offset &&
+          dinfo->index_size && !dinfo->has_user_indices && num_draws == 1 && dinfo->instance_count &&
+          !ctx->blitting && !ctx->unordered_blitting && !ctx->num_so_targets &&
+          (!dinfo->start_instance || screen->info.feats.features.drawIndirectFirstInstance) &&
+          zink_compact_list_restart(ctx, dinfo, &draws[0], info_out, indirect_out, draw_out);
+}
+
 template <zink_multidraw HAS_MULTIDRAW, zink_dynamic_state DYNAMIC_STATE, bool BATCH_CHANGED>
 static void
 zink_draw_vbo(struct pipe_context *pctx,
@@ -1449,6 +1482,17 @@ zink_draw_vbo(struct pipe_context *pctx,
               const struct pipe_draw_start_count_bias *draws,
               unsigned num_draws)
 {
+   if (unlikely(info->primitive_restart)) {
+      struct zink_context *ctx = zink_context(pctx);
+      struct pipe_draw_info compact_info;
+      struct pipe_draw_indirect_info compact_indirect;
+      struct pipe_draw_start_count_bias compact_draw;
+      if (zink_list_restart_compact(ctx, info, drawid_offset, indirect, draws, num_draws, &compact_info, &compact_indirect, &compact_draw)) {
+         zink_draw<HAS_MULTIDRAW, DYNAMIC_STATE, BATCH_CHANGED, ZINK_VBS_BOUND>(pctx, &compact_info, drawid_offset, &compact_indirect,
+                                                                               &compact_draw, 1, NULL, 0);
+         return;
+      }
+   }
    zink_draw<HAS_MULTIDRAW, DYNAMIC_STATE, BATCH_CHANGED, ZINK_VBS_BOUND>(pctx, info, drawid_offset, indirect, draws, num_draws, NULL, 0);
 }
 
@@ -1465,6 +1509,14 @@ zink_draw_vbo_buffers(struct pipe_context *pctx,
 
    struct zink_context *ctx = zink_context(pctx);
 
+   struct pipe_draw_info compact_info;
+   struct pipe_draw_indirect_info compact_indirect;
+   struct pipe_draw_start_count_bias compact_draw;
+   /* this goes before the buffers are synchronized, since the pass can end the batch */
+   const bool compacted = unlikely(dinfo->primitive_restart) &&
+                          zink_list_restart_compact(ctx, dinfo, 0, NULL, draws, num_draws, &compact_info, &compact_indirect,
+                                                    &compact_draw);
+
    if (ctx->in_rp)
       ctx->can_promote_depth_op = false;
 
@@ -1474,6 +1526,11 @@ zink_draw_vbo_buffers(struct pipe_context *pctx,
     * ZINK_ATOM_VERTEX_BUFFERS when it returns without drawing
     */
    barrier_unowned_vertex_buffers<true>(ctx, buffers, buffer_count);
+   if (unlikely(compacted)) {
+      zink_draw<HAS_MULTIDRAW, DYNAMIC_STATE, BATCH_CHANGED, ZINK_VBS_UNOWNED>(pctx, &compact_info, 0, &compact_indirect,
+                                                                             &compact_draw, 1, NULL, 0);
+      return;
+   }
    zink_draw<HAS_MULTIDRAW, DYNAMIC_STATE, BATCH_CHANGED, ZINK_VBS_UNOWNED>(pctx, dinfo, 0, NULL, draws, num_draws, NULL, 0);
 }
 

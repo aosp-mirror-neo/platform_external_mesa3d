@@ -893,6 +893,9 @@ zink_gfx_program_update_optimal(struct zink_context *ctx)
    ctx->last_vertex_stage_dirty = false;
 }
 
+static uint32_t
+zink_mesh_optimal_key(struct zink_context *ctx);
+
 void
 zink_mesh_program_update_optimal(struct zink_context *ctx)
 {
@@ -904,7 +907,7 @@ zink_mesh_program_update_optimal(struct zink_context *ctx)
    assert(ctx->gfx_stages[MESA_SHADER_MESH]);
    if (ctx->mesh_dirty) {
       struct zink_gfx_program *prog = NULL;
-      ctx->gfx_pipeline_state.mesh_optimal_key = zink_sanitize_optimal_key_mesh(ctx->gfx_stages, ctx->gfx_pipeline_state.shader_keys_optimal.key.val);
+      ctx->gfx_pipeline_state.mesh_optimal_key = zink_mesh_optimal_key(ctx);
       simple_mtx_lock(lock);
       struct hash_entry *entry = _mesa_hash_table_search_pre_hashed(ht, hash, ctx->gfx_stages);
 
@@ -958,7 +961,7 @@ zink_mesh_program_update_optimal(struct zink_context *ctx)
       ctx->gfx_pipeline_state.mesh_final_hash ^= ctx->mesh_program->last_variant_hash;
    } else if (ctx->dirty_mesh_stages) {
       /* remove old hash */
-      ctx->gfx_pipeline_state.mesh_optimal_key = zink_sanitize_optimal_key_mesh(ctx->gfx_stages, ctx->gfx_pipeline_state.shader_keys_optimal.key.val);
+      ctx->gfx_pipeline_state.mesh_optimal_key = zink_mesh_optimal_key(ctx);
       ctx->gfx_pipeline_state.mesh_final_hash ^= ctx->mesh_program->last_variant_hash;
 
       bool must_replace = ctx->mesh_program->base.uses_shobj ? !zink_can_use_shader_objects(ctx) : (ctx->mesh_program->is_separable && !zink_can_use_pipeline_libs(ctx));
@@ -1582,8 +1585,10 @@ create_gfx_program_separable(struct zink_context *ctx, struct zink_shader **stag
          _mesa_set_add(prog->shaders[i]->programs, prog);
          simple_mtx_unlock(&prog->shaders[i]->lock);
          if (screen->info.have_EXT_shader_object) {
-            if (!prog->objects[i])
+            if (!prog->objects[i]) {
                prog->objects[i] = prog->shaders[i]->precompile.obj.obj;
+               zink_shobj_reference(screen, &prog->shobj_refs[i], prog->shaders[i]->precompile.shobj);
+            }
          }
          refs++;
       }
@@ -1952,6 +1957,7 @@ zink_destroy_gfx_program(struct zink_screen *screen,
          _mesa_set_remove_key(prog->shaders[i]->programs, prog);
          prog->shaders[i] = NULL;
       }
+      zink_shobj_reference(screen, &prog->shobj_refs[i], NULL);
       if (!prog->is_separable) {
          destroy_shader_cache(screen, &prog->shader_cache[i][0][0]);
          destroy_shader_cache(screen, &prog->shader_cache[i][0][1]);
@@ -2289,6 +2295,46 @@ zink_update_fs_key_samples(struct zink_context *ctx)
    }
 }
 
+static unsigned
+zink_get_fs_color_mode(const struct zink_context *ctx, bool allow_none)
+{
+   const struct zink_screen *screen = zink_screen(ctx->base.screen);
+   const struct zink_blend_state *blend = ctx->gfx_pipeline_state.blend_state;
+   const struct zink_shader *fs = ctx->gfx_stages[MESA_SHADER_FRAGMENT];
+   /* alpha-to-coverage still needs the alpha output, and a shader with nothing to drop keeps the other modes */
+   if (allow_none && screen->optimal_keys && blend && !blend->wrmask && !blend->alpha_to_coverage &&
+       fs && zink_shader_has_removable_color_outputs(fs))
+      return ZINK_FS_COLOR_NONE;
+   if (screen->driconf.dual_color_blend_by_location && blend && blend->dual_src_blend &&
+       blend->attachments[0].blendEnable)
+      return ZINK_FS_COLOR_DUAL;
+   /* with dynamic blend the driver can't drop color outputs that no attachment consumes */
+   if (screen->optimal_keys && screen->have_full_ds3 && ctx->fb_state.nr_cbufs == 1)
+      return ZINK_FS_COLOR_SINGLE;
+   return ZINK_FS_COLOR_ALL;
+}
+
+void
+zink_update_fs_key_color_mode(struct zink_context *ctx)
+{
+   unsigned mode = zink_get_fs_color_mode(ctx, true);
+   if (mode != zink_get_fs_base_key(ctx)->color_mode)
+      zink_set_fs_base_key(ctx)->color_mode = mode;
+   else if (mode == ZINK_FS_COLOR_NONE && ctx->gfx_stages[MESA_SHADER_MESH])
+      /* mesh programs can't use NONE, so what it shadows may have changed */
+      zink_update_dirty_gfx_stages(ctx, BITFIELD_BIT(MESA_SHADER_FRAGMENT));
+}
+
+/* mesh programs don't compile draw variants in the background, so NONE falls back to the mode it shadows */
+static uint32_t
+zink_mesh_optimal_key(struct zink_context *ctx)
+{
+   union zink_shader_key_optimal k = ctx->gfx_pipeline_state.shader_keys_optimal.key;
+   if (k.fs.color_mode == ZINK_FS_COLOR_NONE)
+      k.fs.color_mode = zink_get_fs_color_mode(ctx, false);
+   return zink_sanitize_optimal_key_mesh(ctx->gfx_stages, k.val);
+}
+
 void zink_update_gs_key_rectangular_line(struct zink_context *ctx)
 {
    bool line_rectangular = zink_get_gs_key(ctx)->line_rectangular;
@@ -2326,6 +2372,7 @@ zink_bind_fs_state(struct pipe_context *pctx,
          ctx->fbfetch_outputs |= info->outputs_read >> FRAG_RESULT_DATA0;
       }
       zink_update_fs_key_samples(ctx);
+      zink_update_fs_key_color_mode(ctx);
       if (zink_screen(pctx->screen)->info.have_EXT_rasterization_order_attachment_access) {
          if (ctx->gfx_pipeline_state.rast_attachment_order != info->fs.uses_fbfetch_output)
             zink_gfx_mesh_pipeline_state_dirty(ctx);
@@ -2806,7 +2853,7 @@ zink_delete_shader_state(struct pipe_context *pctx, void *cso)
 static void
 precompile_separate_shader(struct zink_shader *zs, struct zink_screen *screen)
 {
-   zs->precompile.obj = zink_shader_compile_separate(screen, zs);
+   zink_shader_set_precompiled(screen, zs, zink_shader_compile_separate(screen, zs));
    if (!screen->info.have_EXT_shader_object) {
       struct zink_shader_object objs[MESA_SHADER_MESH_STAGES] = {0};
       objs[zs->info.stage].mod = zs->precompile.obj.mod;

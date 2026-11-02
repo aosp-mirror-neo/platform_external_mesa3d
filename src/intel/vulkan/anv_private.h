@@ -68,7 +68,7 @@
 #include "util/set.h"
 #include "util/sparse_array.h"
 #include "util/u_atomic.h"
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
 #include "util/u_gralloc/u_gralloc.h"
 #endif
 #include "util/u_vector.h"
@@ -5121,7 +5121,8 @@ anv_cmd_buffer_is_chainable(struct anv_cmd_buffer *cmd_buffer)
 {
    return !(cmd_buffer->usage_flags &
             VK_COMMAND_BUFFER_USAGE_SIMULTANEOUS_USE_BIT) &&
-          !(cmd_buffer->is_companion_rcs_cmd_buffer);
+          !(cmd_buffer->is_companion_rcs_cmd_buffer) &&
+          cmd_buffer->companion_rcs_cmd_buffer == NULL;
 }
 
 static inline bool
