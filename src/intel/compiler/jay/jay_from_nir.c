@@ -655,8 +655,8 @@ jay_emit_alu(struct nir_to_jay_state *nj, nir_alu_instr *alu)
       jay_ADD(b, type, dst, src[0], src[1])->saturate = true;
       break;
 
+   case nir_op_isub_sat_intel:
    case nir_op_usub_sat:
-   case nir_op_isub_sat:
       jay_ADD(b, type, dst, src[0], jay_negate(src[1]))->saturate = true;
       break;
 
@@ -1604,7 +1604,6 @@ jay_emit_mem_access_lsc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
    }
 
    jay_def ex_desc = jay_null();
-   uint32_t ex_desc_imm = 0;
    if (scratch) {
       /* TODO: Once we have an address register RA, we should CSE these */
       ex_desc = jay_alloc_def(b, UGPR, 1);
@@ -1649,7 +1648,9 @@ jay_emit_mem_access_lsc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
                .base_offset = base_offset,
             },
          };
-         gen_lsc_ex_desc_encode(devinfo, op, &gen_ex_desc, &ex_desc_imm);
+         desc |=
+            ((uint64_t) gen_lsc_ex_desc_imm_encode(devinfo, op, &gen_ex_desc)
+            << 32);
       } else {
          /* TODO: Move the SHL to NIR for CSE? */
          assert(surf_type == LSC_ADDR_SURFTYPE_BTI);
@@ -1665,9 +1666,7 @@ jay_emit_mem_access_lsc(struct nir_to_jay_state *nj, nir_intrinsic_instr *intr)
             .pure = nir_intrinsic_can_reorder(intr),
             .bindless = surf_type == LSC_ADDR_SURFTYPE_BSS ||
                         surf_type == LSC_ADDR_SURFTYPE_SS,
-            .ex_desc = ex_desc, .ex_desc_imm = ex_desc_imm,
-            .skip_helpers = skip_helpers,
-            .use_raw_ex_desc = surf_type == LSC_ADDR_SURFTYPE_SS);
+            .ex_desc = ex_desc, .skip_helpers = skip_helpers);
 
    if (has_dest && !jay_defs_equivalent(tmp, dst)) {
       unsigned src_stride = transpose ? 1 : jay_ugpr_per_grf(b->shader);
@@ -4859,18 +4858,6 @@ jay_gather_stats(const jay_shader *s, struct genisa_stats *stats)
       intel_vrt_register_file_size(s->devinfo, stats->source_hash, stats->grf_registers);
    stats->vrt_threads = intel_max_vrt_threads(s->devinfo, stats->vrt_size);
 
-   /* We currently only support up to 2MB of scratch space.  If we need to
-    * support more eventually, the documentation suggests that we could allocate
-    * a larger buffer, and partition it out ourselves.  We'd just have to undo
-    * the hardware's address calculation by subtracting (FFTID * Per Thread
-    * Scratch Space) and then add FFTID * (Larger Per Thread Scratch Space).
-    *
-    * See 3D-Media-GPGPU Engine > Media GPGPU Pipeline > Thread Group Tracking >
-    * Local Memory/Scratch Space.
-    */
-   assert(s->scratch_size <= s->devinfo->max_scratch_size_per_thread &&
-          "maximum scratch size");
-
    /* Scratch is allocated in 1KiB increments. */
    if (s->scratch_size > 0) {
       stats->scratch_memory_size =
@@ -4967,6 +4954,11 @@ jay_compile_simd(const struct intel_device_info *devinfo,
    JAY_PASS(s, jay_lower_flags);
    JAY_PASS(s, jay_opt_dead_code);
    JAY_PASS(s, jay_opt_sampler_vectorize);
+
+   if (s->stage == MESA_SHADER_FRAGMENT && s->helpers_tracked) {
+      JAY_PASS(s, jay_lower_helpers_pre_ra);
+   }
+
    JAY_PASS(s, jay_schedule);
 
    JAY_PASS(s, jay_lower_pre_ra);
@@ -4996,6 +4988,27 @@ jay_compile_simd(const struct intel_device_info *devinfo,
    }
 
    JAY_PASS(s, jay_register_allocate);
+
+   /* We currently only support up to 2MB of scratch space.  If we need to
+    * support more eventually, the documentation suggests that we could allocate
+    * a larger buffer, and partition it out ourselves.  We'd just have to undo
+    * the hardware's address calculation by subtracting (FFTID * Per Thread
+    * Scratch Space) and then add FFTID * (Larger Per Thread Scratch Space).
+    *
+    * See 3D-Media-GPGPU Engine > Media GPGPU Pipeline > Thread Group Tracking >
+    * Local Memory/Scratch Space.
+    */
+   if (s->scratch_size > devinfo->max_scratch_size_per_thread) {
+      *params->error_str =
+         ralloc_asprintf(params->mem_ctx,
+                         "SIMD%u shader requires %u bytes of scratch, "
+                         "but the device supports at most %u bytes",
+                         simd_width, s->scratch_size,
+                         devinfo->max_scratch_size_per_thread);
+      ralloc_free(s);
+      return NULL;
+   }
+
    JAY_PASS(s, jay_lower_post_ra);
 
    /* jay_opt_postra_vectorize works on back-to-back moves, which we get coming
@@ -5010,6 +5023,8 @@ jay_compile_simd(const struct intel_device_info *devinfo,
    if (s->stage == MESA_SHADER_FRAGMENT && s->helpers_tracked) {
       JAY_PASS(s, jay_lower_helpers);
    }
+
+   JAY_PASS(s, jay_lower_send);
 
    if (!(jay_debug & JAY_DBG_NOOPT)) {
       /* jay_assign_accumulators uses a conservative liveness analysis for
@@ -5127,6 +5142,11 @@ jay_compile(const struct intel_device_info *devinfo,
    jay_process_nir(devinfo, params, &fs_perprim);
 
    unsigned modes = jay_select_simd(devinfo, nir);
+   if (modes == 0) {
+      *params->error_str =
+         ralloc_strdup(mem_ctx, "No supported SIMD mode for shader");
+      return NULL;
+   }
 
    if (util_bitcount(modes) == 1) {
       return jay_compile_simd(devinfo, params, modes, false, &fs_perprim);
@@ -5138,6 +5158,7 @@ jay_compile(const struct intel_device_info *devinfo,
 
    struct jay_simd_variant {
       struct jay_shader_bin *bin;
+      char *error;
       const struct intel_shader_reloc *relocs;
       unsigned num_relocs;
    } variants[3] = {};
@@ -5164,6 +5185,7 @@ jay_compile(const struct intel_device_info *devinfo,
 
       struct jay_compile_params clone_params = *params;
       clone_params.nir = nir;
+      clone_params.error_str = &jv->error;
 
       jv->bin = jay_compile_simd(devinfo, &clone_params,
                                  simd, simd != smallest, &fs_perprim);
@@ -5192,20 +5214,34 @@ jay_compile(const struct intel_device_info *devinfo,
    /* Discard variants with poor VRT occupancy */
    if (devinfo->ver >= 30) {
       bool selected = false;
-      for (int i = ARRAY_SIZE(variants) - 1; i >= 0; i--) {
-         if (!variants[i].bin)
+      for (unsigned simd = largest; simd >= smallest; simd >>= 1) {
+         struct jay_simd_variant *jv = &variants[simd_to_index(simd)];
+         if (!jv->bin)
             continue;
 
          /* Also discard extra variants for non-fragment shaders. */
-         if ((variants[i].bin->stats[0].vrt_size > best_vrt_size &&
-              variants[i].bin->stats[0].vrt_size > vrt_threshold) ||
+         if ((jv->bin->stats[0].vrt_size > best_vrt_size &&
+              jv->bin->stats[0].vrt_size > vrt_threshold) ||
              (orig_nir->info.stage != MESA_SHADER_FRAGMENT && selected)) {
-            ralloc_free(variants[i].bin);
-            variants[i].bin = NULL;
+            ralloc_free(jv->bin);
+            jv->bin = NULL;
+            modes &= ~simd;
          } else {
             selected = true;
          }
       }
+   }
+
+   if (!modes) {
+      *params->error_str =
+         ralloc_strdup(mem_ctx, "Failed to compile any SIMD variant");
+      for (unsigned i = 0; i < ARRAY_SIZE(variants); i++) {
+         if (variants[i].error) {
+            ralloc_asprintf_append(params->error_str, "\nSIMD%u: %s",
+                                   8u << i, variants[i].error);
+         }
+      }
+      return NULL;
    }
 
    /* Merge into a single binary */

@@ -923,6 +923,7 @@ jay_process_nir(const struct intel_device_info *devinfo,
       /* Do this lowering before jay_populate_prog_data(). */
       JAY_NIR_PASS(nir_opt_frag_coord_to_pixel_coord);
       JAY_NIR_PASS(nir_lower_frag_coord_to_pixel_coord);
+      JAY_NIR_PASS(nir_lower_alu_to_scalar, NULL, NULL);
       JAY_NIR_PASS(nir_opt_barycentric, true);
       JAY_NIR_PASS(nir_opt_constant_folding);
 
@@ -1093,7 +1094,6 @@ jay_select_simd(const struct intel_device_info *devinfo, nir_shader *nir)
    }
 
    unsigned modes = (32 | 16 | 8) & ~unsupported_modes;
-   assert(modes && "some SIMD mode must be supported");
 
    /* Skip undesirable modes when possible */
    if (modes & ~undesirable_modes) {
@@ -1150,12 +1150,11 @@ jay_process_nir_for_simd(const struct intel_device_info *devinfo,
                 nir_metadata_control_flow, NULL);
 
    /* Late postprocess while remaining in SSA */
-   /* Run fsign lowering again after the last time brw_nir_optimize is called.
-    * As is the case with conversion lowering (below), brw_nir_optimize can
-    * create additional fsign instructions.
+   /* Run algebraic lowering after the last brw_nir_optimize call, which
+    * can recreate operations such as fsign.
     */
    JAY_NIR_PASS(jay_nir_lower_bfloat_math);
-   JAY_NIR_PASS(jay_nir_lower_fsign, devinfo->verx10);
+   JAY_NIR_PASS(jay_nir_lower_algebraic, devinfo->verx10);
    JAY_NIR_PASS(jay_nir_lower_bool);
    JAY_NIR_PASS(nir_opt_cse);
    JAY_NIR_PASS(nir_opt_dce);

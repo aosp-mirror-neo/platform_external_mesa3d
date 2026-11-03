@@ -29,7 +29,7 @@ struct jay_fs_perprim_data {
 };
 
 bool jay_nir_lower_bool(nir_shader *nir);
-bool jay_nir_lower_fsign(nir_shader *nir, unsigned verx10);
+bool jay_nir_lower_algebraic(nir_shader *nir, unsigned verx10);
 bool jay_nir_lower_bfloat_math(nir_shader *nir);
 
 void jay_populate_prog_data(const struct intel_device_info *devinfo,
@@ -104,6 +104,8 @@ void jay_lower_flags(jay_shader *s);
 void jay_lower_pre_ra(jay_shader *s);
 void jay_lower_post_ra(jay_shader *s);
 void jay_lower_helpers(jay_shader *s);
+void jay_lower_helpers_pre_ra(jay_shader *s);
+void jay_lower_send(jay_shader *func);
 void jay_lower_spill(jay_function *func);
 void jay_lower_simd_width(jay_shader *s);
 void jay_lower_scoreboard(jay_shader *s);
