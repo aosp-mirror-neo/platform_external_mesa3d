@@ -60,6 +60,24 @@ genX(CmdBeginVideoCodingKHR)(VkCommandBuffer commandBuffer,
    }
 }
 
+static bool
+anv_video_rc_config_changed(const struct anv_video_rc_state *a,
+                            const struct anv_video_rc_state *b)
+{
+   return a->average_bitrate != b->average_bitrate ||
+          a->max_bitrate != b->max_bitrate ||
+          a->frame_rate_num != b->frame_rate_num ||
+          a->frame_rate_den != b->frame_rate_den ||
+          a->vbv_size_bits != b->vbv_size_bits ||
+          a->vbv_initial_fullness_bits != b->vbv_initial_fullness_bits ||
+          a->min_qp != b->min_qp ||
+          a->max_qp != b->max_qp ||
+          a->gop_frame_count != b->gop_frame_count ||
+          a->idr_period != b->idr_period ||
+          a->consecutive_b_frames != b->consecutive_b_frames ||
+          a->rc_flags != b->rc_flags;
+}
+
 void
 genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
                                const VkVideoCodingControlInfoKHR *pCodingControlInfo)
@@ -71,8 +89,15 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
          flush.VideoPipelineCacheInvalidate = 1;
       }
 
-      if (pCodingControlInfo->flags &  VK_VIDEO_CODING_CONTROL_ENCODE_RATE_CONTROL_BIT_KHR)
-         cmd_buffer->video.vid->rc.frame_counter = 0;
+      /* From the Vulkan 1.4 spec, "Video Coding Control":
+       *
+       *    "For encode sessions, the reset operation returns rate control
+       *    configuration to implementation default settings and sets the
+       *    video encode quality level to zero."
+       */
+      struct anv_video_session *vid = cmd_buffer->video.vid;
+      vid->rc_mode = VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DEFAULT_KHR;
+      memset(&vid->rc, 0, sizeof(vid->rc));
    }
 
    if (pCodingControlInfo->flags &  VK_VIDEO_CODING_CONTROL_ENCODE_RATE_CONTROL_BIT_KHR) {
@@ -80,6 +105,8 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
          vk_find_struct_const(pCodingControlInfo->pNext, VIDEO_ENCODE_RATE_CONTROL_INFO_KHR);
       struct anv_video_session *vid = cmd_buffer->video.vid;
       struct anv_video_rc_state *rc = &vid->rc;
+      const struct anv_video_rc_state old_rc = *rc;
+      const VkVideoEncodeRateControlModeFlagBitsKHR old_rc_mode = vid->rc_mode;
 
       vid->rc_mode = rate_control_info->rateControlMode;
 
@@ -130,6 +157,9 @@ genX(CmdControlVideoCodingKHR)(VkCommandBuffer commandBuffer,
          rc->consecutive_b_frames = h264_rc->consecutiveBFrameCount;
          rc->rc_flags = h264_rc->flags;
       }
+
+      if (vid->rc_mode != old_rc_mode || anv_video_rc_config_changed(&old_rc, rc))
+         rc->brc_reset = true;
    }
 }
 
