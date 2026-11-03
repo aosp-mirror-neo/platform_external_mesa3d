@@ -311,6 +311,10 @@ cc_library_static {
         ":u_tracepoints.c",
         ":u_unfilled_gen.c",
     ],
+    extra_include_dir_deps: [
+        "indices/u_indices.c",
+        "indices/u_unfilled_indices.c",
+    ],
     static_libs: [
         "blake3",
         "compiler",

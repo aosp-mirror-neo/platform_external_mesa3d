@@ -135,18 +135,7 @@ cc_library_static {
         "wsi_common.c",
         "wsi_common_drm.c",
         "wsi_common_headless.c",
-    ] + select((arch(), os()), {
-        ("x86_64", "linux_glibc"): [
-            "wsi_common_display.c",
-        ],
-        ("x86_64", "linux_musl"): [
-            "wsi_common_display.c",
-        ],
-        ("arm64", "linux_musl"): [
-            "wsi_common_display.c",
-        ],
-        (default, default): [],
-    }),
+    ],
     static_libs: [
         "blake3",
         "mesa_util",
