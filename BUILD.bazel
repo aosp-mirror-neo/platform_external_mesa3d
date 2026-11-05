@@ -6,6 +6,34 @@ load("@rules_cc//cc:cc_binary.bzl", "cc_binary")
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:objc_library.bzl", "objc_library")
 load("@rules_python//python:defs.bzl", "py_binary")
+load("//aemu-bazel:glslang.bzl", "glslang_spv_header")
+
+_VK_BVH_GLSLANG_ARGS = [
+    "--target-env",
+    "spirv1.5",
+    "-x",
+    "--quiet",
+    "-P#extension GL_GOOGLE_include_directive : require",
+    "-P#extension GL_EXT_control_flow_attributes : require",
+    "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require",
+    "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require",
+    "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require",
+    "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require",
+    "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require",
+    "-P#extension GL_EXT_scalar_block_layout : require",
+    "-P#extension GL_EXT_buffer_reference : require",
+    "-P#extension GL_EXT_buffer_reference2 : require",
+    "-P#extension GL_KHR_memory_scope_semantics : require",
+    "-P#extension GL_KHR_shader_subgroup_arithmetic : require",
+    "-P#extension GL_KHR_shader_subgroup_basic : require",
+    "-P#extension GL_KHR_shader_subgroup_shuffle : require",
+    "-P#extension GL_KHR_shader_subgroup_ballot : require",
+    "-P#extension GL_KHR_shader_subgroup_clustered : require",
+    "-P#extension GL_KHR_shader_subgroup_vote : require",
+    "-P#extension GL_EXT_shader_atomic_int64 : require",
+    "-P#extension GL_EXT_spirv_intrinsics : require",
+    "-P#extension GL_EXT_shared_memory_block : require",
+]
 
 config_setting(
     name = "is_linux_x86_64",
@@ -10739,7 +10767,7 @@ genrule(
     ],
     outs = ["src/gallium/auxiliary/draw_nir_lower_opcodes.c"],
     cmd = "$(location :python3) $(location src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/draw_nir_lower_opcodes.c)",
-    cmd_bat = 'for %a in ("$(execpath src/compiler/nir/nir_algebraic.py)") do $(location :python3) $(location src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py) -p "%~dpa." > $(location src/gallium/auxiliary/draw_nir_lower_opcodes.c)',
+    cmd_bat = "for %a in ($(execpath src/compiler/nir/nir_algebraic.py)) do $(location :python3) $(location src/gallium/auxiliary/draw/draw_nir_lower_opcodes.py) -p %~dpa. > $(location src/gallium/auxiliary/draw_nir_lower_opcodes.c)",
     tools = [":python3"],
 )
 
@@ -10803,38 +10831,42 @@ genrule(
     tools = [":python3"],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_hploc_internal_spv_h",
+    src = "src/vulkan/runtime/bvh/hploc_internal.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/hploc_internal.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/hploc_internal.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/hploc_internal.spv.h) $(location src/vulkan/runtime/bvh/hploc_internal.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/hploc_internal.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_id_prefix_sum_spv_h",
+    src = "src/vulkan/runtime/bvh/id_prefix_sum.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/id_prefix_sum.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/id_prefix_sum.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/id_prefix_sum.spv.h) $(location src/vulkan/runtime/bvh/id_prefix_sum.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/id_prefix_sum.spv.h) $(location src/vulkan/runtime/bvh/id_prefix_sum.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/id_prefix_sum.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
 genrule(
@@ -10910,55 +10942,61 @@ genrule(
     visibility = ["//visibility:public"],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_lbvh_generate_ir_spv_h",
+    src = "src/vulkan/runtime/bvh/lbvh_generate_ir.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/lbvh_generate_ir.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h) $(location src/vulkan/runtime/bvh/lbvh_generate_ir.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/lbvh_generate_ir.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_lbvh_main_spv_h",
+    src = "src/vulkan/runtime/bvh/lbvh_main.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/lbvh_main.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/lbvh_main.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/lbvh_main.spv.h) $(location src/vulkan/runtime/bvh/lbvh_main.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/lbvh_main.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_leaf_spv_h",
+    src = "src/vulkan/runtime/bvh/leaf.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/leaf.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/leaf.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/leaf.spv.h) $(location src/vulkan/runtime/bvh/leaf.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/leaf.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
 genrule(
@@ -11137,7 +11175,7 @@ genrule(
     ],
     outs = ["src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c"],
     cmd = "$(location :python3) $(location src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py) -p $$(dirname $(execpath src/compiler/nir/nir_algebraic.py)) > $(location src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c)",
-    cmd_bat = 'for %a in ("$(execpath src/compiler/nir/nir_algebraic.py)") do $(location :python3) $(location src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py) -p "%~dpa." > $(location src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c)',
+    cmd_bat = "for %a in ($(execpath src/compiler/nir/nir_algebraic.py)) do $(location :python3) $(location src/gallium/auxiliary/gallivm/lp_bld_nir_no_integer_algebraic.py) -p %~dpa. > $(location src/gallium/auxiliary/lp_bld_nir_no_integer_algebraic.c)",
     tools = [":python3"],
 )
 
@@ -11153,7 +11191,7 @@ genrule(
         "src/gallium/frontends/lavapipe/lvp_drirc.h",
     ],
     cmd = "$(location :python3) $(location src/gallium/frontends/lavapipe/lvp_drirc_gen.py) --import-path $$(dirname $(execpath src/util/drirc_gen.py)) --drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) --drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) --validate $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf)",
-    cmd_bat = 'for %a in ("$(execpath src/util/drirc_gen.py)") do $(location :python3) $(location src/gallium/frontends/lavapipe/lvp_drirc_gen.py) --import-path "%~dpa." --drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) --drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) --validate $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf)',
+    cmd_bat = "for %a in ($(execpath src/util/drirc_gen.py)) do $(location :python3) $(location src/gallium/frontends/lavapipe/lvp_drirc_gen.py) --import-path %~dpa. --drirc-src $(location src/gallium/frontends/lavapipe/lvp_drirc.c) --drirc-hdr $(location src/gallium/frontends/lavapipe/lvp_drirc.h) --validate $(location src/gallium/frontends/lavapipe/00-lavapipe-defaults.conf)",
     tools = [":python3"],
 )
 
@@ -11202,38 +11240,42 @@ genrule(
     visibility = ["//visibility:public"],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_morton_sort_32_spv_h",
+    src = "src/vulkan/runtime/bvh/morton_sort.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/morton_sort.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/morton_sort_32.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_32.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_32.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/morton_sort_32.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_morton_sort_64_spv_h",
+    src = "src/vulkan/runtime/bvh/morton_sort.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/morton_sort.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/morton_sort_64.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_64.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require' -DMORTON_SORT_KEY64=1",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/morton_sort_64.spv.h) $(location src/vulkan/runtime/bvh/morton_sort.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require" -DMORTON_SORT_KEY64=1',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/morton_sort_64.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS + ["-DMORTON_SORT_KEY64=1"],
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
 genrule(
@@ -11390,38 +11432,42 @@ genrule(
     tools = [":python3"],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_pair_triangles_spv_h",
+    src = "src/vulkan/runtime/bvh/pair_triangles.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/pair_triangles.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/pair_triangles.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/pair_triangles.spv.h) $(location src/vulkan/runtime/bvh/pair_triangles.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/pair_triangles.spv.h) $(location src/vulkan/runtime/bvh/pair_triangles.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/pair_triangles.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
-genrule(
+glslang_spv_header(
     name = "generate_ploc_internal_spv_h",
+    src = "src/vulkan/runtime/bvh/ploc_internal.comp",
     srcs = [
         "src/compiler/spirv/spirv_internal_exts.h",
-        "src/vulkan/runtime/bvh/ploc_internal.comp",
         "src/vulkan/runtime/bvh/leaf.h",
         "src/vulkan/runtime/bvh/pair_triangles.h",
         "src/vulkan/runtime/bvh/vk_bvh_defines.h",
         "src/vulkan/runtime/bvh/vk_bvh_helpers.h",
         "src/vulkan/runtime/bvh/vk_debug.h",
     ],
-    outs = ["src/vulkan/runtime/bvh/ploc_internal.spv.h"],
-    cmd = "$(location @glslang//:glslangValidator) -V -I$$(dirname $(execpath src/vulkan/runtime/bvh/leaf.h)) -I$$(dirname $(execpath src/compiler/spirv/spirv_internal_exts.h)) --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet '-P#extension GL_GOOGLE_include_directive : require' '-P#extension GL_EXT_control_flow_attributes : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require' '-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require' '-P#extension GL_EXT_scalar_block_layout : require' '-P#extension GL_EXT_buffer_reference : require' '-P#extension GL_EXT_buffer_reference2 : require' '-P#extension GL_KHR_memory_scope_semantics : require' '-P#extension GL_KHR_shader_subgroup_arithmetic : require' '-P#extension GL_KHR_shader_subgroup_basic : require' '-P#extension GL_KHR_shader_subgroup_shuffle : require' '-P#extension GL_KHR_shader_subgroup_ballot : require' '-P#extension GL_KHR_shader_subgroup_clustered : require' '-P#extension GL_KHR_shader_subgroup_vote : require' '-P#extension GL_EXT_shader_atomic_int64 : require' '-P#extension GL_EXT_spirv_intrinsics : require' '-P#extension GL_EXT_shared_memory_block : require'",
-    cmd_bat = 'for %a in ("$(execpath src/vulkan/runtime/bvh/leaf.h)") do for %b in ("$(execpath src/compiler/spirv/spirv_internal_exts.h)") do $(location @glslang//:glslangValidator) -V -I"%~dpa." -I"%~dpb." --target-env spirv1.5 -x -o $(location src/vulkan/runtime/bvh/ploc_internal.spv.h) $(location src/vulkan/runtime/bvh/ploc_internal.comp) --quiet "-P#extension GL_GOOGLE_include_directive : require" "-P#extension GL_EXT_control_flow_attributes : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int16 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int32 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require" "-P#extension GL_EXT_shader_explicit_arithmetic_types_float16 : require" "-P#extension GL_EXT_scalar_block_layout : require" "-P#extension GL_EXT_buffer_reference : require" "-P#extension GL_EXT_buffer_reference2 : require" "-P#extension GL_KHR_memory_scope_semantics : require" "-P#extension GL_KHR_shader_subgroup_arithmetic : require" "-P#extension GL_KHR_shader_subgroup_basic : require" "-P#extension GL_KHR_shader_subgroup_shuffle : require" "-P#extension GL_KHR_shader_subgroup_ballot : require" "-P#extension GL_KHR_shader_subgroup_clustered : require" "-P#extension GL_KHR_shader_subgroup_vote : require" "-P#extension GL_EXT_shader_atomic_int64 : require" "-P#extension GL_EXT_spirv_intrinsics : require" "-P#extension GL_EXT_shared_memory_block : require"',
-    tools = ["@glslang//:glslangValidator"],
+    out = "src/vulkan/runtime/bvh/ploc_internal.spv.h",
+    args = _VK_BVH_GLSLANG_ARGS,
+    includes = [
+        "src/compiler/spirv/spirv_internal_exts.h",
+        "src/vulkan/runtime/bvh/leaf.h",
+    ],
 )
 
 genrule(
@@ -11588,7 +11634,7 @@ genrule(
     ],
     outs = ["src/gallium/auxiliary/u_tracepoints.c"],
     cmd = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
-    cmd_bat = 'for %a in ("$(execpath src/util/perf/u_trace.py)") do for %b in ("$(execpath src/gallium/auxiliary/util/u_tracepoints.py)") do set "PYTHONPATH=%~dpa.;%~dpb." && $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)',
+    cmd_bat = "for %a in ($(execpath src/util/perf/u_trace.py)) do for %b in ($(execpath src/gallium/auxiliary/util/u_tracepoints.py)) do set PYTHONPATH=%~dpa.;%~dpb.&& $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -C $(location src/gallium/auxiliary/u_tracepoints.c)",
     tools = [":python3"],
 )
 
@@ -11600,7 +11646,7 @@ genrule(
     ],
     outs = ["src/gallium/auxiliary/u_tracepoints.h"],
     cmd = "PYTHONPATH=$$(dirname $(execpath src/util/perf/u_trace.py)):$$(dirname $(execpath src/gallium/auxiliary/util/u_tracepoints.py)) $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
-    cmd_bat = 'for %a in ("$(execpath src/util/perf/u_trace.py)") do for %b in ("$(execpath src/gallium/auxiliary/util/u_tracepoints.py)") do set "PYTHONPATH=%~dpa.;%~dpb." && $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)',
+    cmd_bat = "for %a in ($(execpath src/util/perf/u_trace.py)) do for %b in ($(execpath src/gallium/auxiliary/util/u_tracepoints.py)) do set PYTHONPATH=%~dpa.;%~dpb.&& $(location :python3) $(location src/gallium/auxiliary/util/u_tracepoints.py) -p $(RULEDIR) -H $(location src/gallium/auxiliary/u_tracepoints.h)",
     tools = [":python3"],
 )
 
