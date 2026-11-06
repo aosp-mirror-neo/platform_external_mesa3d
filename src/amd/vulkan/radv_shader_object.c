@@ -198,6 +198,9 @@ radv_shader_object_init_graphics(struct radv_shader_object *shader_obj, struct r
    gfx_state.dynamic_rasterization_samples = true;
    gfx_state.dynamic_provoking_vtx_mode = true;
    gfx_state.smooth_lines_may_be_enabled = true;
+   gfx_state.vrs_may_be_enabled = device->compiler_info.ac->gfx_level >= GFX10_3;
+   gfx_state.adjust_frag_coord_z = device->compiler_info.ac->has_vrs_frag_pos_z_bug;
+   gfx_state.custom_sample_locs_may_be_enabled = true;
    gfx_state.rs.polygon_mode_unknown = true;
 
    for (uint32_t i = 0; i < MAX_RTS; i++)
@@ -314,16 +317,16 @@ radv_shader_object_init_binary(struct radv_device *device, struct blob_reader *b
 
    binary_blake3 = blob_read_bytes(blob, BLAKE3_KEY_LEN);
    if (!binary_blake3)
-      return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+      return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
    binary_size = blob_read_uint32(blob);
    binary = blob_read_bytes(blob, binary_size);
    if (!binary || binary_size < sizeof(*binary) || binary->total_size != binary_size)
-      return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+      return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
    _mesa_blake3_compute(binary, binary->total_size, blake3);
    if (memcmp(blake3, binary_blake3, BLAKE3_KEY_LEN))
-      return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+      return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
    *shader_out = radv_shader_create(device, NULL, binary, true, NULL);
 
@@ -346,15 +349,15 @@ radv_shader_object_init(struct radv_shader_object *shader_obj, struct radv_devic
 
       const uint8_t *cache_uuid = blob_read_bytes(&blob, VK_UUID_SIZE);
       if (!cache_uuid)
-         return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+         return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
       if (memcmp(cache_uuid, pdev->cache_uuid, VK_UUID_SIZE))
-         return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+         return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
       const struct radv_shader_object_metadata *md =
          (struct radv_shader_object_metadata *)blob_read_bytes(&blob, sizeof(struct radv_shader_object_metadata));
       if (!md)
-         return VK_ERROR_INCOMPATIBLE_SHADER_BINARY_EXT;
+         return VK_INCOMPATIBLE_SHADER_BINARY_EXT;
 
       shader_obj->dynamic_offset_count = md->dynamic_offset_count;
 
@@ -464,6 +467,9 @@ radv_shader_object_create_linked(VkDevice _device, uint32_t createInfoCount, con
    gfx_state.dynamic_rasterization_samples = true;
    gfx_state.dynamic_provoking_vtx_mode = true;
    gfx_state.smooth_lines_may_be_enabled = true;
+   gfx_state.vrs_may_be_enabled = device->compiler_info.ac->gfx_level >= GFX10_3;
+   gfx_state.adjust_frag_coord_z = device->compiler_info.ac->has_vrs_frag_pos_z_bug;
+   gfx_state.custom_sample_locs_may_be_enabled = true;
    gfx_state.rs.polygon_mode_unknown = true;
 
    for (uint32_t i = 0; i < MAX_RTS; i++)

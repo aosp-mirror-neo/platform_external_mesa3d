@@ -247,7 +247,7 @@ radv_meta_push_constants(struct radv_cmd_buffer *cmd_buffer, VkPipelineLayout la
 {
    radv_meta_save(cmd_buffer, RADV_META_SAVE_CONSTANTS);
 
-   const VkPushConstantsInfoKHR push_constants_info = {
+   const VkPushConstantsInfo push_constants_info = {
       .sType = VK_STRUCTURE_TYPE_PUSH_CONSTANTS_INFO,
       .layout = layout,
       .stageFlags = stage,
@@ -356,8 +356,8 @@ void radv_fmask_color_expand(struct radv_cmd_buffer *cmd_buffer, struct radv_ima
                              const VkImageSubresourceRange *subresourceRange);
 
 void radv_copy_vrs_htile(struct radv_cmd_buffer *cmd_buffer, struct radv_image_view *vrs_iview, const VkRect2D *rect,
-                         struct radv_image *dst_image, uint32_t base_array_layer, uint64_t htile_va,
-                         bool read_htile_value);
+                         struct radv_image *dst_image, uint32_t base_array_layer, uint32_t layer_count,
+                         uint64_t htile_va, bool read_htile_value);
 
 bool radv_can_use_fmask_copy(struct radv_cmd_buffer *cmd_buffer, const struct radv_image *src_image,
                              const struct radv_image *dst_image, const VkOffset3D *src_offset,

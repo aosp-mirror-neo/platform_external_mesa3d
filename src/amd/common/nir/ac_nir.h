@@ -312,10 +312,15 @@ ac_nir_lower_legacy_gs(nir_shader *nir, ac_nir_lower_legacy_gs_options *options,
 typedef struct {
    /* System values. */
    bool msaa_disabled; /* true if MSAA is disabled, false may mean that the state is unknown */
+   bool vrs_disabled; /* true if VRS is disabled, false may mean that the state is unknown */
+   /* true if programmable sample locations are disabled, false may mean that the state is unknown */
+   bool custom_sample_locations_disabled;
    bool load_sample_positions_always_loads_current_ones; /* TODO: unify with RADV or remove */
    bool dynamic_rasterization_samples; /* TODO: unify with RADV or remove */
    int force_front_face; /* 0 -> keep, 1 -> set to true, -1 -> set to false */
+   bool has_front_face_select;
    bool sample_shading;
+   bool lower_sample_pos;
 
    /* barycentrics:
     *    msaa_disabled:
@@ -345,6 +350,7 @@ typedef struct {
    bool kill_z;
    bool kill_stencil;
    bool kill_samplemask;
+   bool lower_1bit_sample_mask_to_discard;
 } ac_nir_lower_ps_early_options;
 
 bool
@@ -428,8 +434,6 @@ bool
 ac_nir_lower_ps_late(nir_shader *nir, const ac_nir_lower_ps_late_options *options);
 
 typedef struct {
-   enum amd_gfx_level gfx_level;
-
    /* If true, round the layer component of the coordinates source to the nearest
     * integer for all array ops. This is always done for cube array ops.
     */

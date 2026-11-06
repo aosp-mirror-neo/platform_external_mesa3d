@@ -858,9 +858,12 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
          /* This eliminates system values and unused shader output components. */
          ac_nir_lower_ps_early_options early_options = {
             .msaa_disabled = msaa_disabled,
+            .vrs_disabled = !sel->screen->options.vrs2x2 || sample_shading,
+            .custom_sample_locations_disabled = true,
             .load_sample_positions_always_loads_current_ones = true,
             .force_front_face = key->ps.opt.force_front_face_input,
             .sample_shading = sample_shading,
+            .lower_sample_pos = true,
 
             .fbfetch_is_1D = key->ps.mono.fbfetch_is_1D,
             .fbfetch_layered = key->ps.mono.fbfetch_layered,
@@ -904,7 +907,10 @@ static void si_preprocess_nir(struct si_nir_shader_ctx *ctx)
          NIR_PASS(progress, nir, ac_nir_lower_sample_mask_in, &lower_sample_mask_in_options);
 
          ac_nir_lower_ps_early_options early_options = {
+            .vrs_disabled = !sel->screen->options.vrs2x2 || nir->info.fs.uses_sample_shading,
+            .custom_sample_locations_disabled = true,
             .sample_shading = nir->info.fs.uses_sample_shading,
+            .lower_sample_pos = true,
             .lower_color_inputs_to_load_color01 = true,
             .alpha_func = COMPARE_FUNC_ALWAYS,
             .color_mask = ~0,
@@ -976,7 +982,6 @@ static void si_postprocess_nir(struct si_nir_shader_ctx *ctx)
 
    NIR_PASS(progress, nir, ac_nir_lower_tex_coords,
             &(ac_nir_lower_tex_coords_options){
-               .gfx_level = sel->screen->info.gfx_level,
                .lower_array_layer_round_even = !sel->screen->info.compiler_info.conformant_trunc_coord,
             });
 
