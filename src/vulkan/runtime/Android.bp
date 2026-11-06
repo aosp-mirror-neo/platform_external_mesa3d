@@ -724,6 +724,7 @@ cc_library_static {
         ":vk_physical_device_spirv_caps",
         ":vk_synchronization_helpers",
         ":vulkan_lite_runtime_files",
+        "vk_app_workarounds.c",
         "vk_blend.c",
         "vk_buffer.c",
         "vk_buffer_view.c",
