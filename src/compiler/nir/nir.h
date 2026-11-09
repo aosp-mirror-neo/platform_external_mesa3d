@@ -529,7 +529,7 @@ typedef struct nir_variable {
        *
        * :c:struct:`nir_variable_mode`
        */
-      unsigned mode : 26;
+      unsigned mode : 22;
 
       /* A temporary for passes to store information. Used, for example, to
        * replace an unordered set with an ordered util_dynarray.
@@ -5753,8 +5753,6 @@ bool nir_lower_indirect_var_derefs_to_if_else_trees(nir_shader *shader,
                                                     const struct set *vars);
 
 bool nir_lower_locals_to_regs(nir_shader *shader, uint8_t bool_bitsize);
-
-bool nir_downgrade_pls_vars(nir_shader *shader);
 
 bool nir_lower_io_vars_to_temporaries(nir_shader *shader,
                                       nir_function_impl *entrypoint,

@@ -260,7 +260,7 @@ kk_get_device_features(
       .shaderUniformBufferArrayDynamicIndexing = true,
       .tessellationShader = true,
       .textureCompressionASTC_LDR = true,
-      .textureCompressionBC = true,
+      .textureCompressionBC = pdev->info.supports_bc_texture_compression,
       .textureCompressionETC2 = true,
       .vertexPipelineStoresAndAtomics = true,
 
@@ -1054,6 +1054,10 @@ get_metal_limits(struct kk_physical_device *pdev)
       mtl_device_max_buffer_length(pdev->mtl_dev_handle);
    pdev->info.max_sampler_count =
       mtl_device_max_argument_buffer_sampler_count(pdev->mtl_dev_handle);
+   pdev->info.supports_bc_texture_compression =
+      mtl_device_supports_bc_texture_compression(pdev->mtl_dev_handle);
+   pdev->info.supports_32_bit_float_filtering =
+      mtl_device_supports_32_bit_float_filtering(pdev->mtl_dev_handle);
    pdev->info.gpu_apple_family =
       mtl_device_get_gpu_apple_family(pdev->mtl_dev_handle);
 
@@ -1090,13 +1094,21 @@ kk_parse_environment_options(struct kk_physical_device *pdev)
    settings->gpu_capture_enabled =
       debug_get_bool_option("MESA_KK_GPU_CAPTURE", false);
 
+   if (settings->gpu_capture_enabled) {
+      settings->gpu_capture_dir =
+         debug_get_option("MESA_KK_GPU_CAPTURE_DIRECTORY", NULL);
+
+      settings->gpu_capture_immediately =
+         debug_get_bool_option("MESA_KK_GPU_CAPTURE_IMMEDIATELY", false);
+   }
+
    const char *list = debug_get_option("MESA_KK_DISABLE_WORKAROUNDS", "");
    const char *all_workarounds = "all";
    const size_t all_len = strlen(all_workarounds);
    for (unsigned n; n = strcspn(list, ","), *list; list += MAX2(1, n)) {
       if (n == all_len && !strncmp(list, all_workarounds, n)) {
          settings->disabled_workarounds = UINT64_MAX;
-         break;
+         return;
       }
 
       int index = atoi(list);

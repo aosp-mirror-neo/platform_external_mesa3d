@@ -8155,6 +8155,13 @@ radv_dst_access_flush(struct radv_cmd_buffer *cmd_buffer, VkPipelineStageFlags2 
          flush_bits |= AC_BARRIER_INV_L2;
    }
 
+   /* Image stores with DCC/HTILE read metadata through L2. */
+   if (dst_flags & VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT && flush_L2_metadata) {
+      flush_bits |= AC_BARRIER_INV_L2_METADATA;
+      if (!image_is_coherent)
+         flush_bits |= AC_BARRIER_INV_L2;
+   }
+
    if (dst_flags & VK_ACCESS_2_COMMAND_PREPROCESS_READ_BIT_EXT) {
       flush_bits |= AC_BARRIER_INV_VMEM;
       if (pdev->info.gfx_level < GFX9)
@@ -16109,7 +16116,7 @@ radv_handle_depth_image_transition(struct radv_cmd_buffer *cmd_buffer, struct ra
    struct radv_device *device = radv_cmd_buffer_device(cmd_buffer);
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
-   if (!radv_htile_enabled(image, range->baseMipLevel) && !radv_image_has_hiz(image))
+   if (!radv_htile_enabled(image, range->baseMipLevel) && (pdev->info.gfx_level < GFX12 || !radv_image_has_hiz(image)))
       return;
 
    if (src_layout == VK_IMAGE_LAYOUT_UNDEFINED || src_layout == VK_IMAGE_LAYOUT_ZERO_INITIALIZED_EXT) {
@@ -16400,7 +16407,7 @@ radv_handle_color_image_transition(struct radv_cmd_buffer *cmd_buffer, struct ra
    }
 
    if (needs_fmask_color_expand)
-      radv_fmask_color_expand(cmd_buffer, image, range);
+      radv_fmask_color_expand(cmd_buffer, image, dst_layout, range, dst_queue_mask);
 
    if (needs_dcc_retile)
       radv_retile_dcc(cmd_buffer, image);
@@ -16568,6 +16575,7 @@ radv_barrier(struct radv_cmd_buffer *cmd_buffer, uint32_t dep_count, const VkDep
       radv_mark_noncoherent_rb(cmd_buffer);
 
    radv_describe_barrier_start(cmd_buffer, reason);
+   radv_suspend_conditional_rendering(cmd_buffer);
 
    for (uint32_t dep_idx = 0; dep_idx < dep_count; dep_idx++) {
       const VkDependencyInfo *dep_info = &dep_infos[dep_idx];
@@ -16701,6 +16709,7 @@ radv_barrier(struct radv_cmd_buffer *cmd_buffer, uint32_t dep_count, const VkDep
 
    cmd_buffer->state.flush_bits |= dst_flush_bits;
 
+   radv_resume_conditional_rendering(cmd_buffer);
    radv_describe_barrier_end(cmd_buffer);
 }
 
