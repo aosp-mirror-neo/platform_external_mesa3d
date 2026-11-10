@@ -438,7 +438,8 @@ anv_GetPhysicalDeviceVideoCapabilitiesKHR(VkPhysicalDevice physicalDevice,
                                    VK_VIDEO_ENCODE_RATE_CONTROL_MODE_DISABLED_BIT_KHR;
 
       if (((pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR) ||
-           (pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR)) &&
+           (pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_H265_BIT_KHR) ||
+           (pVideoProfile->videoCodecOperation == VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR)) &&
             anv_video_encode_brc_supported(pdevice)) {
          enc_caps->rateControlModes |= VK_VIDEO_ENCODE_RATE_CONTROL_MODE_CBR_BIT_KHR |
                                        VK_VIDEO_ENCODE_RATE_CONTROL_MODE_VBR_BIT_KHR;
@@ -624,19 +625,24 @@ anv_GetPhysicalDeviceVideoFormatPropertiesKHR(VkPhysicalDevice physicalDevice,
 
    const struct VkVideoProfileListInfoKHR *prof_list = (struct VkVideoProfileListInfoKHR *)
       vk_find_struct_const(pVideoFormatInfo->pNext, VIDEO_PROFILE_LIST_INFO_KHR);
+   const VkImageUsageFlags2CreateInfoKHR *usage_2_info =
+      vk_find_struct_const(pVideoFormatInfo->pNext, IMAGE_USAGE_FLAGS_2_CREATE_INFO_KHR);
 
-   VkImageUsageFlags supportedImageUsage = pVideoFormatInfo->imageUsage;
-   VkImageCreateFlags supportedImageCreateFlags = 0;
+   const VkImageUsageFlags2KHR requested_usages = usage_2_info ?
+      usage_2_info->usage : pVideoFormatInfo->imageUsage;
 
-   if (pVideoFormatInfo->imageUsage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR ||
-       pVideoFormatInfo->imageUsage & VK_IMAGE_USAGE_VIDEO_ENCODE_SRC_BIT_KHR)
+   VkImageUsageFlags2KHR supportedImageUsage = requested_usages;
+   VkImageCreateFlags2KHR supportedImageCreateFlags = 0;
+
+   if ((requested_usages & VK_IMAGE_USAGE_2_VIDEO_DECODE_DST_BIT_KHR) ||
+       (requested_usages & VK_IMAGE_USAGE_2_VIDEO_ENCODE_SRC_BIT_KHR))
    {
-      supportedImageUsage |= (VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-                              VK_IMAGE_USAGE_TRANSFER_DST_BIT |
-                              VK_IMAGE_USAGE_SAMPLED_BIT);
+      supportedImageUsage |= (VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR |
+                              VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR |
+                              VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR);
 
-      supportedImageCreateFlags = VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT |
-                                  VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+      supportedImageCreateFlags = VK_IMAGE_CREATE_2_MUTABLE_FORMAT_BIT_KHR |
+                                  VK_IMAGE_CREATE_2_EXTENDED_USAGE_BIT_KHR;
 
    }
 
@@ -654,16 +660,16 @@ anv_GetPhysicalDeviceVideoFormatPropertiesKHR(VkPhysicalDevice physicalDevice,
          if (res != VK_SUCCESS)
             return res;
 
-         const VkImageUsageFlags dpb_output_coincide_usage =
-            VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR |
-            VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
+         const VkImageUsageFlags2KHR dpb_output_coincide_usage =
+            VK_IMAGE_USAGE_2_VIDEO_DECODE_DST_BIT_KHR |
+            VK_IMAGE_USAGE_2_VIDEO_DECODE_DPB_BIT_KHR;
 
          const bool decode_dpb_only =
-            (pVideoFormatInfo->imageUsage & dpb_output_coincide_usage) ==
-            VK_IMAGE_USAGE_VIDEO_DECODE_DPB_BIT_KHR;
+            (requested_usages & dpb_output_coincide_usage) ==
+            VK_IMAGE_USAGE_2_VIDEO_DECODE_DPB_BIT_KHR;
          const bool decode_dst_only =
-            (pVideoFormatInfo->imageUsage & dpb_output_coincide_usage) ==
-            VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR;
+            (requested_usages & dpb_output_coincide_usage) ==
+            VK_IMAGE_USAGE_2_VIDEO_DECODE_DST_BIT_KHR;
 
          /* Decoder supports only
           * VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR.
@@ -673,23 +679,49 @@ anv_GetPhysicalDeviceVideoFormatPropertiesKHR(VkPhysicalDevice physicalDevice,
          if (decode_dpb_only || decode_dst_only)
             supportedImageUsage |= dpb_output_coincide_usage;
 
-         if (profile->lumaBitDepth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR) {
-            vk_outarray_append_typed(VkVideoFormatPropertiesKHR, &out, p) {
-               p->format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
-               p->imageCreateFlags = supportedImageCreateFlags;
-               p->imageType = VK_IMAGE_TYPE_2D;
-               p->imageTiling = VK_IMAGE_TILING_OPTIMAL;
-               p->imageUsageFlags = supportedImageUsage;
-            }
-         }
+         VkImageTiling tilings[2];
+         unsigned num_tilings = 0;
+         tilings[num_tilings++] = VK_IMAGE_TILING_OPTIMAL;
+         if (supportedImageUsage & VK_IMAGE_USAGE_VIDEO_DECODE_DST_BIT_KHR)
+            tilings[num_tilings++] = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 
-         if (profile->lumaBitDepth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR) {
-            vk_outarray_append_typed(VkVideoFormatPropertiesKHR, &out, p) {
-               p->format = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
-               p->imageCreateFlags = supportedImageCreateFlags;
-               p->imageType = VK_IMAGE_TYPE_2D;
-               p->imageTiling = VK_IMAGE_TILING_OPTIMAL;
-               p->imageUsageFlags = supportedImageUsage;
+         for (unsigned t = 0; t < num_tilings; t++) {
+            if (profile->lumaBitDepth == VK_VIDEO_COMPONENT_BIT_DEPTH_8_BIT_KHR) {
+               vk_outarray_append_typed(VkVideoFormatPropertiesKHR, &out, p) {
+                  p->format = VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+                  p->imageCreateFlags = supportedImageCreateFlags;
+                  p->imageType = VK_IMAGE_TYPE_2D;
+                  p->imageTiling = tilings[t];
+                  p->imageUsageFlags = supportedImageUsage;
+
+                  VkImageCreateFlags2CreateInfoKHR *create_2 =
+                     vk_find_struct(p->pNext, IMAGE_CREATE_FLAGS_2_CREATE_INFO_KHR);
+                  if (create_2)
+                     create_2->flags = supportedImageCreateFlags;
+                  VkImageUsageFlags2CreateInfoKHR *flags_2 =
+                     vk_find_struct(p->pNext, IMAGE_USAGE_FLAGS_2_CREATE_INFO_KHR);
+                  if (flags_2)
+                     flags_2->usage = supportedImageUsage;
+               }
+            }
+
+            if (profile->lumaBitDepth == VK_VIDEO_COMPONENT_BIT_DEPTH_10_BIT_KHR) {
+               vk_outarray_append_typed(VkVideoFormatPropertiesKHR, &out, p) {
+                  p->format = VK_FORMAT_G10X6_B10X6R10X6_2PLANE_420_UNORM_3PACK16;
+                  p->imageCreateFlags = supportedImageCreateFlags;
+                  p->imageType = VK_IMAGE_TYPE_2D;
+                  p->imageTiling = tilings[t];
+                  p->imageUsageFlags = supportedImageUsage;
+
+                  VkImageCreateFlags2CreateInfoKHR *create_2 =
+                     vk_find_struct(p->pNext, IMAGE_CREATE_FLAGS_2_CREATE_INFO_KHR);
+                  if (create_2)
+                     create_2->flags = supportedImageCreateFlags;
+                  VkImageUsageFlags2CreateInfoKHR *flags_2 =
+                  vk_find_struct(p->pNext, IMAGE_USAGE_FLAGS_2_CREATE_INFO_KHR);
+                  if (flags_2)
+                     flags_2->usage = supportedImageUsage;
+               }
             }
          }
       }
@@ -819,6 +851,8 @@ get_brc_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
    case ANV_VID_MEM_BRC_HISTORY:
       return align64(6080, 4096);
    case ANV_VID_MEM_BRC_VDENC_STATS:
+      if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR)
+         return 2 * align64(1216, 4096);
       return align64(1216, 4096);
    case ANV_VID_MEM_BRC_EXEC_SLB:
       /* - gen12:  MFX_AVC_IMG_STATE(84) + VDENC_IMG_STATE(140) + BBE(4) = 228
@@ -828,6 +862,8 @@ get_brc_video_mem_size(struct anv_video_session *vid, uint32_t mem_idx)
        */
       if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_H264_BIT_KHR)
          return align64(260, 4096);
+      if (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR)
+         return 4096;
       /* HEVC (HCP) slice layout, choose gen125 worst case. */
       return align64(64 + 576 + 70 * 1152, 4096);
    case ANV_VID_MEM_BRC_WP_DATA:
@@ -1120,6 +1156,11 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
    uint32_t width_in_sb, height_in_sb;
    get_av1_sb_size(&width_in_sb, &height_in_sb);
 
+   bool brc = (vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR) &&
+              anv_video_encode_brc_supported(dev->physical);
+
+   assert(align(av1_cdf_max_num_bytes, 64) == ANV_AV1_CDF_TABLE_SIZE);
+
    uint32_t max_tile_width_sb = DIV_ROUND_UP(4096, 1 << (av1_max_mib_size_log2 + av1_mi_size_log2));
    uint32_t max_tile_cols = 16; /* TODO. get the profile to work this out */
 
@@ -1220,6 +1261,22 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
       case ANV_VID_MEM_AV1_ENCODE_TILE_BITSTREAM_ACCUM:
          buffer_size = 1;
          break;
+      case ANV_VID_MEM_AV1_BRC_PAK_INSERT_OUT:
+      case ANV_VID_MEM_AV1_BRC_DATA:
+         if (!brc)
+            continue;
+         buffer_size = 4096;
+         break;
+      case ANV_VID_MEM_AV1_BRC_CDF_TABLES:
+         if (!brc)
+            continue;
+         buffer_size = 4 * ANV_AV1_CDF_TABLE_SIZE;
+         break;
+      case ANV_VID_MEM_AV1_BRC_CDF_ACTIVE:
+         if (!brc)
+            continue;
+         buffer_size = ANV_AV1_CDF_TABLE_SIZE;
+         break;
       default:
          assert(0);
          break;
@@ -1230,6 +1287,10 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
       case ANV_VID_MEM_AV1_CDF_DEFAULTS_1:
       case ANV_VID_MEM_AV1_CDF_DEFAULTS_2:
       case ANV_VID_MEM_AV1_CDF_DEFAULTS_3:
+      case ANV_VID_MEM_AV1_BRC_PAK_INSERT_OUT:
+      case ANV_VID_MEM_AV1_BRC_CDF_TABLES:
+      case ANV_VID_MEM_AV1_BRC_CDF_ACTIVE:
+      case ANV_VID_MEM_AV1_BRC_DATA:
          break;
       default:
          buffer_size *= 64;
@@ -1242,6 +1303,9 @@ get_av1_video_session_mem_reqs(struct anv_device *dev,
          p->memoryRequirements.memoryTypeBits = memory_types;
       }
    }
+
+   if (brc)
+      get_brc_video_session_mem_reqs(vid, &out.base, memory_types);
 }
 
 VkResult
@@ -1619,6 +1683,23 @@ anv_init_av1_cdf_tables(struct anv_cmd_buffer *cmd,
                           vid->vid_mem[ANV_VID_MEM_AV1_CDF_DEFAULTS_0 + i].size, NULL);
 
    }
+
+   struct anv_vid_mem *brc_cdf = &vid->vid_mem[ANV_VID_MEM_AV1_BRC_CDF_TABLES];
+
+   if (!(vid->vk.op & VK_VIDEO_CODEC_OPERATION_ENCODE_AV1_BIT_KHR) || !brc_cdf->mem)
+      return;
+
+   VkResult result = anv_device_map_bo(cmd->device, brc_cdf->mem->bo, brc_cdf->offset,
+                                       brc_cdf->size, NULL, &ptr);
+   if (result != VK_SUCCESS) {
+      anv_batch_set_error(&cmd->batch, result);
+      return;
+   }
+
+   for (unsigned i = 0; i < 4; i++)
+      init_all_av1_entry((uint16_t *)((uint8_t *)ptr + i * ANV_AV1_CDF_TABLE_SIZE), i);
+
+   anv_device_unmap_bo(cmd->device, brc_cdf->mem->bo, ptr, brc_cdf->size, NULL);
 }
 
 void

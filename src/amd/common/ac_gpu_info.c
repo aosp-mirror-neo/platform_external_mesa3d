@@ -150,6 +150,10 @@ static void set_custom_cu_en_mask(struct radeon_info *info)
                   is_good_form = false;
                   break;
                }
+            } else {
+               fprintf(stderr, "amd: invalid AMD_CU_MASK: unexpected character: %c\n", *str);
+               is_good_form = false;
+               break;
             }
 
             if (comma || !*str) {
@@ -193,30 +197,34 @@ static void set_custom_cu_en_mask(struct radeon_info *info)
             error = true;
          }
 
-         /* We usually disable 1 or 2 CUs for VS and GS, which means at last 1 other CU
+         /* We usually disable 1 or 2 CUs for VS and GS, which means at least 1 other CU
           * must be enabled.
           */
          uint32_t cu_mask_ge, unused;
          ac_compute_late_alloc(info, false, false, false, &unused, &cu_mask_ge);
-         cu_mask_ge &= min_full_cu_mask;
 
-         if ((spi_cu_en & cu_mask_ge) == 0) {
-            fprintf(stderr, "amd: invalid AMD_CU_MASK: at least 1 CU from 0x%x per SA must be "
-                            "enabled (late alloc constraint for GE)\n", cu_mask_ge);
-            error = true;
-         }
+         /* The late alloc constraints only apply when late alloc is actually enabled. */
+         if (cu_mask_ge != 0xffff) {
+            cu_mask_ge &= min_full_cu_mask;
 
-         if ((min_full_cu_mask & spi_cu_en & ~cu_mask_ge) == 0) {
-            fprintf(stderr, "amd: invalid AMD_CU_MASK: at least 1 CU from 0x%x per SA must be "
-                            "enabled (late alloc constraint for PS)\n",
-                    min_full_cu_mask & ~cu_mask_ge);
-            error = true;
+            if ((spi_cu_en & cu_mask_ge) == 0) {
+               fprintf(stderr, "amd: invalid AMD_CU_MASK: at least 1 CU from 0x%x per SA must be "
+                               "enabled (late alloc constraint for GE)\n", cu_mask_ge);
+               error = true;
+            }
+
+            if ((min_full_cu_mask & spi_cu_en & ~cu_mask_ge) == 0) {
+               fprintf(stderr, "amd: invalid AMD_CU_MASK: at least 1 CU from 0x%x per SA must be "
+                               "enabled (late alloc constraint for PS)\n",
+                       min_full_cu_mask & ~cu_mask_ge);
+               error = true;
+            }
          }
       }
 
       if (!error) {
          info->spi_cu_en = spi_cu_en;
-         info->spi_cu_en_has_effect = spi_cu_en & BITFIELD_MASK(info->max_good_cu_per_sa);
+         info->spi_cu_en_has_effect = (~spi_cu_en & BITFIELD_MASK(info->max_good_cu_per_sa)) != 0;
       }
    }
 }
@@ -335,6 +343,7 @@ ac_fill_compiler_info(struct radeon_info *info, const struct drm_amdgpu_info_dev
    out->has_mad32 =
       info->gfx_level == GFX9 ? info->family <= CHIP_MI200 : info->gfx_level < GFX10_3;
    out->has_packed_math_16bit = info->gfx_level >= GFX9;
+   out->has_unpacked_d16 = info->gfx_level == GFX8 && info->family != CHIP_STONEY;
    out->has_accelerated_dot_product =
       info->family == CHIP_VEGA20 ||
       (info->family >= CHIP_MI100 && info->family != CHIP_NAVI10 && info->family != CHIP_GFX1013);
@@ -599,6 +608,12 @@ ac_fill_memory_info(struct radeon_info *info, const struct drm_amdgpu_info_devic
 
       info->num_tcc_blocks = info->max_tcc_blocks;
    }
+
+   /* TODO: Get this from the kernel, see gc_scalar_data_cache_line_size. (or measure it with gpu-ratemeter) */
+   /* Measured SMEM cache info (line size, cache size) with gpu-ratemeter:
+    * - GFX10.3: 128B, 16K
+    */
+   info->smem_cache_line_size = info->gfx_level >= GFX10 ? 128 : 64;
 
    /* Firmware wrongly reports 0 bytes of MALL being present on Navi33.
     * Work around this by manually computing cache sizes. */
@@ -1084,6 +1099,16 @@ void ac_fill_bug_info(struct radeon_info *info)
    info->has_streamout_vgt_hang_bug = info->family == CHIP_HAWAII ||
                                       info->family == CHIP_TONGA ||
                                       info->family == CHIP_FIJI;
+
+   /* The GE can compute an incorrect number of indices for back-to-back
+    * opaque draws (DrawTransformFeedback) if the DRAW_OPAQUE registers are
+    * updated within 5 cycles on different contexts. 3 SQ_NON_EVENTs are
+    * required after the DRAW_OPAQUE packet to work around it.
+    *
+    * See drawOpaqueSqNonEvents in PAL.
+    */
+   info->has_draw_opaque_ge_bug = info->gfx_level >= GFX11_5 &&
+                                  info->gfx_level <= GFX12;
 }
 
 void ac_fill_feature_info(struct radeon_info *info, const struct drm_amdgpu_info_device *device_info)
@@ -1103,13 +1128,22 @@ void ac_fill_feature_info(struct radeon_info *info, const struct drm_amdgpu_info
     */
    info->cp_dma_supports_sparse = info->gfx_level >= GFX10;
 
-   /* Disable sparse mappings on GFX6 due to VM faults in CP DMA. Enable them once
-    * these faults are mitigated in software.
-    * Disable sparse mappings on GFX7-8 due to GPU hangs in the VK CTS,
-    * except Polaris where it happens to work "well enough".
-    * Enable them when these are investigated and fixed in the driver.
+   /* Sparse is supported on all generations, but the feature set varies.
+    * Memory controller support:
+    * - GFX6-8: sparse is supported through the PRT aperture
+    * - GFX9+: sparse is supported through the PRT page table entry flag
+    * Tiling support:
+    * - GFX6: no sparse-specific tiling modes (thus unaligned mip size)
+    * - GFX7+: standard block size for 2D images, non-standard for 3D images
+    * - GFX9+: standard block size for 2D and 3D images
+    *
+    * TODO: figure out VK CTS test failures on GFX6 and GFX7-8 APUs.
     */
-   info->has_sparse = info->family >= CHIP_POLARIS10;
+   info->has_sparse = info->gfx_level >= GFX7 &&
+                      info->family != CHIP_STONEY &&
+                      info->family != CHIP_CARRIZO &&
+                      info->family != CHIP_KABINI &&
+                      info->family != CHIP_KAVERI;
    info->has_sparse_image_3d = info->gfx_level >= GFX7;
    info->has_sparse_image_standard_3d = info->gfx_level >= GFX9;
    info->has_sparse_unaligned_mip_size = info->gfx_level >= GFX7;
@@ -1231,9 +1265,6 @@ void ac_fill_hw_info(struct radeon_info *info, const struct drm_amdgpu_info_devi
       info->clock_crystal_freq = 1;
    }
 
-   info->tcc_rb_non_coherent = info->gfx_level < GFX12 &&
-                               !util_is_power_of_two_or_zero(info->num_tcc_blocks) &&
-                               info->num_rb != info->num_tcc_blocks;
    info->cp_sdma_ge_use_system_memory_scope = info->gfx_level == GFX12;
    info->cp_dma_use_L2 = info->gfx_level >= GFX7 && !info->cp_sdma_ge_use_system_memory_scope;
 
@@ -1243,6 +1274,9 @@ void ac_fill_hw_info(struct radeon_info *info, const struct drm_amdgpu_info_devi
 
    /* Get the number of good compute units. */
    info->num_cu = 0;
+   info->min_good_cu_per_sa = UINT32_MAX;
+   info->max_good_cu_per_sa = 0;
+
    for (int i = 0; i < info->max_se; i++) {
       for (int j = 0; j < info->max_sa_per_se; j++) {
          if (info->gfx_level >= GFX11) {
@@ -1265,9 +1299,19 @@ void ac_fill_hw_info(struct radeon_info *info, const struct drm_amdgpu_info_devi
          } else {
             info->cu_mask[i][j] = device_info->cu_bitmap[i][j];
          }
-         info->num_cu += util_bitcount(info->cu_mask[i][j]);
+
+         const unsigned num_cu_in_sa = util_bitcount(info->cu_mask[i][j]);
+
+         /* Ignore SAs that have no CUs. */
+         if (num_cu_in_sa) {
+            info->min_good_cu_per_sa = MIN2(info->min_good_cu_per_sa, num_cu_in_sa);
+            info->max_good_cu_per_sa = MAX2(info->max_good_cu_per_sa, num_cu_in_sa);
+            info->num_cu += num_cu_in_sa;
+         }
       }
    }
+
+   assert(info->min_good_cu_per_sa <= info->max_good_cu_per_sa);
 
    if (info->gfx_level >= GFX10_3 && info->max_se > 1) {
       uint32_t enabled_se_mask = 0;
@@ -1300,16 +1344,9 @@ void ac_fill_hw_info(struct radeon_info *info, const struct drm_amdgpu_info_devi
    }
 
    info->num_rb = util_bitcount64(info->enabled_rb_mask);
-
-   /* On GFX10, only whole WGPs (in units of 2 CUs) can be disabled,
-    * and max - min <= 2.
-    */
-   unsigned cu_group = info->gfx_level >= GFX10 ? 2 : 1;
-   info->max_good_cu_per_sa =
-      DIV_ROUND_UP(info->num_cu, (info->num_se * info->max_sa_per_se * cu_group)) *
-      cu_group;
-   info->min_good_cu_per_sa =
-      (info->num_cu / (info->num_se * info->max_sa_per_se * cu_group)) * cu_group;
+   info->tcc_rb_non_coherent = info->gfx_level < GFX12 &&
+                               !util_is_power_of_two_or_zero(info->num_tcc_blocks) &&
+                               info->num_rb != info->num_tcc_blocks;
 
    info->gfx_ib_pad_with_type2 = info->gfx_level == GFX6;
 
@@ -2165,6 +2202,7 @@ void ac_print_gpu_info(FILE *f, const struct radeon_info *info, int fd)
    fprintf(f, "    has_fma_mix = %i\n", info->compiler_info.has_fma_mix);
    fprintf(f, "    has_mad32 = %i\n", info->compiler_info.has_mad32);
    fprintf(f, "    has_packed_math_16bit = %i\n", info->compiler_info.has_packed_math_16bit);
+   fprintf(f, "    has_unpacked_d16 = %i\n", info->compiler_info.has_unpacked_d16);
    fprintf(f, "    has_accelerated_dot_product = %i\n", info->compiler_info.has_accelerated_dot_product);
    fprintf(f, "    has_image_bvh_intersect_ray = %i\n", info->compiler_info.has_image_bvh_intersect_ray);
    fprintf(f, "    has_ngg_passthru_no_msg = %i\n", info->compiler_info.has_ngg_passthru_no_msg);
@@ -2397,10 +2435,9 @@ void ac_get_harvested_configs(const struct radeon_info *info, unsigned raster_co
    unsigned se_mask[4];
    unsigned se;
 
-   se_mask[0] = ((1 << rb_per_se) - 1) & rb_mask;
-   se_mask[1] = (se_mask[0] << rb_per_se) & rb_mask;
-   se_mask[2] = (se_mask[1] << rb_per_se) & rb_mask;
-   se_mask[3] = (se_mask[2] << rb_per_se) & rb_mask;
+   /* se_mask[i] == 0 means the rasterizer and the pixel pipeline in the SE is harvested. */
+   for (unsigned i = 0; i < 4; i++)
+      se_mask[i] = (rb_mask >> (i * rb_per_se)) & BITFIELD_MASK(rb_per_se);
 
    assert(num_se == 1 || num_se == 2 || num_se == 4);
    assert(sh_per_se == 1 || sh_per_se == 2);

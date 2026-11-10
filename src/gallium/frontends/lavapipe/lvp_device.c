@@ -128,7 +128,7 @@ static const struct vk_instance_extension_table lvp_instance_extensions_supporte
 #ifdef VK_USE_PLATFORM_METAL_EXT
    .EXT_metal_surface                        = true,
 #endif
-#ifndef VK_USE_PLATFORM_WIN32_KHR
+#if defined(LVP_USE_WSI_PLATFORM) && !defined(VK_USE_PLATFORM_WIN32_KHR)
    .EXT_headless_surface                     = true,
 #endif
 };
@@ -276,7 +276,9 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
 #endif
    .EXT_mesh_shader                       = true,
    .EXT_multisampled_render_to_single_sampled = true,
-   .EXT_multisampled_render_to_swapchain = true,
+#ifdef LVP_USE_WSI_PLATFORM
+   .EXT_multisampled_render_to_swapchain  = true,
+#endif
    .EXT_multi_draw                        = true,
    .EXT_mutable_descriptor_type           = true,
    .EXT_nested_command_buffer             = true,
@@ -459,8 +461,8 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .alphaToOne                               = true,
       .multiViewport                            = true,
       .samplerAnisotropy                        = true,
-      .textureCompressionETC2                   = false,
-      .textureCompressionASTC_LDR               = false,
+      .textureCompressionETC2                   = true,
+      .textureCompressionASTC_LDR               = true,
       .textureCompressionBC                     = true,
       .occlusionQueryPrecise                    = true,
       .pipelineStatisticsQuery                  = true,
@@ -634,8 +636,10 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
 
+#ifdef LVP_USE_WSI_PLATFORM
       /* VK_EXT_multisampled_render_to_swapchain */
       .multisampledRenderToSwapchain = true,
+#endif
 
       /* VK_EXT_mutable_descriptor_type */
       .mutableDescriptorType = true,
@@ -1537,18 +1541,10 @@ lvp_physical_device_init(struct lvp_physical_device *device,
 #if defined(HAVE_LIBDRM) && defined(HAVE_LINUX_UDMABUF_H)
    int dmabuf_bits = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
    int supported_dmabuf_bits = device->pscreen->caps.dmabuf;
-   const bool dmabuf_import_export = (supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits;
-   const char *engine_name = instance->vk.app_info.engine_name;
-   /* if import or export is supported then EXT_external_memory_dma_buf is supported
-    *
-    * For zink, advertise the extension only when both import and export are
-    * supported since zink has assumed both for dmabuf support.
-    */
-   if (engine_name && strcmp(engine_name, "mesa zink") == 0)
-      device->vk.supported_extensions.EXT_external_memory_dma_buf = dmabuf_import_export;
-   else
-      device->vk.supported_extensions.EXT_external_memory_dma_buf = !!supported_dmabuf_bits;
-   if (dmabuf_import_export)
+   /* if import or export is supported then EXT_external_memory_dma_buf is supported */
+   if (supported_dmabuf_bits)
+      device->vk.supported_extensions.EXT_external_memory_dma_buf = true;
+   if ((supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits)
       device->vk.supported_extensions.EXT_image_drm_format_modifier = true;
    if (supported_dmabuf_bits & DRM_PRIME_CAP_IMPORT)
       device->vk.supported_extensions.ANDROID_external_memory_android_hardware_buffer = true;

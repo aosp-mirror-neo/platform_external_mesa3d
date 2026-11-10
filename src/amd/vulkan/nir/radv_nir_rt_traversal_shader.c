@@ -195,8 +195,7 @@ init_anyhit_vars(nir_shader *shader, struct anyhit_shader_vars *vars)
    vars->opaque = nir_variable_create(shader, nir_var_shader_temp, glsl_bool_type(), "intersection_opaque");
    vars->origin =
       nir_variable_create(shader, nir_var_shader_temp, glsl_vector_type(GLSL_TYPE_FLOAT, 3), "param_origin");
-   vars->dir =
-      nir_variable_create(shader, nir_var_shader_temp, glsl_vector_type(GLSL_TYPE_FLOAT, 3), "param_dir");
+   vars->dir = nir_variable_create(shader, nir_var_shader_temp, glsl_vector_type(GLSL_TYPE_FLOAT, 3), "param_dir");
    vars->tmin = nir_variable_create(shader, nir_var_shader_temp, glsl_float_type(), "ahit_tmin");
    vars->cull_mask_and_flags =
       nir_variable_create(shader, nir_var_shader_temp, glsl_uint_type(), "ahit_cull_mask_and_flags");
@@ -331,8 +330,8 @@ lower_ahit_isec_intrinsics(nir_builder *b, nir_intrinsic_instr *intr, void *_par
          nir_store_var(b, params->anyhit_vars->ahit_accept, nir_imm_true(b), 0x1);
          nir_store_var(b, params->candidate->tmax, intr->src[0].ssa, 1);
          nir_store_var(b, params->candidate->hit_kind, intr->src[1].ssa, 1);
-         nir_def *terminate_on_first_hit =
-            nir_test_mask(b, nir_load_var(b, params->anyhit_vars->cull_mask_and_flags), SpvRayFlagsTerminateOnFirstHitKHRMask);
+         nir_def *terminate_on_first_hit = nir_test_mask(b, nir_load_var(b, params->anyhit_vars->cull_mask_and_flags),
+                                                         SpvRayFlagsTerminateOnFirstHitKHRMask);
          nir_def *terminate = nir_ior(b, terminate_on_first_hit, nir_load_var(b, params->anyhit_vars->ahit_terminate));
          nir_store_var(b, params->anyhit_vars->ahit_terminate, terminate, 1);
 
@@ -721,7 +720,8 @@ radv_build_token_begin(nir_builder *b, const struct radv_compiler_info *compiler
    nir_push_if(b, trace);
 
    static_assert(offsetof(struct radv_ray_history_header, offset) == 0, "Unexpected offset");
-   nir_def *base_offset = nir_global_atomic(b, 32, ray_history_addr, nir_imm_int(b, token_size), .atomic_op = nir_atomic_op_iadd);
+   nir_def *base_offset =
+      nir_global_atomic(b, 32, ray_history_addr, nir_imm_int(b, token_size), .atomic_op = nir_atomic_op_iadd);
 
    /* Abuse the dword alignment of token_size to add an invalid bit to offset. */
    trace = nir_ieq_imm(b, nir_iand_imm(b, base_offset, 1), 0);
@@ -762,7 +762,8 @@ radv_build_token_end(nir_builder *b)
 static void
 radv_build_trace_ray_token(nir_builder *b, struct traversal_data *data)
 {
-   nir_def *dst_addr = radv_build_token_begin(b, data->compiler_info, radv_packed_token_trace_ray, sizeof(struct radv_packed_trace_ray_token));
+   nir_def *dst_addr = radv_build_token_begin(b, data->compiler_info, radv_packed_token_trace_ray,
+                                              sizeof(struct radv_packed_trace_ray_token));
    if (!dst_addr)
       return;
 
@@ -1000,7 +1001,7 @@ handle_candidate_triangle(nir_builder *b, struct radv_triangle_intersection *int
          for (unsigned i = 0; i < payload_param_count; ++i) {
             unsigned param_idx = AHIT_ISEC_ARG_HIT_ATTRIB_PAYLOAD_BASE + hit_attrib_param_count + i;
             params[param_idx] = nir_instr_def(&nir_build_deref_cast(b, nir_load_ray_payload_ptr_amd(b, 32, .base = i),
-                                                                    nir_var_shader_call_data, glsl_uint_type(), 4)
+                                                                    nir_var_shader_call_data_in, glsl_uint_type(), 4)
                                                   ->instr);
          }
          nir_build_indirect_call(b, data->ahit_isec_func, sbt_data.shader_addr, param_count, params);
@@ -1167,7 +1168,7 @@ handle_candidate_aabb(nir_builder *b, struct radv_leaf_intersection *intersectio
       for (unsigned i = 0; i < payload_param_count; ++i) {
          unsigned param_idx = AHIT_ISEC_ARG_HIT_ATTRIB_PAYLOAD_BASE + hit_attrib_param_count + i;
          params[param_idx] = nir_instr_def(&nir_build_deref_cast(b, nir_load_ray_payload_ptr_amd(b, 32, .base = i),
-                                                                 nir_var_shader_call_data, glsl_uint_type(), 4)
+                                                                 nir_var_shader_call_data_in, glsl_uint_type(), 4)
                                                ->instr);
       }
       nir_build_indirect_call(b, data->ahit_isec_func, sbt_data.shader_addr, param_count, params);
@@ -1321,6 +1322,7 @@ radv_build_traversal(const struct radv_compiler_info *compiler_info, struct radv
       .stack_stride = stack_stride,
       .stack_entries = MAX_STACK_ENTRY_COUNT,
       .ignore_cull_mask = params->ignore_cull_mask,
+      .tmin_zero = params->tmin_zero,
       .write_ray_history = !!compiler_info->rra_trace->ray_history_addr,
       .set_flags = info ? info->set_flags : 0,
       .unset_flags = info ? info->unset_flags : 0,

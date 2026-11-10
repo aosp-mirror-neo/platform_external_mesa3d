@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 

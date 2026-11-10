@@ -377,6 +377,13 @@ wsi_DestroySurfaceKHR(VkInstance _instance,
       return;
    }
 #endif
+#ifdef VK_USE_PLATFORM_XCB_KHR
+   if (surface->platform == VK_ICD_WSI_PLATFORM_XCB ||
+       surface->platform == VK_ICD_WSI_PLATFORM_XLIB) {
+      wsi_x11_surface_destroy(surface, _instance, pAllocator);
+      return;
+   }
+#endif
 #ifdef VK_USE_PLATFORM_WIN32_KHR
    if (surface->platform == VK_ICD_WSI_PLATFORM_WIN32) {
       wsi_win32_surface_destroy(surface, _instance, pAllocator);
@@ -1173,6 +1180,24 @@ wsi_GetPhysicalDeviceSurfaceCapabilities2KHR(
          present_timing->presentAtRelativeTimeSupported = VK_FALSE;
          present_timing->presentStageQueries = 0;
       }
+   }
+
+   /* If we used MESA_VK_WSI_PRESENT_MODE to force a specific present mode,
+    * we cannot reasonably expose present timing support since applications rely
+    * on the present mode to behave in a certain way.
+    * Present timing targets only work for FIFO. If user overrides with mailbox or immediate,
+    * the expectation is that the application will run unlocked, but forcing a specific target present time
+    * will undermine that. It may also break backends.
+    * Also, if application uses FIFO and only uses present timing for timing feedback,
+    * we end up in a situation where we risk hitting QUEUE_FULL situations, needlessly stressing applications,
+    * and causing terrible runtime performance since swapchains have to be constantly recreated. */
+   if (present_timing &&
+         (wsi_device->override_present_mode == VK_PRESENT_MODE_MAILBOX_KHR ||
+          wsi_device->override_present_mode == VK_PRESENT_MODE_IMMEDIATE_KHR)) {
+      present_timing->presentTimingSupported = VK_FALSE;
+      present_timing->presentAtAbsoluteTimeSupported = VK_FALSE;
+      present_timing->presentAtRelativeTimeSupported = VK_FALSE;
+      present_timing->presentStageQueries = 0;
    }
 
    return vr;

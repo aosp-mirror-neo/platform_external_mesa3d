@@ -534,10 +534,10 @@ emit_alu_dot_4x8_as_dp2acc(struct ir3_context *ctx, nir_alu_instr *alu,
 }
 
 static bool
-all_sat_compatible(struct ir3_instruction *instrs[], unsigned n)
+all_sat_is_fsat(struct ir3_instruction *instrs[], unsigned n)
 {
    for (unsigned i = 0; i < n; i++) {
-      if (!is_sat_compatible(instrs[i]->opc))
+      if (!sat_is_fsat(instrs[i]->opc))
          return false;
    }
 
@@ -709,7 +709,7 @@ emit_alu(struct ir3_context *ctx, nir_alu_instr *alu)
        * src instruction and create a mov.  This is easier for cp
        * to eliminate.
        */
-      if (all_sat_compatible(src[0].rpts, dst_sz) &&
+      if (all_sat_is_fsat(src[0].rpts, dst_sz) &&
           is_unique_use(&alu->src[0].src)) {
          set_instr_flags(src[0].rpts, dst_sz, IR3_INSTR_SAT);
          dst = ir3_MOV_rpt(b, dst_sz, src[0], dst_type);
@@ -1276,7 +1276,8 @@ emit_intrinsic_load_ubo(struct ir3_context *ctx, nir_intrinsic_instr *intr,
 
    /* First src is ubo index, which could either be an immed or not: */
    src0 = ir3_get_src(ctx, &intr->src[0])[0];
-   if (is_same_type_mov(src0) && (src0->srcs[0]->flags & IR3_REG_IMMED)) {
+   if (is_same_type_mov(src0, false) &&
+       (src0->srcs[0]->flags & IR3_REG_IMMED)) {
       base_lo = create_uniform(b, ubo + (src0->srcs[0]->iim_val * ptrsz));
       base_hi = create_uniform(b, ubo + (src0->srcs[0]->iim_val * ptrsz) + 1);
    } else {
@@ -3039,6 +3040,9 @@ emit_intrinsic(struct ir3_context *ctx, nir_intrinsic_instr *intr)
    case nir_intrinsic_load_draw_id:
       dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id));
       break;
+   case nir_intrinsic_load_draw_id_offset_ir3:
+      dst[0] = create_driver_param(ctx, IR3_DP_VS(draw_id_offset));
+      break;
    case nir_intrinsic_load_base_instance:
       dst[0] = create_driver_param(ctx, IR3_DP_VS(instid_base));
       break;
@@ -3957,11 +3961,11 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
          src0[nsrc0++] = create_immed_typed(b, fui(0.0), coord_pad_type);
    }
 
-   /* NOTE a3xx (and possibly a4xx?) might be different, using isaml
+   /* NOTE a3xx (and possibly a4xx?) might be different, using isam
     * with scaled x coord according to requested sample:
     */
    if (opc == OPC_ISAMM) {
-      if (ctx->compiler->txf_ms_with_isaml) {
+      if (ctx->compiler->txf_ms_with_isam) {
          /* the samples are laid out in x dimension as
           *     0 1 2 3
           * x_ms = (x << ms) + sample_index;
@@ -3972,7 +3976,10 @@ emit_tex(struct ir3_context *ctx, nir_tex_instr *tex)
          src0[0] = ir3_SHL_B(b, src0[0], 0, ms, 0);
          src0[0] = ir3_ADD_U(b, src0[0], 0, sample_index, 0);
 
-         opc = OPC_ISAML;
+         /* Multisample textures have no mipmaps, so use implicit LOD 0
+          * instead of ISAML, which requires a second source for the LOD.
+          */
+         opc = OPC_ISAM;
       } else {
          src0[nsrc0++] = sample_index;
       }

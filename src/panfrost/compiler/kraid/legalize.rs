@@ -17,7 +17,10 @@ fn move_src_to_tmp(b: &mut impl SSABuilder, src: &mut Src, bytes: u8) {
     debug_assert!(bytes > 0 && bytes <= 8);
     let tmp = b.alloc_ref((bytes * 8).into());
     let src_ref = std::mem::replace(&mut src.src_ref, tmp.clone().into());
-    b.copy_to(tmp.into(), DataType::i(bytes * 8), src_ref.into());
+
+    // Make sure the Src replicates since zero and imms assume Swizzle::NONE
+    let src = Src::from(src_ref).swizzle(Swizzle::replicate_scalar(bytes * 8));
+    b.copy_to(tmp.into(), DataType::i(bytes * 8), src);
 }
 
 /// Legalizes immediate sources by ensuring the following:
@@ -264,6 +267,11 @@ impl LegalizeFAU<'_> {
 
     fn extract_srcs(&mut self, model: &dyn Model, op: &Op) {
         for (src_idx, src) in op.srcs().iter().enumerate() {
+            // Fake sources don't count towards FAU bounds
+            if model.op_src_is_fake(op, src) {
+                continue;
+            }
+
             if matches!(src.src_ref, SrcRef::Zero) {
                 self.reads_k0 = true;
             }
@@ -495,6 +503,11 @@ fn legalize_fau_srcs(
     if !ctx.slots.is_empty() {
         if b.model().op_is_message(op) {
             ctx.legalize_message();
+            // BLEND and ATEST act either as ALU or as message instructions
+            // depending on state so we have to legalize both ways.
+            if matches!(op, Op::Blend(_) | Op::BlendCall(_) | Op::ATest(_)) {
+                ctx.legalize_execution_unit();
+            }
         } else {
             ctx.legalize_execution_unit();
         }

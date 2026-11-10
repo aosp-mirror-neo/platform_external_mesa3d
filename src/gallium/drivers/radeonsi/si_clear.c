@@ -777,6 +777,7 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
 
          /* Update the framebuffer state to reflect the change. */
          sctx->framebuffer.DB_has_shader_readable_metadata = true;
+         sctx->framebuffer.DB_meta_pipe_misaligned = zstex->htile_pipe_misaligned;
          sctx->framebuffer.dirty_zsbuf = true;
          si_mark_atom_dirty(sctx, &sctx->atoms.s.framebuffer);
 
@@ -883,8 +884,6 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
                update_db_stencil_clear = true;
             }
          }
-
-         zstex->need_flush_after_depth_decompression = update_db_depth_clear && sctx->gfx_level == GFX10_3;
       }
 
       /* Update DB_DEPTH_CLEAR. */
@@ -907,7 +906,7 @@ static void si_fast_clear(struct si_context *sctx, unsigned *buffers,
    if (num_clears) {
       si_barrier_before_image_fast_clear(sctx, clear_types);
       si_execute_clears(sctx, info, num_clears, sctx->render_cond_enabled);
-      si_barrier_after_image_fast_clear(sctx);
+      si_barrier_after_image_fast_clear(sctx, clear_types);
    }
 }
 
@@ -940,7 +939,7 @@ static void si_fb_clear_via_compute(struct si_context *sctx, unsigned *buffers,
       bool compute_clear = sctx->screen->debug_flags & DBG(FORCE_COMPUTE_BLIT);
 
       if (sctx->gfx_level >= GFX12) {
-         if (tex->surface.is_linear || tex->surface.thick_tiling || tex->surface.bpe <= 4 ||
+         if (tex->surface.is_linear || tex->surface.block256B_extent.depth > 1 || tex->surface.bpe <= 4 ||
              (tex->surface.bpe == 16 && tex->buffer.b.b.nr_samples <= 2))
             compute_clear = true;
       } else {
@@ -951,7 +950,7 @@ static void si_fb_clear_via_compute(struct si_context *sctx, unsigned *buffers,
             continue;
 
          /* Clears of thick and linear layouts are fastest with compute. */
-         if (tex->surface.thick_tiling ||
+         if (tex->surface.block256B_extent.depth > 1 ||
              (tex->surface.is_linear && (height > 1 || depth > 1 || width >= 8192)))
             compute_clear = true;
       }
@@ -1058,11 +1057,11 @@ static void gfx6_clear(struct pipe_context *ctx, unsigned buffers,
          si_set_barrier_flags(sctx, AC_BARRIER_SYNC_VS);
    }
 
-   if (unlikely(sctx->sqtt_enabled)) {
+   if (unlikely(si_is_sqtt_active(sctx))) {
       if (buffers & PIPE_CLEAR_COLOR)
-         sctx->sqtt_next_event = EventCmdClearColorImage;
+         sctx->sqtt.next_event = EventCmdClearColorImage;
       else if (buffers & PIPE_CLEAR_DEPTHSTENCIL)
-         sctx->sqtt_next_event = EventCmdClearDepthStencilImage;
+         sctx->sqtt.next_event = EventCmdClearDepthStencilImage;
    }
 
    si_blitter_begin(sctx, SI_CLEAR);
@@ -1109,11 +1108,11 @@ static void gfx12_clear(struct pipe_context *ctx, unsigned buffers,
    if (!buffers)
       return; /* all buffers have been cleared */
 
-   if (unlikely(sctx->sqtt_enabled)) {
+   if (unlikely(si_is_sqtt_active(sctx))) {
       if (buffers & PIPE_CLEAR_COLOR)
-         sctx->sqtt_next_event = EventCmdClearColorImage;
+         sctx->sqtt.next_event = EventCmdClearColorImage;
       else if (buffers & PIPE_CLEAR_DEPTHSTENCIL)
-         sctx->sqtt_next_event = EventCmdClearDepthStencilImage;
+         sctx->sqtt.next_event = EventCmdClearDepthStencilImage;
    }
 
    si_blitter_begin(sctx, SI_CLEAR);
@@ -1247,7 +1246,7 @@ bool si_compute_fast_clear_image(struct si_context *sctx, struct pipe_resource *
    assert(num_clears <= ARRAY_SIZE(info));
    si_barrier_before_image_fast_clear(sctx, clear_types);
    si_execute_clears(sctx, info, num_clears, render_condition_enable);
-   si_barrier_after_image_fast_clear(sctx);
+   si_barrier_after_image_fast_clear(sctx, clear_types);
    return true;
 }
 

@@ -1076,9 +1076,8 @@ radv_update_preamble_cs(struct radv_queue_state *queue, struct radv_device *devi
       if (i < 2 || task_rings_bo) {
          /* The two initial preambles have a cache flush at the beginning. */
          const enum amd_gfx_level gfx_level = pdev->info.gfx_level;
-         enum ac_barrier_flags flush_bits = AC_BARRIER_INV_ICACHE | AC_BARRIER_INV_SMEM |
-                                               AC_BARRIER_INV_VMEM | AC_BARRIER_INV_L2 |
-                                               AC_BARRIER_PIPELINESTAT_START;
+         enum ac_barrier_flags flush_bits = AC_BARRIER_INV_ICACHE | AC_BARRIER_INV_SMEM | AC_BARRIER_INV_VMEM |
+                                            AC_BARRIER_INV_L2 | AC_BARRIER_PIPELINESTAT_START;
 
          if (i == 0 || task_rings_bo) {
             /* The full flush preamble should also wait for previous shader work to finish. */
@@ -1177,16 +1176,18 @@ fail:
       radv_bo_destroy(device, NULL, gsvs_ring_bo);
    if (tess_rings_bo && tess_rings_bo != queue->tess_rings_bo)
       radv_bo_destroy(device, NULL, tess_rings_bo);
+   if (mesh_scratch_ring_bo && mesh_scratch_ring_bo != queue->mesh_scratch_ring_bo)
+      radv_bo_destroy(device, NULL, mesh_scratch_ring_bo);
    if (task_rings_bo && task_rings_bo != queue->task_rings_bo)
       radv_bo_destroy(device, NULL, task_rings_bo);
    if (ge_rings_bo && ge_rings_bo != queue->ge_rings_bo)
       radv_bo_destroy(device, NULL, ge_rings_bo);
    if (gds_bo && gds_bo != queue->gds_bo) {
-      ws->buffer_make_resident(ws, queue->gds_bo, false);
+      ws->buffer_make_resident(ws, gds_bo, false);
       radv_bo_destroy(device, NULL, gds_bo);
    }
    if (gds_oa_bo && gds_oa_bo != queue->gds_oa_bo) {
-      ws->buffer_make_resident(ws, queue->gds_oa_bo, false);
+      ws->buffer_make_resident(ws, gds_oa_bo, false);
       radv_bo_destroy(device, NULL, gds_oa_bo);
    }
 
@@ -1223,11 +1224,13 @@ radv_update_preambles(struct radv_queue_state *queue, struct radv_device *device
    for (uint32_t j = 0; j < cmd_buffer_count; j++) {
       struct radv_cmd_buffer *cmd_buffer = container_of(cmd_buffers[j], struct radv_cmd_buffer, vk);
 
-      needs.scratch_size_per_wave = MAX2(needs.scratch_size_per_wave, cmd_buffer->queue_state.scratch_size_per_wave_needed);
+      needs.scratch_size_per_wave =
+         MAX2(needs.scratch_size_per_wave, cmd_buffer->queue_state.scratch_size_per_wave_needed);
       needs.scratch_waves = MAX2(needs.scratch_waves, cmd_buffer->queue_state.scratch_waves_wanted);
       needs.compute_scratch_size_per_wave =
          MAX2(needs.compute_scratch_size_per_wave, cmd_buffer->queue_state.compute_scratch_size_per_wave_needed);
-      needs.compute_scratch_waves = MAX2(needs.compute_scratch_waves, cmd_buffer->queue_state.compute_scratch_waves_wanted);
+      needs.compute_scratch_waves =
+         MAX2(needs.compute_scratch_waves, cmd_buffer->queue_state.compute_scratch_waves_wanted);
       needs.esgs_ring_size = MAX2(needs.esgs_ring_size, cmd_buffer->queue_state.esgs_ring_size_needed);
       needs.gsvs_ring_size = MAX2(needs.gsvs_ring_size, cmd_buffer->queue_state.gsvs_ring_size_needed);
       needs.tess_rings |= cmd_buffer->queue_state.tess_rings_needed;
@@ -1323,9 +1326,8 @@ radv_create_flush_postamble(struct radv_queue *queue)
    enum ac_barrier_flags flush_bits = AC_BARRIER_SYNC_CS | AC_BARRIER_INV_L2;
 
    if (ip == AMD_IP_GFX)
-      flush_bits |= AC_BARRIER_SYNC_VS | AC_BARRIER_SYNC_PS | AC_BARRIER_SYNC_AND_INV_CB |
-                    AC_BARRIER_SYNC_AND_INV_DB | AC_BARRIER_SYNC_AND_INV_CB_META |
-                    AC_BARRIER_SYNC_AND_INV_DB_META;
+      flush_bits |= AC_BARRIER_SYNC_VS | AC_BARRIER_SYNC_PS | AC_BARRIER_SYNC_AND_INV_CB | AC_BARRIER_SYNC_AND_INV_DB |
+                    AC_BARRIER_SYNC_AND_INV_CB_META | AC_BARRIER_SYNC_AND_INV_DB_META;
 
    enum ac_rgp_flush_bits rgp_flush_bits = 0;
    uint32_t flush_cnt = 0;

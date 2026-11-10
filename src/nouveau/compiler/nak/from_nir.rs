@@ -76,7 +76,7 @@ fn init_info_from_nir(
                 let info_fs = unsafe { &nir.info.__bindgen_anon_1.fs };
                 ShaderStageInfo::Fragment(FragmentShaderInfo {
                     uses_kill: false,
-                    does_interlock: false,
+                    reads_interlock_ticket: false,
                     post_depth_coverage: info_fs.post_depth_coverage(),
                     early_fragment_tests: info_fs.early_fragment_tests(),
                     uses_sample_shading: info_fs.uses_sample_shading(),
@@ -1571,6 +1571,16 @@ impl<'a> ShaderFromNir<'a> {
             nir_op_imul_2x32_64 | nir_op_umul_2x32_64 => {
                 let signed = alu.op == nir_op_imul_2x32_64;
                 b.imul_2x32_64(srcs(0), srcs(1), signed)
+            }
+            nir_op_umad_2x32_64 => {
+                assert!(self.sm.sm() >= 70);
+                let dst = b.alloc_ssa_vec(RegFile::GPR, 2);
+                b.push_op(OpIMad64 {
+                    dst: dst.clone().into(),
+                    srcs: [srcs(0), srcs(1), srcs(2)],
+                    signed: false,
+                });
+                dst.into()
             }
             nir_op_imul_high | nir_op_umul_high => {
                 let signed = alu.op == nir_op_imul_high;
@@ -3502,6 +3512,17 @@ impl<'a> ShaderFromNir<'a> {
             }
             nir_intrinsic_load_sysval_nv => {
                 let idx = u8::try_from(intrin.base()).unwrap();
+
+                if idx == NAK_SV_ORDERING_TICKET {
+                    if let ShaderStageInfo::Fragment(info) =
+                        &mut self.info.stage
+                    {
+                        info.reads_interlock_ticket = true;
+                    } else {
+                        panic!("Ordering ticket is only available in fragment shaders");
+                    }
+                }
+
                 debug_assert!(intrin.def.num_components == 1);
                 debug_assert!(
                     intrin.def.bit_size == 32 || intrin.def.bit_size == 64

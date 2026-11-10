@@ -129,6 +129,8 @@ files_mesa_util = files(
   'texcompress_astc_luts_wrap.h',
   'texcompress_astc.cpp',
   'texcompress_astc.h',
+  'texcompress_etc.c',
+  'texcompress_etc.h',
   'timespec.h',
   'u_atomic.c',
   'u_atomic.h',
@@ -242,6 +244,7 @@ foreach i : [
   [with_gallium_freedreno, 'src/gallium/drivers/freedreno', '00-msm-defaults.conf'],
   [with_gallium_d3d12, 'src/gallium/drivers/d3d12', '00-d3d12-defaults.conf'],
   [with_gallium_svga, 'src/gallium/drivers/svga', '00-vmwgfx-defaults.conf'],
+  [with_kosmickrisp_vk, 'src/kosmickrisp/vulkan', '00-kk-defaults.conf'],
 ]
   if i[0]
     driver_folder = dir_source_root / i[1]

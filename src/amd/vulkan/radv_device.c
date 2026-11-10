@@ -23,6 +23,7 @@
 #include "tools/radv_rmv.h"
 #include "tools/radv_spm.h"
 #include "tools/radv_sqtt.h"
+#include "util/macros.h"
 #include "util/u_debug.h"
 #include "radv_cs.h"
 #include "radv_device.h"
@@ -30,6 +31,7 @@
 #include "radv_formats.h"
 #include "radv_physical_device.h"
 #include "radv_shader.h"
+#include "vk_app_workarounds.h"
 #include "vk_common_entrypoints.h"
 #include "vk_pipeline_cache.h"
 #include "vk_util.h"
@@ -62,8 +64,11 @@ radv_GetMemoryHostPointerPropertiesEXT(VkDevice _device, VkExternalMemoryHandleT
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT: {
       uint32_t memoryTypeBits = 0;
       for (int i = 0; i < pdev->memory_properties.memoryTypeCount; i++) {
-         if (pdev->memory_domains[i] == RADEON_DOMAIN_GTT && !(pdev->memory_flags[i] & RADEON_FLAG_GTT_WC)) {
-            memoryTypeBits = (1 << i);
+         uint32_t memoryType = 1u << i;
+
+         if ((device->memory_types_allowed & memoryType) && pdev->memory_domains[i] == RADEON_DOMAIN_GTT &&
+             !(pdev->memory_flags[i] & RADEON_FLAG_GTT_WC)) {
+            memoryTypeBits = memoryType;
             break;
          }
       }
@@ -771,9 +776,7 @@ init_app_workarounds_entrypoints(struct radv_device *device, struct dispatch_tab
    struct vk_device_entrypoint_table table = {0};
 
 #define SET_ENTRYPOINT(app_layer, entrypoint) table.entrypoint = app_layer##_##entrypoint;
-   if (!strcmp(pdev->drirc.debug.app_layer, "metroexodus")) {
-      SET_ENTRYPOINT(metro_exodus, GetSemaphoreCounterValue);
-   } else if (!strcmp(pdev->drirc.debug.app_layer, "rage2")) {
+   if (!strcmp(pdev->drirc.debug.app_layer, "rage2")) {
       SET_ENTRYPOINT(rage2, CmdBeginRenderPass);
    } else if (!strcmp(pdev->drirc.debug.app_layer, "quanticdream")) {
       SET_ENTRYPOINT(quantic_dream, UnmapMemory2);
@@ -1054,8 +1057,8 @@ radv_emit_default_sample_locations(const struct radv_physical_device *pdev, stru
     * support 16 samples.
     */
    if (pdev->info.gfx_level >= GFX7 && pdev->info.gfx_level < GFX12) {
-      radeon_set_context_reg(R_02882C_PA_SU_PRIM_FILTER_CNTL,
-                             S_02882C_XMAX_RIGHT_EXCLUSION(1) | S_02882C_YMAX_BOTTOM_EXCLUSION(1));
+      radeon_opt_set_context_reg(R_02882C_PA_SU_PRIM_FILTER_CNTL, AC_TRACKED_PA_SU_PRIM_FILTER_CNTL,
+                                 S_02882C_XMAX_RIGHT_EXCLUSION(1) | S_02882C_YMAX_BOTTOM_EXCLUSION(1));
    }
 
    if (pdev->info.gfx_level >= GFX12) {
@@ -1121,10 +1124,6 @@ radv_device_is_cache_disabled(const struct radv_device *device)
 
    /* The buffer address used for validating VAs is hardcoded. */
    if (device->debug_nir.valid_va.buffer_addr)
-      return true;
-
-   /* The buffer address used for shader abort is hardcoded. */
-   if (device->shader_abort.buffer_addr)
       return true;
 
    /* Pipeline caches can be disabled with RADV_DEBUG=nocache, with MESA_GLSL_CACHE_DISABLE=1 and
@@ -1290,7 +1289,6 @@ radv_device_init_compiler_info(struct radv_device *device)
             .trap_excp_flags = instance->trap_excp_flags,
             .debug_report = &instance->vk.debug_report,
             .debug_nir = &device->debug_nir,
-            .shader_abort = &device->shader_abort,
             .shader_dump_mtx = &instance->shader_dump_mtx,
             .keep_shader_info = device->keep_shader_info,
             .capture_shaders = RADV_DEBUG_DUMP_SHADERS(instance) || device->keep_shader_info,
@@ -1331,8 +1329,57 @@ radv_device_init_compiler_info(struct radv_device *device)
 
    radv_get_nir_options(&info);
 
+   radv_init_ps_epilog_format_infos(&info);
+
    device->compiler_info = info;
 }
+
+#ifndef _WIN32
+static enum radv_amdgpu_cs_domain_mode
+radv_get_cs_domain_mode(const struct radv_physical_device *pdev)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+   const char *cs_domain_str = pdev->drirc.performance.cs_domain;
+
+   if (instance->perftest_flags & RADV_PERFTEST_SAM)
+      return RADV_AMDGPU_CS_DOMAIN_VRAM;
+   if (instance->perftest_flags & RADV_PERFTEST_NO_SAM)
+      return RADV_AMDGPU_CS_DOMAIN_GTT;
+
+   if (strlen(cs_domain_str) > 0) {
+      if (!strcmp(cs_domain_str, "vram")) {
+         return RADV_AMDGPU_CS_DOMAIN_VRAM;
+      } else if (!strcmp(cs_domain_str, "gtt")) {
+         return RADV_AMDGPU_CS_DOMAIN_GTT;
+      } else if (strcmp(cs_domain_str, "auto")) {
+         fprintf(stderr, "radv: Invalid value found for radv_cs_domain. "
+                         "Accepted values are: auto, vram or gtt.\n");
+      }
+   }
+
+   return RADV_AMDGPU_CS_DOMAIN_AUTO;
+}
+
+static void
+radv_get_winsys_options(const struct radv_physical_device *pdev, struct radv_amdgpu_winsys_options *options)
+{
+   const struct radv_instance *instance = radv_physical_device_instance(pdev);
+
+   *options = (struct radv_amdgpu_winsys_options){
+      .is_virtio =
+         pdev->drm_device_type == RADV_DRM_DEVICE_AMDGPU_VPIPE || pdev->drm_device_type == RADV_DRM_DEVICE_VIRTIO,
+      .chain_ib = !RADV_DEBUG(instance, NO_IB_CHAINING),
+      .debug_all_bos = RADV_DEBUG(instance, ALL_BOS),
+      .debug_log_bos = RADV_DEBUG(instance, HANG),
+      .debug_vm = RADV_DEBUG(instance, VM),
+      .dump_ibs = RADV_DEBUG(instance, DUMP_IBS),
+      .dump_bo_history = RADV_DEBUG(instance, DUMP_BO_HISTORY),
+      .gtt_spill = !(instance->perftest_flags & RADV_PERFTEST_NO_GTT_SPILL),
+      .always_valid_bos = !!(instance->perftest_flags & RADV_PERFTEST_LOCAL_BOS),
+      .cs_domain_mode = radv_get_cs_domain_mode(pdev),
+   };
+}
+#endif
 
 static VkResult
 radv_create_winsys(struct radv_device *device)
@@ -1341,7 +1388,6 @@ radv_create_winsys(struct radv_device *device)
    return VK_ERROR_INCOMPATIBLE_DRIVER;
 #else
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const struct radv_instance *instance = radv_physical_device_instance(pdev);
    drmDevicePtr drm_device;
    VkResult result;
    int fd = -1;
@@ -1360,11 +1406,10 @@ radv_create_winsys(struct radv_device *device)
          return VK_ERROR_INITIALIZATION_FAILED;
    }
 
-   const bool is_virtio =
-      pdev->drm_device_type == RADV_DRM_DEVICE_AMDGPU_VPIPE || pdev->drm_device_type == RADV_DRM_DEVICE_VIRTIO;
+   struct radv_amdgpu_winsys_options options;
+   radv_get_winsys_options(pdev, &options);
 
-   result = radv_amdgpu_winsys_create(fd, &pdev->info, instance->debug_flags, instance->perftest_flags, is_virtio,
-                                      &device->ws);
+   result = radv_amdgpu_winsys_create(fd, &pdev->info, &options, &device->ws);
 
    if (fd != -1)
       close(fd);
@@ -1481,6 +1526,10 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
    device->vk.capture_trace = capture_trace;
    device->vk.check_status = radv_device_check_status;
 
+   device->memory_types_allowed = BITFIELD_MASK(pdev->memory_properties.memoryTypeCount);
+   if (!device->vk.enabled_features.deviceCoherentMemory)
+      device->memory_types_allowed &= ~pdev->memory_types_device_coherent;
+
    device->vk.command_buffer_ops = &radv_cmd_buffer_ops;
 
    result = radv_device_init_utrace(device);
@@ -1488,6 +1537,10 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
       goto fail;
 
    init_dispatch_tables(device, pdev);
+
+   result = vk_device_init_app_workarounds(&device->vk, pdev->drirc.debug.vk_app_layer);
+   if (result != VK_SUCCESS)
+      goto fail;
 
    /* Initialize everything required for compilation, first. */
 
@@ -1595,8 +1648,8 @@ radv_CreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCr
    for (unsigned i = 0; i < pCreateInfo->queueCreateInfoCount; i++)
       total_queue_count += pCreateInfo->pQueueCreateInfos[i].queueCount;
 
-   device->queues = vk_zalloc(&device->vk.alloc, total_queue_count * sizeof(struct radv_queue), 8,
-                              VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
+   device->queues =
+      vk_zalloc(&device->vk.alloc, total_queue_count * sizeof(struct radv_queue), 8, VK_SYSTEM_ALLOCATION_SCOPE_DEVICE);
    if (!device->queues) {
       result = VK_ERROR_OUT_OF_HOST_MEMORY;
       goto fail;
@@ -1782,8 +1835,7 @@ radv_GetImageMemoryRequirements2(VkDevice _device, const VkImageMemoryRequiremen
       alignment = image->alignment;
    }
 
-   pMemoryRequirements->memoryRequirements.memoryTypeBits =
-      ((1u << pdev->memory_properties.memoryTypeCount) - 1u) & ~pdev->memory_types_32bit;
+   pMemoryRequirements->memoryRequirements.memoryTypeBits = device->memory_types_allowed & ~pdev->memory_types_32bit;
 
    if (image->vk.create_flags & VK_IMAGE_CREATE_2_PROTECTED_BIT_KHR)
       pMemoryRequirements->memoryRequirements.memoryTypeBits &= pdev->memory_types_protected;
@@ -1912,9 +1964,9 @@ radv_compute_valid_memory_types_attempt(struct radv_physical_device *pdev, enum 
 }
 
 static uint32_t
-radv_compute_valid_memory_types(struct radv_physical_device *pdev, enum radeon_bo_domain domains,
-                                enum radeon_bo_flag flags)
+radv_compute_valid_memory_types(struct radv_device *device, enum radeon_bo_domain domains, enum radeon_bo_flag flags)
 {
+   struct radv_physical_device *pdev = radv_device_physical(device);
    enum radeon_bo_flag ignore_flags = ~(RADEON_FLAG_NO_CPU_ACCESS | RADEON_FLAG_GTT_WC);
    uint32_t bits = radv_compute_valid_memory_types_attempt(pdev, domains, flags, ignore_flags);
 
@@ -1929,16 +1981,13 @@ radv_compute_valid_memory_types(struct radv_physical_device *pdev, enum radeon_b
    }
 
    /* Avoid 32-bit memory types for shared memory. */
-   bits &= ~pdev->memory_types_32bit;
-
-   return bits;
+   return bits & device->memory_types_allowed & ~pdev->memory_types_32bit;
 }
 VKAPI_ATTR VkResult VKAPI_CALL
 radv_GetMemoryFdPropertiesKHR(VkDevice _device, VkExternalMemoryHandleTypeFlagBits handleType, int fd,
                               VkMemoryFdPropertiesKHR *pMemoryFdProperties)
 {
    VK_FROM_HANDLE(radv_device, device, _device);
-   struct radv_physical_device *pdev = radv_device_physical(device);
 
    switch (handleType) {
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT: {
@@ -1947,7 +1996,7 @@ radv_GetMemoryFdPropertiesKHR(VkDevice _device, VkExternalMemoryHandleTypeFlagBi
       if (!device->ws->buffer_get_flags_from_fd(device->ws, fd, &domains, &flags))
          return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
 
-      pMemoryFdProperties->memoryTypeBits = radv_compute_valid_memory_types(pdev, domains, flags);
+      pMemoryFdProperties->memoryTypeBits = radv_compute_valid_memory_types(device, domains, flags);
       return VK_SUCCESS;
    }
    default:
@@ -2257,7 +2306,8 @@ radv_GetDeviceFaultReportsKHR(VkDevice _device, uint64_t timeout, uint32_t *pFau
       };
       strncpy(fault_info.description, "A GPUVM fault has been detected", sizeof(fault_info.description));
 
-      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem) {
+      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem)
+      {
          *elem = fault_info;
          device->fault.fault_addr_reported = true;
       }
@@ -2272,7 +2322,8 @@ radv_GetDeviceFaultReportsKHR(VkDevice _device, uint64_t timeout, uint32_t *pFau
       strncpy(fault_info.description, "A device lost due to OpAbortKHR has been detected",
               sizeof(fault_info.description));
 
-      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem) {
+      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem)
+      {
          *elem = fault_info;
          device->fault.shader_abort_reported = true;
       }
@@ -2283,7 +2334,8 @@ radv_GetDeviceFaultReportsKHR(VkDevice _device, uint64_t timeout, uint32_t *pFau
       };
       strncpy(fault_info.description, "A device lost has been detected", sizeof(fault_info.description));
 
-      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem) {
+      vk_outarray_append_typed(VkDeviceFaultInfoKHR, &out, elem)
+      {
          *elem = fault_info;
          device->fault.device_lost_reported = true;
       }

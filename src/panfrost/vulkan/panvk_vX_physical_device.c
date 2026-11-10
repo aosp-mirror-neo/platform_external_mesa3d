@@ -63,6 +63,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_driver_properties = true,
       .KHR_dynamic_rendering = true,
       .KHR_dynamic_rendering_local_read = true,
+      .KHR_extended_flags = true,
       .KHR_external_fence = true,
       .KHR_external_fence_fd = true,
       .KHR_external_memory = true,
@@ -88,6 +89,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .KHR_maintenance8 = true,
       .KHR_maintenance9 = true,
       .KHR_maintenance10 = true,
+      .KHR_maintenance11 = true,
       .KHR_map_memory2 = true,
       .KHR_multiview = true,
       .KHR_pipeline_binary = true,
@@ -227,6 +229,7 @@ panvk_per_arch(get_physical_device_extensions)(
       .EXT_texture_compression_astc_hdr = true,
       .EXT_tooling_info = true,
       .EXT_vertex_attribute_divisor = true,
+      .EXT_vertex_attribute_robustness = true,
       .EXT_vertex_input_dynamic_state = true,
       .EXT_ycbcr_2plane_444_formats = PAN_ARCH >= 10,
       .EXT_ycbcr_image_arrays = PAN_ARCH >= 10,
@@ -497,8 +500,14 @@ panvk_per_arch(get_physical_device_features)(
       /* VK_KHR_maintenance9 */
       .maintenance9 = true,
 
+      /* VK_EXT_vertex_attribute_robustness */
+      .vertexAttributeRobustness = true,
+
       /* VK_KHR_maintenance10 */
       .maintenance10 = true,
+
+      /* VK_KHR_maintenance11 */
+      .maintenance11 = true,
 
       /* VK_KHR_internally_synchronized_queues */
       .internallySynchronizedQueues = true,
@@ -789,6 +798,9 @@ panvk_per_arch(get_physical_device_features)(
 
       /* VK_ANDROID_external_format_resolve */
       .externalFormatResolve = has_gralloc && PAN_ARCH >= 10,
+
+      /* VK_KHR_extended_flags */
+      .extendedFlags = true,
    };
 }
 
@@ -809,7 +821,7 @@ static VkConformanceVersion
 get_conformance_version()
 {
    if (PAN_ARCH == 10)
-      return (VkConformanceVersion){1, 4, 1, 2};
+      return (VkConformanceVersion){1, 4, 5, 2};
 
    return (VkConformanceVersion){0, 0, 0, 0};
 }
@@ -863,10 +875,15 @@ panvk_per_arch(get_physical_device_properties)(
       .maxImageDimensionCube = (1 << 16),
       .maxImageArrayLayers = (1 << 16),
       .maxTexelBufferElements = UINT64_C(1) << (util_logbase2(panvk_get_max_buffer_size(device) / 16)),
-      /* Each uniform entry is 16-byte and the number of entries is encoded in a
-       * 12-bit field, with the minus(1) modifier, which gives 2^20.
+      /* PAN_ARCH < 9:
+       *   Each uniform entry is 16-byte and the number of entries is encoded in a
+       *   12-bit field, with the minus(1) modifier, which gives 2^16.
+       * PAN_ARCH >= 9:
+       *   A UBO is a generic Buffer descriptor with a 32-bit size field and loads
+       *   use a 32-bit offset. Use 2^31 as descriptor writes do align(range, 16),
+       *   which would overflow if UINT32_MAX is used.
        */
-      .maxUniformBufferRange = 1 << 20,
+      .maxUniformBufferRange = PAN_ARCH >= 9 ? (1u << 31) : (1 << 16),
       /* Storage buffer access is lowered to globals, so there's no limit here,
        * except for the SW-descriptor we use to encode storage buffer
        * descriptors, where the size is a 32-bit field.

@@ -66,9 +66,13 @@ static unsigned
 dri_loader_get_cap(struct dri_screen *screen, enum dri_loader_cap cap)
 {
    const __DRIimageLoaderExtension *image_loader = screen->loader.image;
+   const __DRIkopperLoaderExtension *kopper_loader = screen->loader.kopper;
 
    if (image_loader && image_loader->getCapability)
       return image_loader->getCapability(screen->loaderPrivate, cap);
+
+   if (kopper_loader && kopper_loader->getCapability)
+      return kopper_loader->getCapability(screen->loaderPrivate, cap);
 
    return 0;
 }
@@ -256,6 +260,17 @@ driCreateConfigs(enum pipe_format format,
     *c = NULL;
 
     return configs;
+}
+
+void
+driDestroyConfigs(const struct dri_config **configs)
+{
+   if (!configs)
+      return;
+
+   for (unsigned i = 0; configs[i]; i++)
+      free((struct dri_config *)configs[i]);
+   free(configs);
 }
 
 static struct dri_config **

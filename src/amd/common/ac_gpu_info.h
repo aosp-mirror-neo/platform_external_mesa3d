@@ -136,6 +136,8 @@ struct ac_compiler_info {
    uint32_t has_mad32 : 1;
    /* Whether chips support double rate packed math instructions. */
    uint32_t has_packed_math_16bit : 1;
+   /* Whether D16 instructions return/read one 16bit value per VGPR instead of two. */
+   uint32_t has_unpacked_d16 : 1;
    /* Whether chips support dot product instructions. A subset of these support a smaller
     * instruction encoding which accumulates with the destination.
     */
@@ -230,7 +232,7 @@ struct ac_compiler_info {
    uint32_t has_smem_with_null_prt_bug : 1;
    uint32_t has_desc_resource_level : 1;
 
-   uint32_t reserved : 2;
+   uint32_t reserved : 1;
 };
 
 struct radeon_info {
@@ -326,6 +328,7 @@ struct radeon_info {
                              */
    bool has_smem_partial_oob_access_bug;
    bool has_streamout_vgt_hang_bug;
+   bool has_draw_opaque_ge_bug;
    bool has_out_of_order_uncached_l2;
    bool has_cp_dma_unaligned_copy_perf_issue;
 
@@ -357,6 +360,7 @@ struct radeon_info {
    bool r600_has_virtual_memory;
    uint32_t max_tcc_blocks;
    uint32_t tcc_cache_line_size;
+   uint32_t smem_cache_line_size;
    bool tcc_rb_non_coherent; /* whether L2 inv is needed for render->texture transitions */
    bool cp_sdma_ge_use_system_memory_scope;
    bool cp_dma_use_L2;

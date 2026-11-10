@@ -319,11 +319,33 @@ enum pipe_map_flags
    PIPE_MAP_ONCE = 1 << 13,
 
    /**
+    * Mapping will support transfer_clientptr_range
+    */
+   PIPE_MAP_CLIENT_POINTER = 1 << 14,
+
+   /**
+    * Short lived internal mapping used for data upload/download.
+    *
+    * buffer_unmap must be called in finite time, as the driver may lock
+    * PIPE_MAP_CLIENT_POINTER maps until buffer_unmap is called, enabling
+    * the driver to remap the buffer into the client address range.
+    *
+    * Note for threaded context implementations: when set, buffer_map and
+    * buffer_unmap are called from the same thread.
+    */
+   PIPE_MAP_SHORT_LIVED = 1 << 15,
+
+   /**
     * This and higher bits are reserved for private use by drivers. Drivers
     * should use this as (PIPE_MAP_DRV_PRV << i).
     */
-   PIPE_MAP_DRV_PRV = 1 << 14,
+   PIPE_MAP_DRV_PRV = 1 << 16,
 };
+
+/*
+ * Return value for buffer_map
+ */
+#define PIPE_TRANSFER_CLIENT_POINTER (void *) -1
 
 /**
  * Flags for the flush function.
@@ -520,7 +542,8 @@ enum pipe_flush_flags
 #define PIPE_RESOURCE_FLAG_FIXED_ADDRESS         (1 << 9) /* virtual memory address never changes */
 #define PIPE_RESOURCE_FLAG_FRONTEND_VM           (1 << 10) /* the frontend assigns addresses */
 #define PIPE_RESOURCE_FLAG_MAP_UNSYNCHRONIZED    (1 << 11) /* the texture can be mapped UNSYNCHRONIZED */
-#define PIPE_RESOURCE_FLAG_DRV_PRIV              (1 << 12) /* driver/winsys private */
+#define PIPE_RESOURCE_FLAG_MAP_CLIENT_POINTER    (1 << 12) /* the resource can be mapped to a client pointer range */
+#define PIPE_RESOURCE_FLAG_DRV_PRIV              (1 << 13) /* driver/winsys private */
 #define PIPE_RESOURCE_FLAG_FRONTEND_PRIV         (1 << 24) /* gallium frontend private */
 
 /**
@@ -1037,6 +1060,7 @@ struct pipe_caps {
    bool viewport_mask;
    bool alpha_to_coverage_dither_control;
    bool map_unsynchronized_thread_safe;
+   bool map_unsynchronized_texture_thread_safe;
    bool nir_atomics_as_deref;
    bool no_clip_on_copy_tex;
    bool shader_atomic_int64;
@@ -1076,6 +1100,7 @@ struct pipe_caps {
    bool blit_3d;
    bool glsl_bindless_handles_are_32bit;
    bool polygon_stipple;
+   bool disable_custom_border_color_caching;
 
    int accelerated;
    int min_texel_offset;
@@ -1179,6 +1204,7 @@ struct pipe_caps {
    unsigned multiview;
    unsigned max_label_length;
    uint64_t max_timeline_semaphore_difference;
+   unsigned map_client_pointer;
 
    /** for CL SVM */
    uint64_t min_vma;

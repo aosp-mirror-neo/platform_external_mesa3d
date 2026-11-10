@@ -699,6 +699,15 @@ dd_context_resource_commit(struct pipe_context *_pipe,
 }
 
 static void
+dd_context_resource_release(struct pipe_context *_pipe,
+                            struct pipe_resource *resource)
+{
+   struct pipe_context *pipe = dd_context(_pipe)->pipe;
+
+   pipe->resource_release(pipe, resource);
+}
+
+static void
 dd_context_set_global_binding(struct pipe_context *_pipe,
 			      unsigned first, unsigned count,
 			      struct pipe_resource **resources,
@@ -839,6 +848,16 @@ dd_context_set_inlinable_constants(struct pipe_context *_pipe,
    pipe->set_inlinable_constants(pipe, shader, num_values, values);
 }
 
+static struct pipe_context *
+dd_get_driver_pipe_context(struct pipe_context *_pipe)
+{
+   struct pipe_context *pipe = dd_context(_pipe)->pipe;
+
+   if (pipe->get_driver_pipe_context)
+      return pipe->get_driver_pipe_context(pipe);
+   return pipe;
+}
+
 struct pipe_context *
 dd_context_create(struct dd_screen *dscreen, struct pipe_context *pipe)
 {
@@ -858,6 +877,7 @@ dd_context_create(struct dd_screen *dscreen, struct pipe_context *pipe)
    dctx->base.const_uploader = pipe->const_uploader;
 
    dctx->base.destroy = dd_context_destroy;
+   dctx->base.get_driver_pipe_context = dd_get_driver_pipe_context;
 
    CTX_INIT(render_condition);
    CTX_INIT(create_query);
@@ -935,6 +955,7 @@ dd_context_create(struct dd_screen *dscreen, struct pipe_context *pipe)
    CTX_INIT(texture_barrier);
    CTX_INIT(memory_barrier);
    CTX_INIT(resource_commit);
+   CTX_INIT(resource_release);
    CTX_INIT(set_global_binding);
    /* create_video_codec */
    /* create_video_buffer */
