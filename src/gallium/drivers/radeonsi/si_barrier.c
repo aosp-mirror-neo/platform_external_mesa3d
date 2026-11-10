@@ -317,14 +317,18 @@ void si_barrier_after_internal_op(struct si_context *sctx, unsigned flags,
    while (writable_buffers_mask)
       si_resource(buffers[u_bit_scan(&writable_buffers_mask)].buffer)->L2_cache_dirty = true;
 
-   /* Make sure RBs see our DCC image stores if RBs and TCCs (L2 instances) are non-coherent. */
+   /* If the render backends and the L2 cache channels are non-coherent, make sure the render
+    * backends see our DCC image stores by writing back L2. L2 doesn't need to be invalidated:
+    * si_barrier_before_internal_op invalidated it if the image was busy, and it's invalidated
+    * at the start of every IB otherwise.
+    */
    if (sctx->gfx_level >= GFX10 && sctx->screen->info.tcc_rb_non_coherent) {
       for (unsigned i = 0; i < num_images; i++) {
          if (vi_dcc_enabled((struct si_texture*)images[i].resource, images[i].u.tex.level) &&
              images[i].access & PIPE_IMAGE_ACCESS_WRITE &&
              (sctx->screen->always_allow_dcc_stores ||
               images[i].access & SI_IMAGE_ACCESS_ALLOW_DCC_STORE)) {
-            new_barriers |= AC_BARRIER_INV_L2;
+            new_barriers |= AC_BARRIER_WB_L2;
             break;
          }
       }
@@ -567,10 +571,19 @@ void si_barrier_before_image_fast_clear(struct si_context *sctx, unsigned types)
    si_set_barrier_flags(sctx, new_barriers);
 }
 
-void si_barrier_after_image_fast_clear(struct si_context *sctx)
+void si_barrier_after_image_fast_clear(struct si_context *sctx, unsigned types)
 {
    /* Wait for idle. */
    unsigned new_barriers = AC_BARRIER_SYNC_CS;
+
+   /* If the render backends and the L2 cache channels are non-coherent, CB and DCC image
+    * stores don't see the CMASK/DCC that the clear's compute shader wrote until L2 is
+    * written back. si_barrier_before_image_fast_clear already invalidated L2.
+    */
+   if (types & (SI_CLEAR_TYPE_CMASK | SI_CLEAR_TYPE_DCC) &&
+       sctx->gfx_level >= GFX10 && sctx->gfx_level < GFX12 &&
+       sctx->screen->info.tcc_rb_non_coherent)
+      new_barriers |= AC_BARRIER_WB_L2;
 
    /* GFX6-8: CB and DB don't use L2. */
    if (sctx->gfx_level <= GFX8)

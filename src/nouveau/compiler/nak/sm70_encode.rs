@@ -1786,10 +1786,13 @@ impl SM70Op for OpIMad64 {
         let [src0, src1, src2] = &mut self.srcs;
         swap_srcs_if_not_reg(src0, src1, gpr);
         b.copy_alu_src_if_not_reg(src0, gpr, SrcType::ALU);
-        b.copy_alu_src_if_both_not_reg(src1, src2, gpr, SrcType::ALU);
+        // We prefer copying src1, because src2 is 64 bit and more expensive to
+        // copy, so src1 needs to be the second source passed in.
+        b.copy_alu_src_if_both_not_reg(src2, src1, gpr, SrcType::ALU);
     }
 
     fn encode(&self, e: &mut SM70Encoder<'_>) {
+        assert!(!self.srcs[2].is_immediate());
         if self.is_uniform() {
             e.encode_ualu(
                 0x0a5,

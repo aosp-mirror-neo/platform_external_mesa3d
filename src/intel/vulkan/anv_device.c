@@ -1382,6 +1382,8 @@ VkResult anv_CreateDevice(
  fail_meta_device:
    vk_meta_device_finish(&device->vk, &device->meta_device);
  fail_utrace:
+   for (uint32_t i = 0; i < device->queue_count; i++)
+      anv_queue_drain(&device->queues[i]);
    anv_device_utrace_finish(device);
  fail_queues:
    for (uint32_t i = 0; i < device->queue_count; i++)
@@ -1498,6 +1500,9 @@ void anv_DestroyDevice(
    anv_device_finish_trtt(device);
 
    vk_meta_device_finish(&device->vk, &device->meta_device);
+
+   for (uint32_t i = 0; i < device->queue_count; i++)
+      anv_queue_drain(&device->queues[i]);
 
    anv_device_utrace_finish(device);
 
@@ -1981,6 +1986,16 @@ VkResult anv_AllocateMemory(
          goto fail;
       }
 
+      if ((mem->vk.alloc_flags &
+           VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT) &&
+          !(mem->bo->alloc_flags & ANV_BO_ALLOC_CLIENT_VISIBLE_ADDRESS)) {
+         result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+                            "The same BO was imported without BDA and then "
+                            "reimported for capture/replay.");
+         anv_device_release_bo(device, mem->bo);
+         goto fail;
+      }
+
       /* From the Vulkan spec:
        *
        *    "Importing memory from a file descriptor transfers ownership of
@@ -2012,6 +2027,16 @@ VkResult anv_AllocateMemory(
                                                   &mem->bo);
       if (result != VK_SUCCESS)
          goto fail;
+
+      if ((mem->vk.alloc_flags &
+           VK_MEMORY_ALLOCATE_DEVICE_ADDRESS_CAPTURE_REPLAY_BIT) &&
+          !(mem->bo->alloc_flags & ANV_BO_ALLOC_CLIENT_VISIBLE_ADDRESS)) {
+         result = vk_errorf(device, VK_ERROR_INVALID_EXTERNAL_HANDLE,
+                            "The same BO was imported without BDA and then "
+                            "reimported for capture/replay.");
+         anv_device_release_bo(device, mem->bo);
+         goto fail;
+      }
 
       goto success;
    }
