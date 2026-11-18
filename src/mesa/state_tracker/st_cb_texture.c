@@ -3381,6 +3381,9 @@ st_finalize_texture(struct gl_context *ctx,
                  stImage->Depth == depth)) {
                /* src image fits expected dest mipmap level size */
                copy_image_data_to_texture(st, tObj, level, stImage);
+               /* framebuffers rendering to the image have to follow it */
+               if (tObj->_RenderToTexture)
+                  ST_SET_FRAMEBUFFER_STATES(ctx->NewDriverState);
             }
          }
       }
@@ -3839,9 +3842,13 @@ st_SetTextureStorageForMemoryObject(struct gl_context *ctx,
                                     GLsizei height, GLsizei depth,
                                     GLuint64 offset, const char *func)
 {
-   return st_texture_storage(ctx, texObj, levels,
-                             width, height, depth,
-                             memObj, offset, func);
+   if (!st_texture_storage(ctx, texObj, levels,
+                           width, height, depth,
+                           memObj, offset, func))
+      return GL_FALSE;
+
+   texObj->FromMemoryObject = true;
+   return GL_TRUE;
 }
 
 GLboolean

@@ -349,7 +349,7 @@ struct si_texture {
    bool db_compatible : 1;
    bool can_sample_z : 1;
    bool can_sample_s : 1;
-   bool need_flush_after_depth_decompression: 1;
+   bool htile_pipe_misaligned : 1; /* see ac_surface_is_meta_pipe_misaligned */
    bool gfx12_force_disable_hiz : 1;
 
    /* We need to track DCC dirtiness, because st/dri usually calls
@@ -707,6 +707,7 @@ struct si_framebuffer {
    bool any_dst_linear;
    bool CB_has_shader_readable_metadata;
    bool DB_has_shader_readable_metadata;
+   bool DB_meta_pipe_misaligned;
    bool all_DCC_pipe_aligned;
    bool has_dcc_msaa;
    bool disable_vrs_flat_shading;
@@ -1272,14 +1273,26 @@ struct si_context {
    void (*emit_spi_map[33])(struct si_context *sctx, unsigned index);
 
    /* SQTT */
-   struct ac_sqtt *sqtt;
-   struct ac_spm spm;
-   struct pipe_fence_handle *last_sqtt_fence;
-   enum rgp_sqtt_marker_event_type sqtt_next_event;
-   bool sqtt_enabled;
-   struct si_sqtt_timestamp sqtt_timestamp;
-   uint64_t sqtt_device_id;
-   uint32_t sqtt_cb_id;
+   struct {
+      struct ac_sqtt *data;
+      struct radeon_cmdbuf *start_cs[2];
+      struct radeon_cmdbuf *stop_cs[2];
+      struct ac_spm spm;
+      struct pipe_fence_handle *last_fence;
+      enum rgp_sqtt_marker_event_type next_event;
+      enum {
+         SQTT_STATUS_OFF,
+         SQTT_STATUS_TRACING,
+         SQTT_STATUS_STOPPING
+      } status;
+      struct si_sqtt_timestamp timestamp;
+      uint64_t device_id;
+      uint32_t cb_id;
+
+      enum ac_rgp_capture_mode mode;
+      int start_frame, end_frame;
+      char *trigger_file;
+   } sqtt;
 
    bool perfetto_enabled;
 
@@ -1348,7 +1361,7 @@ void si_barrier_after_simple_buffer_op(struct si_context *sctx, unsigned flags,
 void si_fb_barrier_before_rendering(struct si_context *sctx);
 void si_fb_barrier_after_rendering(struct si_context *sctx, unsigned flags);
 void si_barrier_before_image_fast_clear(struct si_context *sctx, unsigned types);
-void si_barrier_after_image_fast_clear(struct si_context *sctx);
+void si_barrier_after_image_fast_clear(struct si_context *sctx, unsigned types);
 void si_init_barrier_functions(struct si_context *sctx);
 
 /* si_buffer.c */
@@ -1561,13 +1574,10 @@ struct si_context *si_get_aux_context(struct si_screen *sscreen, struct si_aux_c
 void si_put_aux_context_flush(struct si_aux_context *ctx);
 
 /* si_perfcounters.c */
-void si_init_perfcounters(struct si_screen *screen);
 void si_destroy_perfcounters(struct si_screen *screen);
-void si_inhibit_clockgating(struct si_context *sctx, struct radeon_cmdbuf *cs, bool inhibit);
-void si_pc_emit_shaders(struct radeon_cmdbuf *cs, unsigned shaders);
-void si_emit_spm_setup(struct si_context *sctx, struct radeon_cmdbuf *cs);
-bool si_spm_init(struct si_context *sctx);
-void si_spm_finish(struct si_context *sctx);
+void si_emit_spm_setup(struct si_context *sctx, struct ac_spm *spm, struct radeon_cmdbuf *cs);
+bool si_spm_init(struct si_context *sctx, struct ac_spm *spm);
+void si_spm_finish(struct si_context *sctx, struct ac_spm *spm);
 
 /* si_query.c */
 void si_init_screen_query_functions(struct si_screen *sscreen);
@@ -1822,13 +1832,16 @@ static inline void si_make_CB_shader_coherent(struct si_context *sctx, unsigned 
 }
 
 static inline void si_make_DB_shader_coherent(struct si_context *sctx, unsigned num_samples,
-                                              bool include_stencil, bool shaders_read_metadata)
+                                              bool include_stencil, bool shaders_read_metadata,
+                                              bool meta_pipe_misaligned)
 {
    sctx->barrier_flags |= AC_BARRIER_SYNC_AND_INV_DB | AC_BARRIER_INV_VMEM;
    sctx->force_shader_coherency.with_db = false;
 
    if (sctx->gfx_level >= GFX10 && sctx->gfx_level < GFX12) {
-      if (sctx->screen->info.tcc_rb_non_coherent)
+      /* DB and TC access pipe-misaligned metadata through different L2 channels. */
+      if (sctx->screen->info.tcc_rb_non_coherent ||
+          (shaders_read_metadata && meta_pipe_misaligned))
          sctx->barrier_flags |= AC_BARRIER_INV_L2;
       else if (shaders_read_metadata)
          sctx->barrier_flags |= AC_BARRIER_INV_L2_METADATA;

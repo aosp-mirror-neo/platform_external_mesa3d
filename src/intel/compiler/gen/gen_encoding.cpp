@@ -486,6 +486,17 @@ gen_lsc_ex_desc_encode(const struct intel_device_info *devinfo,
    return result;
 }
 
+uint32_t
+gen_lsc_ex_desc_imm_encode(const struct intel_device_info *devinfo,
+                           enum lsc_opcode op,
+                           const gen_lsc_ex_desc *ex_desc)
+{
+   uint32_t imm;
+   ASSERTED uint32_t addr = gen_lsc_ex_desc_encode(devinfo, op, ex_desc, &imm);
+   assert(addr == 0);
+   return imm;
+}
+
 /**
  * Convert the provided binary representation of an SWSB annotation to a
  * gen_swsb.
@@ -663,7 +674,6 @@ struct gen_encoder {
          if (desc->has_dst) {
             set(E::DST_ADDRESS_MODE, inst->dst.indirect);
             set(E::DST_TYPE,         encode_type(inst->dst.file, inst->dst.type));
-            set(E::DST_HSTRIDE,      encode_hstride(inst->dst.region.hstride));
 
             if (inst->dst.indirect)
                encode_indirect_operand(E::DST_OPERAND, inst->dst);
@@ -675,6 +685,9 @@ struct gen_encoder {
                                                             : inst->dst.subnr & 1);
             }
          }
+
+         if (E::TYPE >= GEN_ENCODING_XE || desc->has_dst)
+            set(E::DST_HSTRIDE, encode_hstride(inst->dst.region.hstride));
 
          if constexpr (E::TYPE == GEN_ENCODING_XE)
             set(E::ACC_WR_CONTROL, inst->acc_wr_control);
@@ -1921,8 +1934,6 @@ gen_encode(gen_encode_params *params)
 
    if (!params->raw_bytes)
       return false;
-
-   /* TODO: Implement params->compact_all.  For now it is being ignored. */
 
    const intel_device_info *devinfo = params->devinfo;
 

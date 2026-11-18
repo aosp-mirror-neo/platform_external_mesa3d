@@ -80,6 +80,9 @@ enum radeon_micro_mode
 #define RADEON_SURF_ALIASED               (1ull << 42)
 #define RADEON_SURF_REPLAYABLE            (1ull << 43)
 #define RADEON_SURF_VIEW_3D_AS_2D_ARRAY   (1ull << 44)
+/* This must be set when CMASK_ADDR_TYPE=2, not whether TC-compatible CMASK is actually enabled. */
+#define RADEON_SURF_TC_COMPATIBLE_CMASK   (1ull << 45)
+#define RADEON_SURF_REQUIRE_CONTIGUOUS_CMASK_SLICES (1ull << 46)
 
 struct legacy_surf_level {
    uint32_t offset_256B;   /* divided by 256, the hw can only do 40-bit addresses */
@@ -99,6 +102,7 @@ struct legacy_surf_fmask {
    unsigned slice_tile_max; /* max 4M */
    uint8_t tiling_index;    /* max 31 */
    uint8_t bankh;           /* max 8 */
+   uint8_t num_banks;
    uint16_t pitch_in_pixels;
 };
 
@@ -219,6 +223,12 @@ struct gfx9_meta_equation {
    } u;
 };
 
+typedef struct {
+   uint16_t width;
+   uint8_t height;
+   uint8_t depth;
+} ac_block_extent;
+
 struct gfx12_hiz_layout {
    uint64_t offset;
    uint32_t size;
@@ -227,6 +237,7 @@ struct gfx12_hiz_layout {
    uint16_t height_in_tiles;
    uint8_t swizzle_mode;
    uint8_t alignment_log2;
+   ac_block_extent block256B_extent;
    struct {
       uint32_t offset;
       uint32_t size;
@@ -336,8 +347,6 @@ struct radeon_surf {
    uint8_t has_stencil : 1;
    /* This might be true even if micro_tile_mode isn't displayable or rotated. */
    uint8_t is_displayable : 1;
-   /* Thick tiling means 3D tiles. Use 3D compute workgroups for blits. (4x4x4 works well) */
-   uint8_t thick_tiling : 1;
    uint8_t first_mip_tail_level : 4;
 
    /* These are return values. Some of them can be set by the caller, but
@@ -373,6 +382,16 @@ struct radeon_surf {
    uint8_t cmask_alignment_log2;
    uint8_t alignment_log2;
 
+   /* The dimensions of one 256B block. (96bpp is treated as 32bpp)
+    * This can be smaller or bigger than 256B if 256B block dimensions don't exist.
+    */
+   ac_block_extent block256B_extent;
+
+   /* The dimensions of one 256B block of the stencil buffer, if present.
+    * This can be smaller or bigger than 256B if 256B block dimensions don't exist.
+    */
+   ac_block_extent stencil_block256B_extent;
+
    /* DRM format modifier. Set to DRM_FORMAT_MOD_INVALID to have addrlib
     * select tiling parameters instead.
     */
@@ -390,6 +409,12 @@ struct radeon_surf {
 
    uint32_t cmask_size;
    uint32_t cmask_slice_size;
+   /* How many CMASK slices form a contiguous range, i.e. the group can be cleared as a whole,
+    * but not individual slices within the group because CMASK elements from different slices
+    * within a group can be interleaved. The value of 1 means that each slice is contiguous.
+    * (UINT16_MAX means that all slices are non-contiguous)
+    */
+   uint16_t cmask_slices_per_group;
    uint16_t cmask_pitch; /* GFX9+ */
    uint16_t cmask_height; /* GFX9+ */
 
@@ -606,6 +631,9 @@ bool ac_surface_supports_dcc_image_stores(enum amd_gfx_level gfx_level,
 
 void ac_compute_surface_modifier(const struct radeon_info *info, struct radeon_surf *surf,
                                  unsigned samples);
+
+bool ac_surface_is_meta_pipe_misaligned(const struct radeon_info *info, unsigned bpe,
+                                        unsigned num_samples, unsigned num_layers, bool is_depth);
 
 #ifdef __cplusplus
 }

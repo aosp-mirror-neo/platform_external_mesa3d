@@ -49,7 +49,7 @@
 #include "dri_screen.h"
 
 #ifdef HAVE_WAYLAND_PLATFORM
-#include "linux-dmabuf-unstable-v1-client-protocol.h"
+#include "linux-dmabuf-v1-client-protocol.h"
 #if HAVE_BIND_WL_DISPLAY
 #include "wayland-drm-client-protocol.h"
 #include "wayland-drm.h"
@@ -819,6 +819,8 @@ dri2_create_screen(_EGLDisplay *disp)
             dri2_dpy->dri_screen_display_gpu = driCreateNewScreen3(
                0, dri2_dpy->fd_display_gpu, dri2_dpy->loader_funcs,
                type, &dri2_dpy->driver_configs, false, dri2_dpy->multibuffers_available, disp);
+            driDestroyConfigs(dri2_dpy->driver_configs);
+            dri2_dpy->driver_configs = NULL;
          }
          free(driver_name_display_gpu);
       }
@@ -949,8 +951,6 @@ dri2_initialize(_EGLDisplay *disp)
    dri2_dpy = dri2_egl_display(disp);
    p_atomic_inc(&dri2_dpy->ref_count);
 
-   mtx_init(&dri2_dpy->lock, mtx_plain);
-
    return EGL_TRUE;
 }
 
@@ -1032,11 +1032,9 @@ dri2_display_destroy(_EGLDisplay *disp)
     * the ones from the gbm device. As such the gbm itself is responsible
     * for the cleanup.
     */
-   if (disp->Platform != _EGL_PLATFORM_DRM && dri2_dpy->driver_configs) {
-      for (unsigned i = 0; dri2_dpy->driver_configs[i]; i++)
-         free((struct dri_config *)dri2_dpy->driver_configs[i]);
-      free(dri2_dpy->driver_configs);
-   }
+   if (disp->Platform != _EGL_PLATFORM_DRM)
+      driDestroyConfigs(dri2_dpy->driver_configs);
+   mtx_destroy(&dri2_dpy->lock);
    free(dri2_dpy);
    disp->DriverData = NULL;
 }
@@ -1049,6 +1047,8 @@ dri2_display_create(_EGLDisplay *disp)
       _eglError(EGL_BAD_ALLOC, "eglInitialize");
       return NULL;
    }
+
+   mtx_init(&dri2_dpy->lock, mtx_plain);
 
    dri2_dpy->fd_render_gpu = -1;
    dri2_dpy->fd_display_gpu = -1;
@@ -2169,7 +2169,8 @@ dri2_check_dma_buf_attribs(const _EGLImageAttribs *attrs)
 static unsigned
 dri2_num_fourcc_format_planes(EGLint format)
 {
-   switch (format) {
+   /* The driver decides which formats it takes in big-endian form. */
+   switch (format & ~DRM_FORMAT_BIG_ENDIAN) {
    case DRM_FORMAT_R8:
    case DRM_FORMAT_RG88:
    case DRM_FORMAT_GR88:

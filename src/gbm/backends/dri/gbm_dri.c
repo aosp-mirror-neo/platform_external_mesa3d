@@ -343,6 +343,25 @@ static const struct gbm_dri_visual gbm_dri_visuals_table[] = {
    { DRM_FORMAT_BGR161616F,    PIPE_FORMAT_R16G16B16_FLOAT },
    { DRM_FORMAT_BGR323232F,    PIPE_FORMAT_R32G32B32_FLOAT },
    { DRM_FORMAT_ABGR32323232F, PIPE_FORMAT_R32G32B32A32_FLOAT },
+   { DRM_FORMAT_YUYV,   PIPE_FORMAT_YUYV },
+   { DRM_FORMAT_YVYU,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_UYVY,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_VYUY,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_AYUV,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_NV12,   PIPE_FORMAT_NV12 },
+   { DRM_FORMAT_NV21,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_NV16,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_NV61,   PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YUV410, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YVU410, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YUV411, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YVU411, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YUV420, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YVU420, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YUV422, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YVU422, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YUV444, PIPE_FORMAT_NONE },
+   { DRM_FORMAT_YVU444, PIPE_FORMAT_NONE },
 };
 
 static int
@@ -1161,15 +1180,12 @@ static void
 dri_destroy(struct gbm_device *gbm)
 {
    struct gbm_dri_device *dri = gbm_dri_device(gbm);
-   unsigned i;
 
    if (dri->context)
       driDestroyContext(dri->context);
 
    driDestroyScreen(dri->screen);
-   for (i = 0; dri->driver_configs[i]; i++)
-      free((struct dri_config *) dri->driver_configs[i]);
-   free(dri->driver_configs);
+   driDestroyConfigs(dri->driver_configs);
    free(dri->driver_name);
 
    free(dri);

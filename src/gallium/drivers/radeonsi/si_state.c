@@ -2535,12 +2535,19 @@ static void si_set_framebuffer_state(struct pipe_context *ctx,
 
    sctx->framebuffer.compressed_cb_mask = 0;
    sctx->framebuffer.uncompressed_cb_mask = 0;
+   unsigned old_log_samples = sctx->framebuffer.log_samples;
    sctx->framebuffer.nr_samples = util_framebuffer_get_num_samples(state);
    sctx->framebuffer.nr_color_samples = sctx->framebuffer.nr_samples;
    sctx->framebuffer.log_samples = util_logbase2(sctx->framebuffer.nr_samples);
+
+   /* Gfx11 writes the sample count to DB_Z_INFO.NUM_SAMPLES when no Z/S is bound. */
+   if (sctx->gfx_level >= GFX11 && sctx->gfx_level < GFX12 && !state->zsbuf.texture &&
+       sctx->framebuffer.log_samples != old_log_samples)
+      sctx->framebuffer.dirty_zsbuf = true;
    sctx->framebuffer.any_dst_linear = false;
    sctx->framebuffer.CB_has_shader_readable_metadata = false;
    sctx->framebuffer.DB_has_shader_readable_metadata = false;
+   sctx->framebuffer.DB_meta_pipe_misaligned = false;
    sctx->framebuffer.all_DCC_pipe_aligned = true;
    sctx->framebuffer.has_dcc_msaa = false;
    sctx->framebuffer.min_bytes_per_pixel = 0;
@@ -2600,7 +2607,7 @@ static void si_set_framebuffer_state(struct pipe_context *ctx,
        * This gives the best results for slow clears for AMD_TEST=blitperf on Navi31.
        */
       if ((sctx->framebuffer.nr_samples == 8 && tex->surface.bpe != 2) ||
-          (tex->surface.thick_tiling && tex->surface.bpe == 4 &&
+          (tex->surface.block256B_extent.depth > 1 && tex->surface.bpe == 4 &&
            util_format_get_nr_components(psurf->format) == 4))
          sctx->framebuffer.disable_vrs_flat_shading = true;
    }
@@ -2613,8 +2620,10 @@ static void si_set_framebuffer_state(struct pipe_context *ctx,
       si_init_depth_surface(sctx);
 
       if (sctx->gfx_level < GFX12 &&
-          vi_tc_compat_htile_enabled(zstex, state->zsbuf.level, PIPE_MASK_ZS))
+          vi_tc_compat_htile_enabled(zstex, state->zsbuf.level, PIPE_MASK_ZS)) {
          sctx->framebuffer.DB_has_shader_readable_metadata = true;
+         sctx->framebuffer.DB_meta_pipe_misaligned = zstex->htile_pipe_misaligned;
+      }
 
       /* Update the minimum but don't keep 0. */
       if (!sctx->framebuffer.min_bytes_per_pixel ||
@@ -3489,7 +3498,7 @@ static void si_set_min_samples(struct pipe_context *ctx, unsigned min_samples)
 
 /**
  * Build the sampler view descriptor for a buffer texture.
- * @param state 256-bit descriptor; only the high 128 bits are filled in
+ * @param state 256-bit descriptor
  */
 void si_make_buffer_descriptor(struct si_screen *screen, struct si_resource *buf,
                                enum pipe_format format, unsigned offset, unsigned num_elements,
@@ -4717,7 +4726,9 @@ static void si_pm4_emit_sqtt_pipeline(struct si_context *sctx, unsigned index)
 {
    struct si_pm4_state *state = sctx->queued.array[index];
 
-   si_pm4_emit_state(sctx, index);
+   /* like the rasterizer, this is re-emitted while it's bound */
+   si_pm4_emit_commands(sctx, &state->base);
+   sctx->emitted.array[index] = state;
 
    radeon_add_to_buffer_list(sctx, &sctx->gfx_cs, ((struct si_sqtt_fake_pipeline*)state)->bo,
                              RADEON_USAGE_READ | RADEON_PRIO_SHADER_BINARY);

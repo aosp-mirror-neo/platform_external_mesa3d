@@ -214,9 +214,19 @@ option(
 )
 
 option(
+  'amd-options',
+  type : 'array',
+  value : ['use-llvm'],
+  choices : ['use-llvm', 'virtio'],
+  description : 'List of options that apply to radv and radeonsi',
+)
+
+# Remove after 27.1 branchpoint
+option(
   'amdgpu-virtio',
   type : 'boolean',
   value : false,
+  deprecated : 'amd-options',
   description : 'use experimental virtio backend for radeonsi/radv',
 )
 
@@ -297,7 +307,8 @@ option(
   'moltenvk-dir',
   type : 'string',
   value : '',
-  description : 'Location of the MoltenVk SDK. Default: '
+  description : 'Location of the MoltenVK SDK, macOS only. ' +
+                'Also enables MoltenVK-specific configuration.'
 )
 
 option(
@@ -442,10 +453,12 @@ option(
                 'is included.'
 )
 
+# Remove after 27.1 branchpoint
 option(
   'amd-use-llvm',
   type : 'boolean',
   value : true,
+  deprecated : 'amd-options',
   description : 'Whether to use LLVM for the AMD drivers, if LLVM ' +
                 'is included.'
 )
@@ -634,6 +647,13 @@ option(
   type : 'boolean',
   value : true,
   description : 'use msse2 flag for x86. Uses sse/sse2 instead of x87. Default: true',
+)
+
+option(
+  'apitrace',
+  type : 'boolean',
+  value : false,
+  description : 'Build in apitrace GL call tracing, enabled at run time with MESA_APITRACE=1. Default: false'
 )
 
 option(
@@ -913,7 +933,7 @@ option(
 option(
   'panfrost-rust',
   type : 'boolean',
-  value : false,
+  value : true,
   description : 'Build panfrost Rust components.'
 )
 

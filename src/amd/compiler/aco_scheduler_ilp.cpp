@@ -55,9 +55,8 @@ struct InstrInfo {
 
 struct RegisterInfo {
    mask_t read_mask; /* bitmask of nodes which have to be scheduled before the next write. */
-   uint16_t latency : 11; /* estimated outstanding latency of last register write outside the DAG. */
-   uint16_t direct_dependency : 4;     /* node that has to be scheduled before any other access. */
-   uint16_t has_direct_dependency : 1; /* whether there is an unscheduled direct dependency. */
+   uint8_t direct_dependency : 4;     /* node that has to be scheduled before any other access. */
+   uint8_t has_direct_dependency : 1; /* whether there is an unscheduled direct dependency. */
 };
 
 struct SchedILPContext {
@@ -65,6 +64,10 @@ struct SchedILPContext {
    bool is_vopd = false;
    InstrInfo nodes[num_nodes];
    RegisterInfo regs[512];
+   /* Ready cycles for register writes outside the DAG. */
+   uint32_t reg_ready_cycle[512];
+   uint32_t cycle = 0;
+   /* Valid ready cycles may remain marked after they expire. */
    BITSET_DECLARE(reg_has_latency, 512) = { 0 };
    mask_t non_reorder_mask = 0; /* bitmask of instruction nodes which should not be reordered. */
    mask_t active_mask = 0;      /* bitmask of valid instruction nodes. */
@@ -81,6 +84,14 @@ struct SchedILPContext {
    mask_t vopd_odd_mask = 0;
    mask_t vopd_even_mask = 0;
 };
+
+int
+get_register_latency(const SchedILPContext& ctx, unsigned reg)
+{
+   if (!BITSET_TEST(ctx.reg_has_latency, reg) || ctx.reg_ready_cycle[reg] <= ctx.cycle)
+      return 0;
+   return ctx.reg_ready_cycle[reg] - ctx.cycle;
+}
 
 /**
  * Returns true for side-effect free SALU and VALU instructions.
@@ -229,8 +240,7 @@ get_vopd_info(const SchedILPContext& ctx, const Instruction* instr)
       bool bf16 = instr->opcode == aco_opcode::v_dot2_f32_bf16;
       /* src2 must be the same as the destination. */
       if (!instr->operands[2].isOfType(RegType::vgpr) ||
-          instr->operands[2].physReg() != instr->definitions[0].physReg() ||
-          instr->valu().clamp)
+          instr->operands[2].physReg() != instr->definitions[0].physReg() || instr->valu().clamp)
          return VOPDInfo();
 
       /* One pair of factors must be a vgpr. */
@@ -560,8 +570,8 @@ add_entry(SchedILPContext& ctx, Instruction* const instr, const uint32_t idx)
             /* A previous dependency is still part of the DAG. */
             ctx.nodes[ctx.regs[reg].direct_dependency].write_for_read_mask |= mask;
             entry.dependency_mask |= BITFIELD_BIT(reg_info.direct_dependency);
-         } else if (BITSET_TEST(ctx.reg_has_latency, reg + i)) {
-            entry.wait_cycles = MAX2(entry.wait_cycles, reg_info.latency);
+         } else {
+            entry.wait_cycles = MAX2(entry.wait_cycles, get_register_latency(ctx, reg + i));
          }
       }
    }
@@ -661,15 +671,7 @@ remove_entry(SchedILPContext& ctx, const Instruction* const instr, const uint32_
          stall += ctx.nodes[idx].wait_cycles;
       }
 
-      unsigned i;
-      BITSET_FOREACH_SET (i, ctx.reg_has_latency, 512) {
-         if (ctx.regs[i].latency <= stall) {
-            ctx.regs[i].latency = 0;
-            BITSET_CLEAR(ctx.reg_has_latency, i);
-         } else {
-            ctx.regs[i].latency -= stall;
-         }
-      }
+      ctx.cycle += stall;
    }
 
    for (const Operand& op : instr->operands) {
@@ -698,11 +700,10 @@ remove_entry(SchedILPContext& ctx, const Instruction* const instr, const uint32_
          if (ctx.regs[reg].has_direct_dependency && ctx.regs[reg].direct_dependency == idx) {
             ctx.regs[reg].has_direct_dependency = false;
             if (!ctx.is_vopd) {
-               /* Do MAX2() so that the latency from both predecessors of a merge block are considered. */
-               if (BITSET_TEST(ctx.reg_has_latency, reg))
-                  ctx.regs[reg].latency = MAX2(ctx.regs[reg].latency, latency);
-               else
-                  ctx.regs[reg].latency = latency;
+               /* Do MAX2() so that the latency from both predecessors of a merge block are
+                * considered. */
+               int remaining = get_register_latency(ctx, reg);
+               ctx.reg_ready_cycle[reg] = ctx.cycle + MAX2(remaining, latency);
                BITSET_SET(ctx.reg_has_latency, reg);
             }
          }

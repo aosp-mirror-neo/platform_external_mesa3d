@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 
@@ -28,5 +28,16 @@ cc_library_static {
     ],
     srcs: [
         ":gtest_fg",
+    ],
+    extra_include_dir_deps: [
+        "src/gtest-assertion-result.cc",
+        "src/gtest-death-test.cc",
+        "src/gtest-filepath.cc",
+        "src/gtest-matchers.cc",
+        "src/gtest-port.cc",
+        "src/gtest-printers.cc",
+        "src/gtest-test-part.cc",
+        "src/gtest-typed-test.cc",
+        "src/gtest.cc",
     ],
 }

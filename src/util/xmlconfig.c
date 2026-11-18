@@ -331,22 +331,22 @@ findOption(const driOptionCache *cache, const char *name)
 UNUSED static bool
 checkValue(const driOptionValue *v, const driOptionInfo *info)
 {
+   if (!info->has_range)
+      return true;
+
    switch (info->type) {
    case DRI_ENUM: /* enum is just a special integer */
    case DRI_INT:
-      return (info->range.start._int == info->range.end._int ||
-              (v->_int >= info->range.start._int &&
-               v->_int <= info->range.end._int));
+      return v->_int >= info->range.start._int &&
+             v->_int <= info->range.end._int;
 
    case DRI_UINT64:
-      return (info->range.start._uint64 == info->range.end._uint64 ||
-              (v->_uint64 >= info->range.start._uint64 &&
-               v->_uint64 <= info->range.end._uint64));
+      return v->_uint64 >= info->range.start._uint64 &&
+             v->_uint64 <= info->range.end._uint64;
 
    case DRI_FLOAT:
-      return (info->range.start._float == info->range.end._float ||
-              (v->_float >= info->range.start._float &&
-               v->_float <= info->range.end._float));
+      return v->_float >= info->range.start._float &&
+             v->_float <= info->range.end._float;
 
    default:
       return true;
@@ -396,6 +396,7 @@ driParseOptionInfo(driOptionCache *info,
       }
 
       optinfo->type = opt->info.type;
+      optinfo->has_range = opt->info.has_range;
       optinfo->range = opt->info.range;
 
       switch (opt->info.type) {
@@ -537,7 +538,11 @@ driGetOptionsXml(const driOptionDescription *configOptions, unsigned numOptions)
       switch (opt->info.type) {
       case DRI_INT:
       case DRI_ENUM:
-         if (opt->info.range.start._int < opt->info.range.end._int) {
+         if (opt->info.has_range &&
+             opt->info.range.start._int == opt->info.range.end._int) {
+            ralloc_asprintf_append(&str, " valid=\"%d\"",
+                                   opt->info.range.start._int);
+         } else if (opt->info.has_range) {
             ralloc_asprintf_append(&str, " valid=\"%d:%d\"",
                                    opt->info.range.start._int,
                                    opt->info.range.end._int);
@@ -545,7 +550,11 @@ driGetOptionsXml(const driOptionDescription *configOptions, unsigned numOptions)
          break;
 
       case DRI_UINT64:
-         if (opt->info.range.start._uint64 < opt->info.range.end._uint64) {
+         if (opt->info.has_range &&
+             opt->info.range.start._uint64 == opt->info.range.end._uint64) {
+            ralloc_asprintf_append(&str, " valid=\"%" PRIu64 "\"",
+                                   opt->info.range.start._uint64);
+         } else if (opt->info.has_range) {
             ralloc_asprintf_append(&str, " valid=\"%" PRIu64 ":%" PRIu64 "\"",
                                    opt->info.range.start._uint64,
                                    opt->info.range.end._uint64);
@@ -553,7 +562,11 @@ driGetOptionsXml(const driOptionDescription *configOptions, unsigned numOptions)
          break;
 
       case DRI_FLOAT:
-         if (opt->info.range.start._float < opt->info.range.end._float) {
+         if (opt->info.has_range &&
+             opt->info.range.start._float == opt->info.range.end._float) {
+            ralloc_asprintf_append(&str, " valid=\"%f\"",
+                                   opt->info.range.start._float);
+         } else if (opt->info.has_range) {
             ralloc_asprintf_append(&str, " valid=\"%f:%f\"",
                                    opt->info.range.start._float,
                                    opt->info.range.end._float);
@@ -618,32 +631,36 @@ __driUtilMessage(const char *f, ...)
 
 /* We don't have real line/column # info in static-config case: */
 #if !WITH_XML_CONFIG
-#  define XML_GetCurrentLineNumber(p) -1
-#  define XML_GetCurrentColumnNumber(p) -1
+#  define XML_GetCurrentLineNumber64(p) UINT64_C(0)
+#  define XML_GetCurrentColumnNumber64(p) UINT64_C(0)
+#elif XML_MAJOR_VERSION == 2 && XML_MINOR_VERSION < 9
+/* Expat 2.9 added the *64 variants and deprecated the previous ones */
+#  define XML_GetCurrentLineNumber64(p) (uint64_t) XML_GetCurrentLineNumber(p)
+#  define XML_GetCurrentColumnNumber64(p) (uint64_t) XML_GetCurrentColumnNumber(p)
 #endif
 
 /** \brief Output a warning message. */
 #define XML_WARNING1(msg) do {                                          \
-      __driUtilMessage("Warning in %s line %d, column %d: "msg, data->name, \
-                        (int) XML_GetCurrentLineNumber(data->parser),   \
-                        (int) XML_GetCurrentColumnNumber(data->parser)); \
+      __driUtilMessage("Warning in %s line %" PRIu64 ", column %" PRIu64 ": "msg, data->name, \
+                        XML_GetCurrentLineNumber64(data->parser),   \
+                        XML_GetCurrentColumnNumber64(data->parser)); \
    } while (0)
 #define XML_WARNING(msg, ...) do {                                      \
-      __driUtilMessage("Warning in %s line %d, column %d: "msg, data->name, \
-                        (int) XML_GetCurrentLineNumber(data->parser),   \
-                        (int) XML_GetCurrentColumnNumber(data->parser), \
+      __driUtilMessage("Warning in %s line %" PRIu64 ", column %" PRIu64 ": "msg, data->name, \
+                        XML_GetCurrentLineNumber64(data->parser),   \
+                        XML_GetCurrentColumnNumber64(data->parser), \
                         ##__VA_ARGS__);                                 \
    } while (0)
 /** \brief Output an error message. */
 #define XML_ERROR1(msg) do {                                            \
-      __driUtilMessage("Error in %s line %d, column %d: "msg, data->name, \
-                        (int) XML_GetCurrentLineNumber(data->parser),   \
-                        (int) XML_GetCurrentColumnNumber(data->parser)); \
+      __driUtilMessage("Error in %s line %" PRIu64 ", column %" PRIu64 ": "msg, data->name, \
+                        XML_GetCurrentLineNumber64(data->parser),   \
+                        XML_GetCurrentColumnNumber64(data->parser)); \
    } while (0)
 #define XML_ERROR(msg, ...) do {                                        \
-      __driUtilMessage("Error in %s line %d, column %d: "msg, data->name, \
-                        (int) XML_GetCurrentLineNumber(data->parser),   \
-                        (int) XML_GetCurrentColumnNumber(data->parser), \
+      __driUtilMessage("Error in %s line %" PRIu64 ", column %" PRIu64 ": "msg, data->name, \
+                        XML_GetCurrentLineNumber64(data->parser),   \
+                        XML_GetCurrentColumnNumber64(data->parser), \
                         ##__VA_ARGS__);                                 \
    } while (0)
 
@@ -687,13 +704,17 @@ parseRange(driOptionInfo *info, const char *string)
 {
    char *cp;
 
+   info->has_range = false;
    XSTRDUP(cp, string);
 
    char *sep;
    sep = strchr(cp, ':');
    if (!sep) {
+      bool valid = parseValue(&info->range.start, info->type, cp);
+      info->range.end = info->range.start;
+      info->has_range = valid;
       free(cp);
-      return false;
+      return valid;
    }
 
    *sep = '\0';
@@ -719,6 +740,7 @@ parseRange(driOptionInfo *info, const char *string)
    }
 
    free(cp);
+   info->has_range = true;
    return true;
 }
 
@@ -926,7 +948,9 @@ static void
 parseEngineAttr(struct OptConfData *data, const char **attr)
 {
    uint32_t i;
-   const char *engine_name_match = NULL, *engine_versions = NULL;
+   const char *engine_name_match = NULL;
+   const char *engine_versions = NULL;
+   const char *application_versions = NULL;
    driOptionInfo version_range = {
       .type = DRI_INT,
    };
@@ -934,6 +958,8 @@ parseEngineAttr(struct OptConfData *data, const char **attr)
       if (!strcmp(attr[i], "name")) /* not needed here */;
       else if (!strcmp(attr[i], "engine_name_match")) engine_name_match = attr[i+1];
       else if (!strcmp(attr[i], "engine_versions")) engine_versions = attr[i+1];
+      else if (!strcmp(attr[i], "application_versions"))
+         application_versions = attr[i+1];
       else XML_WARNING("unknown application attribute: %s.", attr[i]);
    }
    if (engine_name_match) {
@@ -954,6 +980,16 @@ parseEngineAttr(struct OptConfData *data, const char **attr)
       } else {
          XML_WARNING("Failed to parse engine_versions range=\"%s\".",
                      engine_versions);
+      }
+   }
+   if (application_versions) {
+      driOptionValue v = { ._int = data->applicationVersion };
+      if (parseRange(&version_range, application_versions)) {
+         if (!checkValue(&v, &version_range))
+            data->ignoringApp = data->inApp;
+      } else {
+         XML_WARNING("Failed to parse application_versions range=\"%s\".",
+                     application_versions);
       }
    }
 }
@@ -1368,6 +1404,7 @@ parseStaticConfig(struct OptConfData *data)
          const char *engattr[] = {
             "engine_name_match", e->engine_name_match,
             "engine_versions", e->engine_versions,
+            "application_versions", e->application_versions,
             NULL
          };
 

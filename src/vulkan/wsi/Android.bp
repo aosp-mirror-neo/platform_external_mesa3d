@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 
@@ -121,8 +121,10 @@ cc_library_static {
         "vk_cmd_queue_headers",
         "vk_common_entrypoints_headers",
         "vk_dispatch_table_headers",
+        "vk_dispatch_trampolines_headers",
         "vk_enum_to_str_headers",
         "vk_extensions_headers",
+        "vk_format_info_headers",
         "vk_physical_device_features_headers",
         "vk_physical_device_properties_headers",
         "vk_struct_type_cast",
@@ -133,18 +135,7 @@ cc_library_static {
         "wsi_common.c",
         "wsi_common_drm.c",
         "wsi_common_headless.c",
-    ] + select((arch(), os()), {
-        ("x86_64", "linux_glibc"): [
-            "wsi_common_display.c",
-        ],
-        ("x86_64", "linux_musl"): [
-            "wsi_common_display.c",
-        ],
-        ("arm64", "linux_musl"): [
-            "wsi_common_display.c",
-        ],
-        (default, default): [],
-    }),
+    ],
     static_libs: [
         "blake3",
         "mesa_util",

@@ -55,7 +55,9 @@ template = """\
  * IN THE SOFTWARE.
  */
 
+#ifdef HAVE_FENV_H
 #include <fenv.h>
+#endif
 #include <math.h>
 #include "util/rounding.h" /* for _mesa_roundeven */
 #include "util/half_float.h"
@@ -477,6 +479,7 @@ struct ${type}${width}_vec {
    <%
    output_type = type_add_size(op.output_type, bit_size)
    input_types = [type_add_size(type_, bit_size) for type_ in op.input_types]
+   expr = op.render(output_type + '_t')
    %>
 
    ## For each non-per-component input, create a variable srcN that
@@ -530,9 +533,6 @@ struct ${type}${width}_vec {
          ## Create an appropriately-typed variable dst and assign the
          ## result of the const_expr to it.  If const_expr already contains
          ## writes to dst, just include const_expr directly.
-         <%
-         expr = op.render(output_type + '_t')
-         %>
          % if "dst" in op.const_expr:
             ${output_type}_t dst;
 
@@ -582,12 +582,12 @@ struct ${type}${width}_vec {
       struct ${output_type}_vec dst;
 
       % if "dst" in op.const_expr:
-         ${op.const_expr}
+         ${expr}
       % else:
          ## Splat the value to all components.  This way expressions which
          ## write the same value to all components don't need to explicitly
          ## write to dest.
-         dst.x = dst.y = dst.z = dst.w = ${op.const_expr};
+         dst.x = dst.y = dst.z = dst.w = ${expr};
       % endif
 
       ## For each component in the destination, copy the value of dst to
@@ -660,6 +660,7 @@ nir_eval_const_opcode(nir_op op, nir_const_value *dest, nir_component_mask_t *ou
                       nir_const_value **src,
                       unsigned float_controls_execution_mode)
 {
+#ifdef HAVE_FENV_H
    /* Temporarily disable floating point exception flags while we
     * evaluate shader constants. This avoids games unexpectedly crashing while
     * we evalute shader math on the cpu if they have the exeption flags turn
@@ -673,6 +674,7 @@ nir_eval_const_opcode(nir_op op, nir_const_value *dest, nir_component_mask_t *ou
 #endif
    if (unlikely(had_flags))
       feholdexcept(&__nir_const_fenv);
+#endif
 
    nir_component_mask_t poison;
 
@@ -689,9 +691,11 @@ nir_eval_const_opcode(nir_op op, nir_const_value *dest, nir_component_mask_t *ou
    if (out_poison)
       *out_poison = poison;
 
+#ifdef HAVE_FENV_H
    /* Restore floating point exception flags */
    if (unlikely(had_flags))
       fesetenv(&__nir_const_fenv);
+#endif
 }"""
 
 from mako.template import Template

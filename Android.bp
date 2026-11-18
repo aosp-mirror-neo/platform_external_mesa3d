@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 
@@ -129,6 +129,7 @@ cc_defaults {
         "-DHAVE_DL_ITERATE_PHDR",
         "-DHAVE_DRI2",
         "-DHAVE_ENDIAN_H",
+        "-DHAVE_FENV_H",
         "-DHAVE_FLOCK",
         "-DHAVE_FMEMOPEN",
         "-DHAVE_FUNC_ATTRIBUTE_ALIAS",
@@ -186,7 +187,7 @@ cc_defaults {
         "-DMESA_DEBUG=0",
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
-        "-DPACKAGE_VERSION=\"26.3.0-devel\"",
+        "-DPACKAGE_VERSION=\"27.0.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -234,13 +235,9 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MALLINFO2",
             "-DHAVE_MEMFD_CREATE",
-            "-DHAVE_REALLOCARRAY",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
-        ],
-        "linux_musl": [
-            "-DHAVE_REALLOCARRAY",
         ],
         "linux_glibc": [
             "-DHAVE_XLOCALE_H",
@@ -340,6 +337,7 @@ cc_defaults {
         "-DHAVE_DL_ITERATE_PHDR",
         "-DHAVE_DRI2",
         "-DHAVE_ENDIAN_H",
+        "-DHAVE_FENV_H",
         "-DHAVE_FLOCK",
         "-DHAVE_FMEMOPEN",
         "-DHAVE_FUNC_ATTRIBUTE_ALIAS",
@@ -397,7 +395,7 @@ cc_defaults {
         "-DMESA_DEBUG=0",
         "-DMESA_LLVM_VERSION_STRING=\"16.0\"",
         "-DMESA_SYSTEM_HAS_KMS_DRM=1",
-        "-DPACKAGE_VERSION=\"26.3.0-devel\"",
+        "-DPACKAGE_VERSION=\"27.0.0-devel\"",
         "-DTHREAD_SANITIZER=0",
         "-DUSE_GCC_ATOMIC_BUILTINS",
         "-DUSE_LIBGLVND=0",
@@ -438,13 +436,9 @@ cc_defaults {
             "-DHAVE_LINUX_UDMABUF_H",
             "-DHAVE_MALLINFO2",
             "-DHAVE_MEMFD_CREATE",
-            "-DHAVE_REALLOCARRAY",
             "-DHAVE_THRD_CREATE",
             "-DHAVE_XLOCALE_H",
             "-fno-emulated-tls",
-        ],
-        "linux_musl": [
-            "-DHAVE_REALLOCARRAY",
         ],
         "linux_glibc": [
             "-DHAVE_XLOCALE_H",

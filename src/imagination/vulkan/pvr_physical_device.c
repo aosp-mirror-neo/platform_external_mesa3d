@@ -143,11 +143,13 @@ static void pvr_physical_device_get_supported_extensions(
       .KHR_format_feature_flags2 = true,
       .KHR_get_memory_requirements2 = true,
       .KHR_global_priority = true,
-      .KHR_incremental_present = PVR_USE_WSI_PLATFORM,
       .KHR_image_format_list = true,
       .KHR_imageless_framebuffer = true,
+      .KHR_incremental_present = PVR_USE_WSI_PLATFORM,
       .KHR_index_type_uint8 = true,
+      .KHR_internally_synchronized_queues = true,
       .KHR_line_rasterization = true,
+      .KHR_load_store_op_none = true,
       .KHR_maintenance1 = true,
       .KHR_maintenance2 = true,
       .KHR_maintenance3 = true,
@@ -198,19 +200,20 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_depth_clip_enable = true,
       .EXT_device_memory_report = true,
       .EXT_display_control = PVR_USE_WSI_PLATFORM_DISPLAY,
-      .EXT_global_priority = true,
-      .EXT_global_priority_query = true,
-      .EXT_image_drm_format_modifier = true,
       .EXT_extended_dynamic_state = true,
       .EXT_extended_dynamic_state2 = true,
       .EXT_extended_dynamic_state3 = true,
       .EXT_external_memory_dma_buf = true,
+      .EXT_global_priority = true,
+      .EXT_global_priority_query = true,
       .EXT_host_query_reset = true,
       .EXT_image_2d_view_of_3d = true,
+      .EXT_image_drm_format_modifier = true,
       .EXT_image_sliced_view_of_3d = true,
       .EXT_index_type_uint8 = true,
       .EXT_inline_uniform_block = true,
       .EXT_line_rasterization = true,
+      .EXT_load_store_op_none = true,
       .EXT_map_memory_placed = true,
       .EXT_non_seamless_cube_map = true,
       .EXT_physical_device_drm = true,
@@ -228,10 +231,13 @@ static void pvr_physical_device_get_supported_extensions(
       .EXT_subgroup_size_control = true,
       .EXT_texel_buffer_alignment = true,
       .EXT_tooling_info = true,
+      .EXT_transform_feedback = true,
       .EXT_vertex_attribute_divisor = true,
       .EXT_zero_initialize_device_memory = true,
 #ifdef PVR_USE_WSI_PLATFORM
-      .GOOGLE_display_timing = wsi_instance_supports_google_display_timing(&instance->vk, &instance->drirc.options),
+      .GOOGLE_display_timing =
+         wsi_instance_supports_google_display_timing(&instance->vk,
+                                                     &instance->drirc.options),
 #endif
       .IMG_filter_linear_2d = true,
    };
@@ -496,6 +502,9 @@ static void pvr_physical_device_get_supported_features(
       /* Vulkan 1.3 / VK_EXT_texel_buffer_alignment */
       .texelBufferAlignment = true,
 
+      /* VK_EXT_transform_feedback */
+      .transformFeedback = true,
+
       /* Vulkan 1.2 / VK_KHR_buffer_device_address */
       .bufferDeviceAddress = false,
       .bufferDeviceAddressCaptureReplay = false,
@@ -578,7 +587,10 @@ static void pvr_physical_device_get_supported_features(
       .swapchainMaintenance1 = PVR_USE_WSI_PLATFORM,
 
       /* KHR_unifiedImageLayouts */
-      .unifiedImageLayouts = true
+      .unifiedImageLayouts = true,
+
+      /* VK_KHR_internally_synchronized_queues */
+      .internallySynchronizedQueues = true,
    };
 }
 
@@ -611,7 +623,7 @@ static bool pvr_physical_device_get_properties(
 
    UNUSED const uint32_t max_render_size = rogue_get_render_size_max(dev_info);
 
-   UNUSED const uint32_t max_sample_bits = ((max_multisample << 1) - 1);
+   const uint32_t max_sample_bits = ((max_multisample << 1) - 1);
 
    UNUSED const uint32_t max_user_vertex_components =
       pvr_get_max_user_vertex_output_components(dev_info);
@@ -775,15 +787,15 @@ static bool pvr_physical_device_get_properties(
       .maxFramebufferLayers = 256U,
 
       /* Note: update nir_shader_compiler_options.max_samples when changing this. */
-      .framebufferColorSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .framebufferDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .framebufferStencilSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .framebufferNoAttachmentsSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
+      .framebufferColorSampleCounts = max_sample_bits,
+      .framebufferDepthSampleCounts = max_sample_bits,
+      .framebufferStencilSampleCounts = max_sample_bits,
+      .framebufferNoAttachmentsSampleCounts = max_sample_bits,
       .maxColorAttachments = 4U,
-      .sampledImageColorSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .sampledImageIntegerSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .sampledImageDepthSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
-      .sampledImageStencilSampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
+      .sampledImageColorSampleCounts = max_sample_bits,
+      .sampledImageIntegerSampleCounts = max_sample_bits,
+      .sampledImageDepthSampleCounts = max_sample_bits,
+      .sampledImageStencilSampleCounts = max_sample_bits,
       .storageImageSampleCounts = VK_SAMPLE_COUNT_1_BIT, /* Requires shaderStorageImageMultisample */
       .maxSampleMaskWords = 1U,
       .timestampComputeAndGraphics = false,
@@ -850,8 +862,7 @@ static bool pvr_physical_device_get_properties(
       .maxDescriptorSetUpdateAfterBindInputAttachments = 0,
       .filterMinmaxSingleComponentFormats = false,
       .filterMinmaxImageComponentMapping = false,
-      .framebufferIntegerColorSampleCounts =
-         VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_4_BIT,
+      .framebufferIntegerColorSampleCounts = max_sample_bits,
 
       /* Vulkan 1.0 / VK_KHR_maintenance2 */
       .pointClippingBehavior =
@@ -982,6 +993,18 @@ static bool pvr_physical_device_get_properties(
       /* VK_EXT_custom_border_color */
       .maxCustomBorderColorSamplers =
          get_custom_border_color_samplers(&pdevice->dev_info),
+
+      /* EXT_transform_feedback */
+      .maxTransformFeedbackStreams = PVR_XFB_MAX_STREAMS,
+      .maxTransformFeedbackBuffers = PVR_XFB_MAX_BUFFERS,
+      .maxTransformFeedbackBufferSize = UINT32_MAX,
+      .maxTransformFeedbackStreamDataSize = PVR_XFB_MAX_DATA_SIZE,
+      .maxTransformFeedbackBufferDataSize = PVR_XFB_MAX_DATA_SIZE,
+      .maxTransformFeedbackBufferDataStride = PVR_XFB_MAX_DATA_STRIDE,
+      .transformFeedbackQueries = false,
+      .transformFeedbackStreamsLinesTriangles = false,
+      .transformFeedbackRasterizationStreamSelect = false,
+      .transformFeedbackDraw = true,
 
       /* VK_EXT_physical_device_drm */
       .drmHasPrimary = pdevice->has_primary,

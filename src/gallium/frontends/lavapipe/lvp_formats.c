@@ -77,6 +77,19 @@ lvp_physical_device_get_format_properties(struct lvp_physical_device *physical_d
      return;
    }
 
+   if (lvp_is_compressed_format_emulated(format)) {
+      features |= (VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT |
+                   VK_FORMAT_FEATURE_2_BLIT_SRC_BIT |
+                   VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT |
+                   VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT |
+                   VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
+                   VK_FORMAT_FEATURE_2_HOST_IMAGE_TRANSFER_BIT_EXT);
+      out_properties->linearTilingFeatures = features;
+      out_properties->optimalTilingFeatures = features;
+      out_properties->bufferFeatures = buffer_features;
+      return;
+   }
+
    if (pscreen->is_format_supported(pscreen, pformat, PIPE_TEXTURE_2D, 0, 0,
                                     PIPE_BIND_DEPTH_STENCIL)) {
       out_properties->linearTilingFeatures = 0;
@@ -362,6 +375,19 @@ static VkResult lvp_get_image_format_properties(struct lvp_physical_device *phys
       break;
    }
 
+   /* We don't want emulated formats to gain unexpected usage (storage in
+    * particular) from its compatible view formats.
+    */
+   bool storage_not_supported =
+      ((info->usage & VK_IMAGE_USAGE_STORAGE_BIT) &&
+       !(format_feature_flags & VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT));
+
+   if (((info->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) ||
+        (info->flags & VK_IMAGE_CREATE_EXTENDED_USAGE_BIT)) &&
+       storage_not_supported &&
+       (lvp_is_compressed_format_emulated(info->format)))
+      goto unsupported;
+
    if (info->flags & VK_IMAGE_CREATE_EXTENDED_USAGE_BIT)
       goto skip_checks;
 
@@ -521,6 +547,13 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_GetPhysicalDeviceImageFormatProperties2(
             compat_flags |= VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT;
 #endif
 
+         break;
+#endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+      case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
+         flags = VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+         export_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+         compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
          break;
 #endif
       case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:
@@ -693,6 +726,13 @@ VKAPI_ATTR void VKAPI_CALL lvp_GetPhysicalDeviceExternalBufferProperties(
       flags = VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
       export_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
       compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT;
+      break;
+#endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   case VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT:
+      flags = VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT | VK_EXTERNAL_MEMORY_FEATURE_IMPORTABLE_BIT;
+      export_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
+      compat_flags = VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT;
       break;
 #endif
    case VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT:

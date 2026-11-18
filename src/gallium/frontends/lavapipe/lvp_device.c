@@ -128,7 +128,7 @@ static const struct vk_instance_extension_table lvp_instance_extensions_supporte
 #ifdef VK_USE_PLATFORM_METAL_EXT
    .EXT_metal_surface                        = true,
 #endif
-#ifndef VK_USE_PLATFORM_WIN32_KHR
+#if defined(LVP_USE_WSI_PLATFORM) && !defined(VK_USE_PLATFORM_WIN32_KHR)
    .EXT_headless_surface                     = true,
 #endif
 };
@@ -162,6 +162,9 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
    .KHR_external_memory                   = true,
 #ifdef PIPE_MEMORY_FD
    .KHR_external_memory_fd                = true,
+#endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   .KHR_external_memory_win32             = true,
 #endif
    .KHR_external_semaphore                = true,
 #ifdef HAVE_LIBDRM
@@ -276,7 +279,9 @@ static const struct vk_device_extension_table lvp_device_extensions_supported = 
 #endif
    .EXT_mesh_shader                       = true,
    .EXT_multisampled_render_to_single_sampled = true,
-   .EXT_multisampled_render_to_swapchain = true,
+#ifdef LVP_USE_WSI_PLATFORM
+   .EXT_multisampled_render_to_swapchain  = true,
+#endif
    .EXT_multi_draw                        = true,
    .EXT_mutable_descriptor_type           = true,
    .EXT_nested_command_buffer             = true,
@@ -344,6 +349,9 @@ assert_memhandle_type(VkExternalMemoryHandleTypeFlags types)
    unsigned valid[] = {
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT,
       VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+      VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT,
+#endif
    };
    for (unsigned i = 0; i < ARRAY_SIZE(valid); i++) {
       if (types & valid[i])
@@ -385,6 +393,13 @@ lvp_device_memory_type_for_handle_types(const struct lvp_physical_device *pdevic
 
       assert(types == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_FD_BIT);
       return LVP_DEVICE_MEMORY_TYPE_OPAQUE_FD;
+   }
+#endif
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   if (types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT) {
+      assert(types == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT);
+      return LVP_DEVICE_MEMORY_TYPE_OPAQUE_WIN32;
    }
 #endif
 
@@ -459,8 +474,8 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       .alphaToOne                               = true,
       .multiViewport                            = true,
       .samplerAnisotropy                        = true,
-      .textureCompressionETC2                   = false,
-      .textureCompressionASTC_LDR               = false,
+      .textureCompressionETC2                   = true,
+      .textureCompressionASTC_LDR               = true,
       .textureCompressionBC                     = true,
       .occlusionQueryPrecise                    = true,
       .pipelineStatisticsQuery                  = true,
@@ -634,8 +649,10 @@ lvp_get_features(const struct lvp_physical_device *pdevice,
       /* VK_EXT_multisampled_render_to_single_sampled */
       .multisampledRenderToSingleSampled = true,
 
+#ifdef LVP_USE_WSI_PLATFORM
       /* VK_EXT_multisampled_render_to_swapchain */
       .multisampledRenderToSwapchain = true,
+#endif
 
       /* VK_EXT_mutable_descriptor_type */
       .mutableDescriptorType = true,
@@ -1537,18 +1554,10 @@ lvp_physical_device_init(struct lvp_physical_device *device,
 #if defined(HAVE_LIBDRM) && defined(HAVE_LINUX_UDMABUF_H)
    int dmabuf_bits = DRM_PRIME_CAP_EXPORT | DRM_PRIME_CAP_IMPORT;
    int supported_dmabuf_bits = device->pscreen->caps.dmabuf;
-   const bool dmabuf_import_export = (supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits;
-   const char *engine_name = instance->vk.app_info.engine_name;
-   /* if import or export is supported then EXT_external_memory_dma_buf is supported
-    *
-    * For zink, advertise the extension only when both import and export are
-    * supported since zink has assumed both for dmabuf support.
-    */
-   if (engine_name && strcmp(engine_name, "mesa zink") == 0)
-      device->vk.supported_extensions.EXT_external_memory_dma_buf = dmabuf_import_export;
-   else
-      device->vk.supported_extensions.EXT_external_memory_dma_buf = !!supported_dmabuf_bits;
-   if (dmabuf_import_export)
+   /* if import or export is supported then EXT_external_memory_dma_buf is supported */
+   if (supported_dmabuf_bits)
+      device->vk.supported_extensions.EXT_external_memory_dma_buf = true;
+   if ((supported_dmabuf_bits & dmabuf_bits) == dmabuf_bits)
       device->vk.supported_extensions.EXT_image_drm_format_modifier = true;
    if (supported_dmabuf_bits & DRM_PRIME_CAP_IMPORT)
       device->vk.supported_extensions.ANDROID_external_memory_android_hardware_buffer = true;
@@ -2216,6 +2225,10 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
    VK_FROM_HANDLE(lvp_device, device, _device);
    struct lvp_device_memory *mem;
    ASSERTED const VkImportMemoryFdInfoKHR *import_info = NULL;
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   const VkImportMemoryWin32HandleInfoKHR *import_win32_info = NULL;
+   const VkExportMemoryWin32HandleInfoKHR *export_win32_info = NULL;
+#endif
    const VkMemoryAllocateFlagsInfo *mem_flags = NULL;
    VkResult error = VK_ERROR_OUT_OF_DEVICE_MEMORY;
    assert(pAllocateInfo->sType == VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO);
@@ -2227,6 +2240,15 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
          import_info = (VkImportMemoryFdInfoKHR*)ext;
          assert_memhandle_type(import_info->handleType);
          break;
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+      case VK_STRUCTURE_TYPE_IMPORT_MEMORY_WIN32_HANDLE_INFO_KHR:
+         import_win32_info = (const VkImportMemoryWin32HandleInfoKHR *)ext;
+         assert_memhandle_type(import_win32_info->handleType);
+         break;
+      case VK_STRUCTURE_TYPE_EXPORT_MEMORY_WIN32_HANDLE_INFO_KHR:
+         export_win32_info = (const VkExportMemoryWin32HandleInfoKHR *)ext;
+         break;
+#endif
       case VK_STRUCTURE_TYPE_MEMORY_PRIORITY_ALLOCATE_INFO_EXT: {
          VkMemoryPriorityAllocateInfoEXT *prio = (VkMemoryPriorityAllocateInfoEXT*)ext;
          priority = get_mem_priority(prio->priority);
@@ -2254,6 +2276,9 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
 
    mem->memory_type = LVP_DEVICE_MEMORY_TYPE_DEFAULT;
    mem->backed_fd = -1;
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   mem->backed_handle = NULL;
+#endif
 
    if (mem->vk.host_ptr) {
       mem->mem_alloc = (struct llvmpipe_memory_allocation) {
@@ -2309,6 +2334,98 @@ VKAPI_ATTR VkResult VKAPI_CALL lvp_AllocateMemory(
          memset(mem->map, 0, pAllocateInfo->allocationSize);
    }
 #endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   else if (mem->vk.import_handle_type == VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT) {
+      assert(import_win32_info &&
+             import_win32_info->handleType == mem->vk.import_handle_type);
+      HANDLE handle = NULL;
+      if (import_win32_info->name && import_win32_info->name[0]) {
+         handle = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, import_win32_info->name);
+      } else if (import_win32_info->handle &&
+                 import_win32_info->handle != INVALID_HANDLE_VALUE) {
+         if (!DuplicateHandle(GetCurrentProcess(), import_win32_info->handle,
+                              GetCurrentProcess(), &handle,
+                              0, FALSE, DUPLICATE_SAME_ACCESS)) {
+            handle = NULL;
+         }
+      }
+      if (!handle) {
+         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+         goto fail;
+      }
+
+      void *map = MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+      if (!map) {
+         CloseHandle(handle);
+         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+         goto fail;
+      }
+
+      MEMORY_BASIC_INFORMATION mbi;
+      if (!VirtualQuery(map, &mbi, sizeof(mbi)) ||
+          mbi.RegionSize < pAllocateInfo->allocationSize) {
+         UnmapViewOfFile(map);
+         CloseHandle(handle);
+         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+         goto fail;
+      }
+
+      mem->backed_handle = handle;
+      mem->vk.size = mbi.RegionSize;
+      mem->mem_alloc = (struct llvmpipe_memory_allocation) {
+         .cpu_addr = map,
+         .size = mbi.RegionSize,
+         .fd = -1,
+         .type = LLVMPIPE_MEMORY_FD_TYPE_OPAQUE,
+      };
+      mem->pmem = (struct pipe_memory_allocation *)&mem->mem_alloc;
+      mem->map = map;
+      mem->memory_type = LVP_DEVICE_MEMORY_TYPE_OPAQUE_WIN32;
+   }
+   else if (mem->vk.export_handle_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT) {
+      const enum lvp_device_memory_type memory_type =
+         lvp_device_memory_type_for_handle_types(lvp_device_physical(device), mem->vk.export_handle_types);
+      uint64_t alignment = 256;
+      os_get_page_size(&alignment);
+      uint64_t size = MAX2(align64(pAllocateInfo->allocationSize, alignment), alignment);
+
+      LPSECURITY_ATTRIBUTES attrs = export_win32_info ?
+         (LPSECURITY_ATTRIBUTES)export_win32_info->pAttributes : NULL;
+      LPCWSTR name = (export_win32_info && export_win32_info->name && export_win32_info->name[0]) ?
+         export_win32_info->name : NULL;
+
+      HANDLE handle = CreateFileMappingW(INVALID_HANDLE_VALUE, attrs, PAGE_READWRITE,
+                                         (DWORD)(size >> 32), (DWORD)(size & 0xffffffff),
+                                         name);
+      if (!handle)
+         goto fail;
+
+      if (name && GetLastError() == ERROR_ALREADY_EXISTS) {
+         CloseHandle(handle);
+         error = VK_ERROR_INVALID_EXTERNAL_HANDLE;
+         goto fail;
+      }
+
+      void *map = MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, size);
+      if (!map) {
+         CloseHandle(handle);
+         goto fail;
+      }
+
+      mem->backed_handle = handle;
+      mem->mem_alloc = (struct llvmpipe_memory_allocation) {
+         .cpu_addr = map,
+         .size = size,
+         .fd = -1,
+         .type = LLVMPIPE_MEMORY_FD_TYPE_OPAQUE,
+      };
+      mem->pmem = (struct pipe_memory_allocation *)&mem->mem_alloc;
+      mem->map = map;
+      mem->memory_type = memory_type;
+      if (mem_flags && mem_flags->flags & VK_MEMORY_ALLOCATE_ZERO_INITIALIZE_BIT_EXT)
+         memset(mem->map, 0, pAllocateInfo->allocationSize);
+   }
+#endif
    else {
       mem->pmem = device->pscreen->allocate_memory(device->pscreen, pAllocateInfo->allocationSize);
       if (!mem->pmem) {
@@ -2358,6 +2475,14 @@ VKAPI_ATTR void VKAPI_CALL lvp_FreeMemory(
       device->pscreen->free_memory_fd(device->pscreen, mem->pmem);
       if(mem->backed_fd >= 0)
          close(mem->backed_fd);
+      break;
+#endif
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+   case LVP_DEVICE_MEMORY_TYPE_OPAQUE_WIN32:
+      if (mem->map)
+         UnmapViewOfFile(mem->map);
+      if (mem->backed_handle)
+         CloseHandle(mem->backed_handle);
       break;
 #endif
    case LVP_DEVICE_MEMORY_TYPE_USER_PTR:
@@ -2699,6 +2824,54 @@ lvp_GetMemoryFdPropertiesKHR(VkDevice _device,
    if (assert_memhandle_type(handleType)) {
       // There is only one memoryType so select this one
       pMemoryFdProperties->memoryTypeBits = 1;
+   }
+   else {
+      const struct lvp_physical_device *pdev = lvp_device_physical(device);
+      return vk_error(pdev->vk.instance, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+   }
+   return VK_SUCCESS;
+}
+
+#endif
+
+#ifdef VK_USE_PLATFORM_WIN32_KHR
+
+VKAPI_ATTR VkResult VKAPI_CALL
+lvp_GetMemoryWin32HandleKHR(VkDevice _device,
+                            const VkMemoryGetWin32HandleInfoKHR *pGetWin32HandleInfo,
+                            HANDLE *pHandle)
+{
+   VK_FROM_HANDLE(lvp_device, device, _device);
+   VK_FROM_HANDLE(lvp_device_memory, memory, pGetWin32HandleInfo->memory);
+
+   assert(pGetWin32HandleInfo->sType == VK_STRUCTURE_TYPE_MEMORY_GET_WIN32_HANDLE_INFO_KHR);
+   assert_memhandle_type(pGetWin32HandleInfo->handleType);
+
+   if (!memory->backed_handle)
+      return vk_error(device, VK_ERROR_INVALID_EXTERNAL_HANDLE);
+
+   if (!DuplicateHandle(GetCurrentProcess(), memory->backed_handle,
+                        GetCurrentProcess(), pHandle,
+                        0, FALSE, DUPLICATE_SAME_ACCESS))
+      return vk_error(device, VK_ERROR_OUT_OF_HOST_MEMORY);
+
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+lvp_GetMemoryWin32HandlePropertiesKHR(VkDevice _device,
+                                      VkExternalMemoryHandleTypeFlagBits handleType,
+                                      HANDLE handle,
+                                      VkMemoryWin32HandlePropertiesKHR *pMemoryWin32HandleProperties)
+{
+   VK_FROM_HANDLE(lvp_device, device, _device);
+
+   assert(pMemoryWin32HandleProperties->sType == VK_STRUCTURE_TYPE_MEMORY_WIN32_HANDLE_PROPERTIES_KHR);
+
+   if (assert_memhandle_type(handleType) &&
+       handle && handle != INVALID_HANDLE_VALUE) {
+      // There is only one memoryType so select this one
+      pMemoryWin32HandleProperties->memoryTypeBits = 1;
    }
    else {
       const struct lvp_physical_device *pdev = lvp_device_physical(device);

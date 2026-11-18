@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 
@@ -339,7 +339,6 @@ cc_library_static {
         "nir_divergence_analysis.c",
         "nir_dominance.c",
         "nir_dominance_lca.c",
-        "nir_downgrade_pls_vars.c",
         "nir_fixup_is_exported.c",
         "nir_format_convert.c",
         "nir_from_ssa.c",
@@ -524,6 +523,7 @@ cc_library_static {
         "nir_opt_shrink_stores.c",
         "nir_opt_shrink_vectors.c",
         "nir_opt_sink.c",
+        "nir_opt_uadd_carry.c",
         "nir_opt_undef.c",
         "nir_opt_uniform_atomics.c",
         "nir_opt_uniform_subgroup.c",

@@ -2104,10 +2104,8 @@ brw_generator::generate_code(const brw_shader &s,
             gen.src[1].region = { 0, 1, 0 };
 
       }
-      if ((gen.dst.file == GEN_GRF || gen.dst.file == GEN_ARF) &&
-           gen.dst.region.hstride == 0) {
+      if (gen.dst.region.hstride == 0)
          gen.dst.region.hstride = 1;
-      }
    }
 
    /* Translate any pre-filled IMM branch sources from absolute indices
@@ -2130,7 +2128,14 @@ brw_generator::generate_code(const brw_shader &s,
     * shared function use.  Otherwise, subtle changes to scheduling or
     * register allocation could cause it to fluctuate wildly - and that
     * effect is already counted in spill/fill counts.
+    *
+    * If brw_opt_fill_and_spill forgets to update the spill count or fill
+    * count, send_count may count fewer total SENDs than the total spills and
+    * fills. This will cause some wild results in the SEND count shader stats.
     */
+   assert((unsigned)send_count >= (shader_stats.spill_count +
+                                   shader_stats.fill_count));
+
    send_count -= shader_stats.spill_count;
    send_count -= shader_stats.fill_count;
 
@@ -2317,7 +2322,7 @@ brw_generator::generate_code(const brw_shader &s,
          FILE *bin_dump =
             debug_archiver_start_file(
                params->archiver,
-               ralloc_asprintf(mem_ctx, "GEN%d/0.bin", dispatch_width));
+               ralloc_asprintf(mem_ctx, "BIN%d/0", dispatch_width));
          fwrite(output, 1, output_size, bin_dump);
          debug_archiver_finish_file(params->archiver);
       }
