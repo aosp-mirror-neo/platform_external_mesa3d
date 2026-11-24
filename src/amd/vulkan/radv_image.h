@@ -21,14 +21,16 @@
 #include "vk_format.h"
 #include "vk_image.h"
 
-#define RADV_IMAGE_USAGE_WRITE_BITS                                                                                   \
-   (VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR | VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR |                               \
+#define RADV_IMAGE_USAGE_WRITE_BITS                                                                                    \
+   (VK_IMAGE_USAGE_2_TRANSFER_DST_BIT_KHR | VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR |                                \
     VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR)
 
 struct radv_image_plane {
    VkFormat format;
    struct radeon_surf surface;
    uint32_t first_mip_pipe_misaligned; /* GFX10-GFX11.5 */
+   /* Whether ASTC mipmapped images are padded on GFX9. */
+   bool gfx9_astc_padded;
 };
 
 struct radv_image_binding {
@@ -260,7 +262,7 @@ radv_image_decompress_htile_on_image_stores(const struct radv_device *device, co
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
-   if (!radv_image_has_htile(image))
+   if (!radv_image_is_tc_compat_htile(image))
       return false;
 
    /* This is supported on GFX10-10.3 but according to PAL there are issues. */
@@ -461,9 +463,12 @@ enum radv_fmask_compression radv_layout_fmask_compression(const struct radv_devi
 
 unsigned radv_image_queue_family_mask(const struct radv_image *image, enum radv_queue_family qf);
 
-bool radv_image_is_renderable(const struct radv_image *image);
+bool radv_image_is_renderable(const struct radv_physical_device *pdev, const struct radv_image *image);
 
 bool radv_image_is_l2_coherent(const struct radv_device *device, const struct radv_image *image,
                                const VkImageSubresourceRange *range);
+
+void radv_image_get_cmask_clear_copy_buffer_range(const struct radv_image *image, unsigned z, unsigned layer_count,
+                                                  uint64_t *offset, uint64_t *size);
 
 #endif /* RADV_IMAGE_H */

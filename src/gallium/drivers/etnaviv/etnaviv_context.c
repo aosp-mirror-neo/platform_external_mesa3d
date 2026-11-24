@@ -46,6 +46,7 @@
 #include "etnaviv_transfer.h"
 #include "etnaviv_translate.h"
 #include "etnaviv_zsa.h"
+#include "layout/eil_format.h"
 
 #include "nir/nir_xfb_info.h"
 #include "pipe/p_context.h"
@@ -110,8 +111,7 @@ etna_context_destroy(struct pipe_context *pctx)
    if (VIV_FEATURE(ctx->screen, ETNA_FEATURE_HWTFB))
       pipe_resource_reference(&ctx->streamout.context_buffer, NULL);
 
-   if (ctx->pending_resources)
-      _mesa_hash_table_destroy(ctx->pending_resources, NULL);
+   util_dynarray_fini(&ctx->pending_status);
 
    if (ctx->updated_resources)
       _mesa_set_destroy(ctx->updated_resources, NULL);
@@ -241,7 +241,7 @@ etna_get_fs(struct etna_context *ctx, struct etna_shader_key* const key)
       if (ctx->sampler[i]->compare_mode == PIPE_TEX_COMPARE_NONE)
          continue;
 
-      const bool emulated_z32f = format_is_emulated_z32f(ctx->sampler_view[i]->format);
+      const bool emulated_z32f = eil_format_is_emulated_z32f(ctx->sampler_view[i]->format);
 
       if (ctx->screen->info->halti >= 2 && !emulated_z32f)
          continue;
@@ -451,16 +451,25 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
       ctx->dirty |= ETNA_DIRTY_STREAMOUT;
    }
 
-   /* Update any derived state */
-   if (ctx->dirty && !etna_state_update(ctx))
-      return;
+   const struct etna_shader *bind_vs = ctx->shader.bind_vs;
+   const struct etna_shader *bind_fs = ctx->shader.bind_fs;
+   uint32_t used_views = 0;
 
-   u_foreach_bit(i, ctx->active_sampler_views) {
+   if (bind_fs)
+      used_views |= bind_fs->textures_used;
+   if (bind_vs)
+      used_views |= bind_vs->textures_used << ctx->screen->specs.vertex_sampler_offset;
+
+   u_foreach_bit(i, ctx->active_sampler_views & used_views) {
       /* If a texture was modified since the last update, we need to clear the
        * texture cache and possibly resolve TS or a sampler compatible sibling.
        */
       etna_update_sampler_source(ctx->sampler_view[i], i);
    }
+
+   /* Update any derived state */
+   if (ctx->dirty && !etna_state_update(ctx))
+      return;
 
    /* Now that we know which states need to be emitted for this draw, reserve
     * the space for them in the cmdstream. This will possibly cause a flush of
@@ -550,12 +559,15 @@ etna_draw_vbo(struct pipe_context *pctx, const struct pipe_draw_info *info,
    }
 
    if (ctx->dirty & (ETNA_DIRTY_SHADER | ETNA_DIRTY_CONSTBUF)) {
-      /* Mark constant buffers as being read */
-      u_foreach_bit(i, ctx->constant_buffer[MESA_SHADER_VERTEX].enabled_mask)
-         resource_read(ctx, ctx->constant_buffer[MESA_SHADER_VERTEX].cb[i].buffer);
+      const struct etna_constbuf_state *vs_cb = &ctx->constant_buffer[MESA_SHADER_VERTEX];
+      const struct etna_constbuf_state *fs_cb = &ctx->constant_buffer[MESA_SHADER_FRAGMENT];
 
-      u_foreach_bit(i, ctx->constant_buffer[MESA_SHADER_FRAGMENT].enabled_mask)
-         resource_read(ctx, ctx->constant_buffer[MESA_SHADER_FRAGMENT].cb[i].buffer);
+      /* Mark constant buffers the shaders load from as being read */
+      u_foreach_bit(i, vs_cb->enabled_mask & ctx->shader.vs->ubo_mask)
+         resource_read(ctx, vs_cb->cb[i].buffer);
+
+      u_foreach_bit(i, fs_cb->enabled_mask & ctx->shader.fs->ubo_mask)
+         resource_read(ctx, fs_cb->cb[i].buffer);
    }
 
    if (ctx->dirty & ETNA_DIRTY_VERTEX_BUFFERS) {
@@ -749,7 +761,7 @@ etna_flush(struct pipe_context *pctx, struct pipe_fence_handle **fence,
    if (fence)
       *fence = etna_fence_create(pctx, out_fence_fd);
 
-   _mesa_hash_table_clear(ctx->pending_resources, NULL);
+   util_dynarray_clear(&ctx->pending_status);
 
    list_for_each_entry(struct etna_acc_query, aq, &ctx->active_acc_queries, node)
       etna_acc_query_resume(aq, ctx);
@@ -824,9 +836,7 @@ etna_context_create(struct pipe_screen *pscreen, void *priv, unsigned flags)
    if (ctx->stream == NULL)
       goto fail;
 
-   ctx->pending_resources = _mesa_pointer_hash_table_create(NULL);
-   if (!ctx->pending_resources)
-      goto fail;
+   util_dynarray_init(&ctx->pending_status, NULL);
 
    ctx->flush_resources = _mesa_set_create(NULL, _mesa_hash_pointer,
                                            _mesa_key_pointer_equal);

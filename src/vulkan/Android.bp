@@ -2,10 +2,10 @@
  * Copyright (C) 2025-2026 The Magma GPU Project
  * SPDX-License-Identifier: Apache-2.0
  *
- * Generated via:
- *   https://github.com/mesonbuild/meson/tree/master/mesonbuild/convert
+ * Generated via meson convert. Submit patches here:
+ *   https://github.com/mesonbuild/meson
  *
- * Submit patches, do not hand-edit.
+ * Do not hand-edit.
  *
  */
 
@@ -17,23 +17,11 @@ package {
 cc_defaults {
     name: "vulkan_wsi_list",
     vendor: true,
-    host_supported: true,
     cflags: select(os(), {
         "android": [
             "-DVK_USE_PLATFORM_ANDROID_KHR",
         ],
         default: [],
-    }) + select((arch(), os()), {
-        ("x86_64", "linux_glibc"): [
-            "-DVK_USE_PLATFORM_DISPLAY_KHR",
-        ],
-        ("x86_64", "linux_musl"): [
-            "-DVK_USE_PLATFORM_DISPLAY_KHR",
-        ],
-        ("arm64", "linux_musl"): [
-            "-DVK_USE_PLATFORM_DISPLAY_KHR",
-        ],
-        (default, default): [],
     }),
     cppflags: select(os(), {
         "android": [

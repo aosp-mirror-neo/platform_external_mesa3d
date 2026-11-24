@@ -126,13 +126,11 @@ load_meta(const std::filesystem::path &meta_path)
     size_t num_outputs = (size_t)json_object_get_number(obj, "num_outputs");
     JSON_Array *scales_arr = json_object_get_array(obj, "output_scales");
     JSON_Array *zps_arr = json_object_get_array(obj, "output_zero_points");
-    JSON_Array *errors_arr = json_object_get_array(obj, "max_quant_errors");
 
-    if (num_outputs > 0 && scales_arr && zps_arr && errors_arr) {
+    if (num_outputs > 0 && scales_arr && zps_arr) {
         for (size_t i = 0; i < num_outputs; i++) {
             meta.output_scales.push_back((float)json_array_get_number(scales_arr, i));
             meta.output_zero_points.push_back((int)json_array_get_number(zps_arr, i));
-            meta.max_quant_errors.push_back((float)json_array_get_number(errors_arr, i));
         }
         meta.ok = true;
     } else {
@@ -148,10 +146,24 @@ load_meta(const std::filesystem::path &meta_path)
 /* run_on_npu — local ExecuTorch inference                             */
 /* ------------------------------------------------------------------ */
 
+static std::vector<float>
+float_output(const ::executorch::aten::Tensor &tensor)
+{
+   std::vector<float> output;
+
+   if (tensor.scalar_type() == ::executorch::aten::ScalarType::Float) {
+      const float *data = tensor.const_data_ptr<float>();
+      output.assign(data, data + tensor.numel());
+   }
+
+   return output;
+}
+
 int
 run_on_npu(const std::filesystem::path &work_dir,
            const std::filesystem::path &pte_path,
-           const std::string &device_id)
+           const std::string &device_id,
+           std::vector<std::vector<float>> &outputs)
 {
    using namespace ::executorch::extension;
 
@@ -165,7 +177,7 @@ run_on_npu(const std::filesystem::path &work_dir,
    }
 
    size_t num_inputs = meta->num_inputs();
-   std::vector<std::vector<float>> input_datas(num_inputs);
+   std::vector<std::vector<uint8_t>> input_datas(num_inputs);
    std::vector<::executorch::extension::TensorPtr> inputs;
 
    for (size_t i = 0; i < num_inputs; i++) {
@@ -182,8 +194,11 @@ run_on_npu(const std::filesystem::path &work_dir,
          numel *= input_meta->sizes()[d];
       }
 
+      auto scalar_type = input_meta->scalar_type();
+      size_t size = numel * ::executorch::runtime::elementSize(scalar_type);
+
       auto input_path = work_dir / (device_id + "-input-" + std::to_string(i) + ".data");
-      input_datas[i].resize(numel);
+      input_datas[i].resize(size);
       {
          std::ifstream in(input_path, std::ios::binary);
          if (!in.is_open()) {
@@ -191,11 +206,15 @@ run_on_npu(const std::filesystem::path &work_dir,
             return 1;
          }
          in.read(reinterpret_cast<char *>(input_datas[i].data()),
-                 (std::streamsize)(numel * sizeof(float)));
+                 (std::streamsize)size);
+         if ((size_t)in.gcount() != size) {
+            fprintf(stderr, "%s holds %lld bytes, expected %zu\n",
+                    input_path.c_str(), (long long)in.gcount(), size);
+            return 1;
+         }
       }
 
-      inputs.push_back(from_blob(input_datas[i].data(), shape,
-                                 exec_aten::ScalarType::Float));
+      inputs.push_back(from_blob(input_datas[i].data(), shape, scalar_type));
    }
 
    /* Run inference. */
@@ -208,19 +227,9 @@ run_on_npu(const std::filesystem::path &work_dir,
       return 1;
    }
 
-   /* Write outputs. */
-   for (size_t i = 0; i < result->size(); i++) {
-      const auto &out_t = result->at(i).toTensor();
-      const void *out_ptr = out_t.const_data_ptr();
-      auto out_path = work_dir / ("output_" + std::to_string(i) + ".bin");
-      std::ofstream out(out_path, std::ios::binary);
-      if (!out.is_open()) {
-         fprintf(stderr, "Cannot open %s\n", out_path.c_str());
-         return 1;
-      }
-      out.write(static_cast<const char *>(out_ptr),
-                out_t.numel() * out_t.element_size());
-   }
+   outputs.clear();
+   for (size_t i = 0; i < result->size(); i++)
+      outputs.push_back(float_output(result->at(i).toTensor()));
 
    return 0;
 }

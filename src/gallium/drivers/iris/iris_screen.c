@@ -760,6 +760,10 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
    screen->driconf.force_compute_surface_prefetch =
       driQueryOptionb(config->options, "intel_force_compute_surface_prefetch");
    screen->driconf.enable_tbimr =
+      /* Keep TBIMR disabled until HSDs 14024498401, 14022484703 and 14020415808
+       * are implemented.
+       */
+      (screen->devinfo->verx10 < 350) &&
       driQueryOptionb(config->options, "intel_tbimr");
    screen->driconf.enable_vf_distribution =
       driQueryOptionb(config->options, "intel_vf_distribution");
@@ -769,7 +773,8 @@ iris_screen_create(int fd, const struct pipe_screen_config *config)
       driQueryOptioni(config->options, "generated_indirect_threshold");
    screen->driconf.disable_threaded_context =
       driQueryOptionb(config->options, "intel_disable_threaded_context");
-
+   screen->driconf.sample_d_performance =
+      driQueryOptioni(config->options, "intel_sample_d_performance");
    screen->precompile = debug_get_bool_option("shader_precompile", true);
 
    isl_device_init(&screen->isl_dev, screen->devinfo);

@@ -14,9 +14,12 @@
 #include "pan_fb_preload.h"
 #include "pan_jm.h"
 #include "pan_job.h"
-#include "pan_precomp.h"
 #include "pan_trace.h"
 #include "kmod/panfrost_kmod.h"
+
+#if PAN_ARCH >= 6
+#include "pan_precomp.h"
+#endif
 
 #if PAN_ARCH >= 10
 #error "JM helpers are only used for gen < 10"
@@ -604,13 +607,16 @@ jm_emit_tiler_draw(struct mali_draw_packed *out, struct panfrost_batch *batch,
           * target may be written if the fragment shader writes
           * to it AND it actually exists. If the render target
           * doesn't actually exist, the blend descriptor will be
-          * OFF so it may be omitted from the mask.
+          * OFF so it may be omitted from the mask (unless pixel
+          * local storage is on).
           *
           * Only set when there is a fragment shader, since
           * otherwise no colour updates are possible.
           */
-         cfg.flags_1.render_target_mask =
-            (fs->info.outputs_written >> FRAG_RESULT_DATA0) & ctx->fb_rt_mask;
+         cfg.flags_1.render_target_mask = ctx->fb_rt_mask;
+         if (!ctx->pipe_framebuffer.pls_enabled)
+            cfg.flags_1.render_target_mask &=
+               fs->info.outputs_written >> FRAG_RESULT_DATA0;
 
          /* Also use per-sample shading if required by the shader
           */

@@ -91,7 +91,7 @@ radv_emit_cp_dma(struct radv_cmd_buffer *cmd_buffer, uint64_t dst_va, uint64_t s
       assert(!cp_dma_tc_l2_flag);
       header |= S_412_SRC_ADDR_HI(src_va >> 32);
       radeon_emit(PKT3(PKT3_CP_DMA, 4, 0));
-      radeon_emit(src_va);                  /* SRC_ADDR_LO [31:0] */
+      radeon_emit(src_va); /* SRC_ADDR_LO [31:0] */
       if (!cmd_buffer->is_mec && flags & CP_DMA_SAVE_HEADER_PTR_FOR_SYNC)
          device->ws->cs_set_last_cp_dma_header(cs->b, &__cs_buf[__cs_num]);
       radeon_emit(header);                  /* SRC_ADDR_HI [15:0] + flags. */
@@ -166,16 +166,11 @@ static void
 radv_cp_dma_realign_engine(struct radv_cmd_buffer *cmd_buffer, unsigned size)
 {
    uint64_t va;
-   uint32_t offset;
    unsigned buf_size = SI_CPDMA_ALIGNMENT * 2;
 
    assert(size < SI_CPDMA_ALIGNMENT);
 
-   radv_cmd_buffer_upload_alloc(cmd_buffer, buf_size, &offset, NULL);
-
-   va = radv_buffer_get_va(cmd_buffer->upload.upload_bo);
-   va += offset;
-
+   radv_cmd_buffer_vram_suballoc(cmd_buffer, buf_size, SI_CPDMA_ALIGNMENT, &va);
    radv_emit_cp_dma(cmd_buffer, va, va + SI_CPDMA_ALIGNMENT, size, 0);
 }
 

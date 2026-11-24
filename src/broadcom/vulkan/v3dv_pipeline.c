@@ -218,6 +218,7 @@ v3dv_pipeline_get_nir_options(const struct v3d_device_info *devinfo)
          nir_divergence_multiple_workgroup_per_compute_subgroup,
       .discard_is_demote = true,
       .scalarize_ddx = true,
+      .lower_int64_options = (nir_lower_int64_options)~0,
    };
 
    if (!initialized) {
@@ -297,48 +298,49 @@ lower_intrinsics(nir_shader *s)
 }
 
 static bool
-get_tlb_input_attachment_index(nir_tex_instr *tex,
-                               uint32_t *input_attachment_index)
-{
-   const int texture_src =
-      nir_tex_instr_src_index(tex, nir_tex_src_texture_deref);
-   nir_deref_instr *deref = nir_src_as_deref(tex->src[texture_src].src);
-   nir_variable *var = nir_deref_instr_get_variable(deref);
-   uint32_t index = var->data.index;
-
-   if (deref->deref_type == nir_deref_type_array)
-      index += nir_src_as_uint(deref->arr.index);
-
-   if (index >= MAX_INPUT_ATTACHMENTS)
-      return false;
-
-   *input_attachment_index = index;
-   return true;
-}
-
-static bool
 lower_tlb_input_attachment_instr(nir_builder *b, nir_tex_instr *tex, void *data)
 {
-   if (tex->sampler_dim != GLSL_SAMPLER_DIM_SUBPASS &&
-       tex->sampler_dim != GLSL_SAMPLER_DIM_SUBPASS_MS)
+   /* When reading input attachments in a regular render pass,
+    * input_attachment_index is set to True and texture_index has
+    * the input attachment index for both color and depth/stencil
+    * input attachments.
+    * When reading depth/stencil input attachments via the
+    * VK_KHR_dynamic_rendering_local_read extension,
+    * input_attachment_index is set to False, and
+    * input_attachment_{depth/stencil} are set to True instead. In
+    * this scenario, texture_index is not set at all and the driver
+    * needs to figure out the index of the attachments implicitly.
+    */
+   /* FIXME: Handle constant texture offsets before lower_tex_src. */
+   if (!tex->input_attachment_index ||
+       nir_tex_instr_src_index(tex, nir_tex_src_texture_offset) >= 0) {
       return false;
-
-   uint32_t input_attachment_index;
-   if (!get_tlb_input_attachment_index(tex, &input_attachment_index))
-      return false;
+   }
 
    const struct v3dv_subpass *subpass = data;
-   const uint32_t location =
-      subpass->tlb_input_attachment_location[input_attachment_index];
+   if (tex->texture_index >= subpass->input_count ||
+       tex->texture_index >= MAX_INPUT_ATTACHMENTS) {
+      return false;
+   }
+
+   uint32_t location =
+      subpass->tlb_input_attachment_location[tex->texture_index];
    if (location == UINT8_MAX)
       return false;
 
+   /* We map both depth and stencil input attachment reads to FRAG_RESULT_DEPTH.
+    * Use the result type to tell whether we want DEPTH or STENCIL.
+    */
+   if (location == FRAG_RESULT_DEPTH &&
+       nir_alu_type_get_base_type(tex->dest_type) != nir_type_float) {
+      location = FRAG_RESULT_STENCIL;
+   }
+
    b->cursor = nir_before_instr(&tex->instr);
 
-   nir_def *sample = tex->sampler_dim == GLSL_SAMPLER_DIM_SUBPASS_MS ?
-      tex->src[nir_tex_instr_src_index(tex, nir_tex_src_ms_index)].src.ssa :
-      nir_imm_int(b, 0);
-
+   int sample_src = nir_tex_instr_src_index(tex, nir_tex_src_ms_index);
+   nir_def *sample = sample_src >= 0 ? tex->src[sample_src].src.ssa :
+                                       nir_imm_int(b, 0);
    nir_def *result = nir_load_tile_image(b, tex->def.num_components,
                                          tex->def.bit_size,
                                          nir_imm_int(b, 0), sample,
@@ -1563,7 +1565,11 @@ upload_assembly(struct v3dv_pipeline *pipeline)
          total_size += variant->qpu_insts_size;
    }
 
-   struct v3dv_bo *bo = v3dv_bo_alloc(pipeline->device, total_size,
+   /* Shaders for each pipeline stage are packed with no gap, so pad after
+    * the last one.
+    */
+   struct v3dv_bo *bo = v3dv_bo_alloc(pipeline->device,
+                                      total_size + V3D_QPU_PREFETCH_PAD,
                                       "pipeline shader assembly", true,
                                       VK_OBJECT_TYPE_PIPELINE,
                                       vk_object_to_u64_handle(&pipeline->base));
@@ -2928,7 +2934,7 @@ pipeline_setup_rendering_info(struct v3dv_device *device,
    if (pCreateInfo->renderPass) {
       struct v3dv_render_pass *pass = v3dv_render_pass_from_handle(pCreateInfo->renderPass);
       struct v3dv_subpass *subpass = &pass->subpasses[pCreateInfo->subpass];
-      const uint32_t attachment_idx = subpass->ds_attachment.attachment;
+      const uint32_t attachment_idx = subpass->ds_attachment;
 
       mv->view_mask = subpass->view_mask;
 
@@ -2949,7 +2955,7 @@ pipeline_setup_rendering_info(struct v3dv_device *device,
 
       rp->color_attachment_count = subpass->color_count;
       for (uint32_t i = 0; i < subpass->color_count; i++) {
-         const uint32_t attachment_idx = subpass->color_attachments[i].attachment;
+         const uint32_t attachment_idx = subpass->color_attachments[i];
          if (attachment_idx == VK_ATTACHMENT_UNUSED) {
             rp->color_attachment_formats[i] = VK_FORMAT_UNDEFINED;
             continue;

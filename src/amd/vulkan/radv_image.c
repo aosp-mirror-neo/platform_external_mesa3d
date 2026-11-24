@@ -81,8 +81,8 @@ radv_use_tc_compat_htile_for_image(struct radv_device *device, const struct radv
    /* Do not enable TC-compatible HTILE if the image isn't readable by a
     * shader because no texture fetches will happen.
     */
-   if (!(image->vk.usage &
-         (VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_INPUT_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR)))
+   if (!(image->vk.usage & (VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_INPUT_ATTACHMENT_BIT_KHR |
+                            VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR)))
       return false;
 
    if (pdev->info.gfx_level < GFX9) {
@@ -313,11 +313,6 @@ radv_use_fmask_for_image(const struct radv_device *device, const struct radv_ima
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
-   if (pdev->info.gfx_level == GFX9 && image->vk.array_layers > 1) {
-      /* On GFX9, FMASK can be interleaved with layers and this isn't properly supported. */
-      return false;
-   }
-
    return pdev->use_fmask && image->vk.samples > 1 && (image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR);
 }
 
@@ -360,7 +355,7 @@ radv_use_htile_for_image(const struct radv_device *device, const struct radv_ima
 }
 
 static bool
-radv_use_tc_compat_cmask_for_image(struct radv_device *device, struct radv_image *image)
+radv_use_tc_compat_cmask_early(struct radv_device *device, struct radv_image *image)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
@@ -369,8 +364,17 @@ radv_use_tc_compat_cmask_for_image(struct radv_device *device, struct radv_image
    if (pdev->info.gfx_level < GFX8)
       return false;
 
-   /* GFX9 has issues when sample count is greater than 2 */
-   if (pdev->info.gfx_level == GFX9 && image->vk.samples > 2)
+   /* TC-compat CMASK doesn't have contiguous CMASK slices on GFX8. The solution would be to add
+    * a CMASK slice clear shader that uses cmask_equation.
+    *
+    * This should be reproducible by testing partial-range image transitions from UNDEFINED, e.g:
+    * 1. transition layer 0 from UNDEFINED
+    * 2. draw into layer 0
+    * 3. transitioning layer 1 from UNDEFINED should corrupt layer 0 if TC-compat CMASK is enabled
+    *
+    * There doesn't seem to be such a CTS test currently.
+    */
+   if (pdev->info.gfx_level == GFX8 && image->vk.array_layers > 1)
       return false;
 
    if (RADV_DEBUG(instance, NO_TC_COMPAT_CMASK))
@@ -383,8 +387,17 @@ radv_use_tc_compat_cmask_for_image(struct radv_device *device, struct radv_image
    /* Do not enable TC-compatible if the image isn't readable by a shader
     * because no texture fetches will happen.
     */
-   if (!(image->vk.usage &
-         (VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_INPUT_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR)))
+   if (!(image->vk.usage & (VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_INPUT_ATTACHMENT_BIT_KHR |
+                            VK_IMAGE_USAGE_2_TRANSFER_SRC_BIT_KHR)))
+      return false;
+
+   return true;
+}
+
+static bool
+radv_use_tc_compat_cmask_late(struct radv_device *device, struct radv_image *image)
+{
+   if (!(image->planes[0].surface.flags & RADEON_SURF_TC_COMPATIBLE_CMASK))
       return false;
 
    /* If the image doesn't have FMASK, it can't be fetchable. */
@@ -596,7 +609,8 @@ radv_get_surface_flags(struct radv_device *device, struct radv_image *image, uns
    }
 
    if (image->vk.image_type == VK_IMAGE_TYPE_3D) {
-      if ((image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR) && !(image->vk.usage & VK_IMAGE_USAGE_2_STORAGE_BIT_KHR)) {
+      if ((image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR) &&
+          !(image->vk.usage & VK_IMAGE_USAGE_2_STORAGE_BIT_KHR)) {
          /* Select a 2D swizzle mode for 3D CB render targets because it's optimal regardless of the
           * access pattern (CB prefers thin tiling). This optimization isn't applied to images that
           * can be used as storage because it mostly depends on the access pattern, and it's really
@@ -647,19 +661,34 @@ radv_get_surface_flags(struct radv_device *device, struct radv_image *image, uns
        vk_format_get_blocksizebits(image_format) == 128 && vk_format_is_compressed(image_format))
       flags |= RADEON_SURF_NO_RENDER_TARGET;
 
-   if (!radv_use_dcc_for_image_early(device, image, pCreateInfo, image_format, &image->dcc_sign_reinterpret))
+   if (pdev->info.gfx_level < GFX12 &&
+       !radv_use_dcc_for_image_early(device, image, pCreateInfo, image_format, &image->dcc_sign_reinterpret))
       flags |= RADEON_SURF_DISABLE_DCC;
+
+   /* We can't use CMASK for images with multiple layers when CMASK slices are non-contiguous because our
+    * CMASK clears can't handle it.
+    *
+    * CMASK slices are non-contiguous on GFX9 depending on image dimensions, sample count, FMASK tiling,
+    * and chip config. Even for samples == 1, but only on Vega12.
+    *
+    * CMASK slices are also non-contiguous with TC-compatible CMASK on GFX8, but that's fine because
+    * we can still use TC-incompatible CMASK on GFX8, whose slices are always contiguous.
+    */
+   if (pdev->info.gfx_level == GFX9 && image->vk.array_layers > 1 &&
+       image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR)
+      flags |= RADEON_SURF_REQUIRE_CONTIGUOUS_CMASK_SLICES;
 
    if (!radv_use_fmask_for_image(device, image))
       flags |= RADEON_SURF_NO_FMASK;
 
    if (image->vk.create_flags & VK_IMAGE_CREATE_2_SPARSE_RESIDENCY_BIT_KHR) {
-      flags |= RADEON_SURF_PRT | RADEON_SURF_NO_FMASK | RADEON_SURF_NO_HTILE | RADEON_SURF_DISABLE_DCC;
+      flags |= RADEON_SURF_PRT | RADEON_SURF_NO_FMASK | RADEON_SURF_NO_HTILE |
+               (pdev->info.gfx_level < GFX12 ? RADEON_SURF_DISABLE_DCC : 0);
    }
 
    /* Disable DCC for VRS rate images because the hw can't handle compression. */
    if (image->vk.usage & VK_IMAGE_USAGE_2_FRAGMENT_SHADING_RATE_ATTACHMENT_BIT_KHR)
-      flags |= RADEON_SURF_VRS_RATE | RADEON_SURF_DISABLE_DCC;
+      flags |= RADEON_SURF_VRS_RATE | (pdev->info.gfx_level < GFX12 ? RADEON_SURF_DISABLE_DCC : 0);
    if (!(image->vk.usage & (VK_IMAGE_USAGE_2_SAMPLED_BIT_KHR | VK_IMAGE_USAGE_2_STORAGE_BIT_KHR)))
       flags |= RADEON_SURF_NO_TEXTURE;
    if (image->vk.usage & (VK_IMAGE_USAGE_2_VIDEO_DECODE_DPB_BIT_KHR | VK_IMAGE_USAGE_2_VIDEO_ENCODE_DPB_BIT_KHR) &&
@@ -682,8 +711,9 @@ radv_get_surface_flags(struct radv_device *device, struct radv_image *image, uns
       bool is_4k_capable;
 
       if (!vk_format_is_depth_or_stencil(image_format)) {
-         is_4k_capable = !(image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR) &&
-                         (flags & RADEON_SURF_DISABLE_DCC) && (flags & RADEON_SURF_NO_FMASK);
+         is_4k_capable =
+            !(image->vk.usage & VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR) &&
+            (pdev->info.gfx_level >= GFX12 || ((flags & RADEON_SURF_DISABLE_DCC) && (flags & RADEON_SURF_NO_FMASK)));
       } else {
          /* Depth-stencil format without DEPTH_STENCIL usage does not work either. */
          is_4k_capable = false;
@@ -696,7 +726,11 @@ radv_get_surface_flags(struct radv_device *device, struct radv_image *image, uns
    }
 
    if (image->vk.usage & VK_IMAGE_USAGE_2_HOST_TRANSFER_BIT_KHR)
-      flags |= RADEON_SURF_HOST_TRANSFER | RADEON_SURF_NO_FMASK | RADEON_SURF_NO_HTILE | RADEON_SURF_DISABLE_DCC;
+      flags |= RADEON_SURF_HOST_TRANSFER | RADEON_SURF_NO_FMASK | RADEON_SURF_NO_HTILE |
+               (pdev->info.gfx_level < GFX12 ? RADEON_SURF_DISABLE_DCC : 0);
+
+   if (image->vk.samples > 1 && radv_use_tc_compat_cmask_early(device, image))
+      flags |= RADEON_SURF_TC_COMPATIBLE_CMASK;
 
    return flags;
 }
@@ -889,7 +923,8 @@ radv_image_is_l2_coherent(const struct radv_device *device, const struct radv_im
       return !radv_image_is_pipe_misaligned(image, range);
    } else if (pdev->info.gfx_level == GFX9) {
       if (image->vk.samples == 1 &&
-          (image->vk.usage & (VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR)) &&
+          (image->vk.usage &
+           (VK_IMAGE_USAGE_2_COLOR_ATTACHMENT_BIT_KHR | VK_IMAGE_USAGE_2_DEPTH_STENCIL_ATTACHMENT_BIT_KHR)) &&
           !vk_format_has_stencil(image->vk.format)) {
          /* Single-sample color and single-sample depth
           * (not stencil) are coherent with shaders on
@@ -945,8 +980,7 @@ radv_image_use_comp_to_single(const struct radv_device *device, const struct rad
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
 
-   /* comp-to-single is only available for GFX10+. */
-   if (pdev->info.gfx_level < GFX10)
+   if (!pdev->info.has_dcc_constant_encode)
       return false;
 
    /* If the image can't be fast cleared, comp-to-single can't be used. */
@@ -1073,7 +1107,6 @@ radv_image_get_first_mip_pipe_misaligned(const struct radv_device *device, const
                                          uint32_t plane_id)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
-   const int log2_samples = util_logbase2(image->vk.samples);
    uint32_t first_mip = UINT32_MAX;
 
    /* Add a special case for mips in the metadata mip-tail for GFX11. */
@@ -1084,36 +1117,20 @@ radv_image_get_first_mip_pipe_misaligned(const struct radv_device *device, const
    }
 
    VkFormat fmt = radv_image_get_plane_format(pdev, image, plane_id);
-   int log2_bpp = util_logbase2(vk_format_get_blocksize(fmt));
-   int log2_bpp_and_samples;
+   const bool is_depth = vk_format_has_depth(image->vk.format);
+   const bool pipe_misaligned =
+      ac_surface_is_meta_pipe_misaligned(&pdev->info, vk_format_get_blocksize(fmt), image->vk.samples,
+                                         image->vk.array_layers, is_depth);
 
-   if (pdev->info.gfx_level >= GFX10_3) {
-      log2_bpp_and_samples = log2_bpp + log2_samples;
-   } else {
-      if (vk_format_has_depth(image->vk.format) && image->vk.array_layers >= 8) {
-         log2_bpp = 2;
-      }
-
-      log2_bpp_and_samples = MIN2(6, log2_bpp + log2_samples);
-   }
-
-   int num_pipes = G_0098F8_NUM_PIPES(pdev->info.gb_addr_config);
-   int overlap = MAX2(0, log2_bpp_and_samples + num_pipes - 8);
-
-   if (vk_format_has_depth(image->vk.format)) {
-      if (radv_image_is_tc_compat_htile(image) && (pdev->info.tcc_rb_non_coherent || overlap)) {
+   if (is_depth) {
+      if (radv_image_is_tc_compat_htile(image) && pipe_misaligned) {
          first_mip = 0;
       }
    } else {
-      int max_compressed_frags = G_0098F8_MAX_COMPRESSED_FRAGS(pdev->info.gb_addr_config);
-      int log2_samples_frag_diff = MAX2(0, log2_samples - max_compressed_frags);
-      int samples_overlap = MIN2(log2_samples, overlap);
-
       /* TODO: It shouldn't be necessary if the image has DCC but
        * not readable by shader.
        */
-      if ((radv_image_has_dcc(image) || radv_image_is_tc_compat_cmask(image)) &&
-          (pdev->info.tcc_rb_non_coherent || (samples_overlap > log2_samples_frag_diff))) {
+      if ((radv_image_has_dcc(image) || radv_image_is_tc_compat_cmask(image)) && pipe_misaligned) {
          first_mip = 0;
       }
    }
@@ -1191,6 +1208,23 @@ radv_image_create_layout(struct radv_device *device, struct radv_image_create_in
       info.width = vk_format_get_plane_width(image->vk.format, plane, info.width);
       info.height = vk_format_get_plane_height(image->vk.format, plane, info.height);
 
+      /* GFX9 has no NBC view. Pad mipmapped 2D ASTC so the pitch covers block_count << mip (6x6 mip7: 192 >> 7 = 1). */
+      if (pdev->info.gfx_level == GFX9 && plane == 0 && radv_is_format_emulated(pdev, image->vk.format) &&
+          vk_format_description(image->vk.format)->layout == UTIL_FORMAT_LAYOUT_ASTC &&
+          image->vk.image_type == VK_IMAGE_TYPE_2D && image->vk.mip_levels > 1) {
+         const unsigned bw = vk_format_get_blockwidth(image->vk.format);
+         const unsigned bh = vk_format_get_blockheight(image->vk.format);
+         const unsigned blocks_w = DIV_ROUND_UP(info.width, bw);
+         const unsigned blocks_h = DIV_ROUND_UP(info.height, bh);
+         const unsigned pad_blocks_w = util_next_power_of_two(blocks_w);
+         const unsigned pad_blocks_h = util_next_power_of_two(blocks_h);
+         if (pad_blocks_w != blocks_w || pad_blocks_h != blocks_h) {
+            info.width = pad_blocks_w * bw;
+            info.height = pad_blocks_h * bh;
+            image->planes[plane].gfx9_astc_padded = true;
+         }
+      }
+
       if (create_info.no_metadata_planes || (pdev->info.gfx_level < GFX12 && plane_count > 1)) {
          image->planes[plane].surface.flags |= RADEON_SURF_DISABLE_DCC | RADEON_SURF_NO_FMASK | RADEON_SURF_NO_HTILE;
       }
@@ -1261,7 +1295,7 @@ radv_image_create_layout(struct radv_device *device, struct radv_image_create_in
       image->planes[plane].format = radv_image_get_plane_format(pdev, image, plane);
    }
 
-   image->tc_compatible_cmask = radv_image_has_cmask(image) && radv_use_tc_compat_cmask_for_image(device, image);
+   image->tc_compatible_cmask = radv_image_has_cmask(image) && radv_use_tc_compat_cmask_late(device, image);
 
    if (pdev->info.gfx_level >= GFX10 && pdev->info.gfx_level < GFX12)
       radv_image_init_first_mip_pipe_misaligned(device, image);
@@ -1287,7 +1321,7 @@ radv_destroy_image(struct radv_device *device, const VkAllocationCallbacks *pAll
    if ((image->vk.create_flags & VK_IMAGE_CREATE_2_SPARSE_BINDING_BIT_KHR) && image->bindings[0].bo)
       radv_bo_destroy(device, &image->vk.base, image->bindings[0].bo);
 
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
    /* Bind-time ANB memory is allocated with the device allocator because
     * vkBindImageMemory2() has no allocation callbacks. Create-time ANB is
     * allocated with vkCreateImage()'s pAllocator and is freed by
@@ -1449,7 +1483,7 @@ radv_image_create(VkDevice _device, const struct radv_image_create_info *create_
 
    if ((image->vk.external_handle_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID) ||
        vk_image_is_android_native_buffer_alias(&image->vk)) {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
       if (image->vk.external_handle_types & VK_EXTERNAL_MEMORY_HANDLE_TYPE_ANDROID_HARDWARE_BUFFER_BIT_ANDROID)
          image->vk.ahb_format = radv_ahb_format_for_vk_format(image->vk.format);
 #endif
@@ -1690,9 +1724,10 @@ radv_layout_fmask_compression(const struct radv_device *device, const struct rad
       return RADV_FMASK_COMPRESSION_NONE;
 
    /* Don't compress compute transfer dst because image stores ignore FMASK and it needs to be
-    * expanded before.
+    * expanded before. (compute in the sdma+compute gang identifies as TRANSFER)
     */
-   if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && (queue_mask & (1u << RADV_QUEUE_COMPUTE)))
+   if (layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+       (queue_mask & (BITFIELD_BIT(RADV_QUEUE_COMPUTE) | BITFIELD_BIT(RADV_QUEUE_TRANSFER))))
       return RADV_FMASK_COMPRESSION_NONE;
 
    /* Compress images if TC-compat CMASK is enabled. */
@@ -1702,10 +1737,10 @@ radv_layout_fmask_compression(const struct radv_device *device, const struct rad
    switch (layout) {
    case VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL:
    case VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL:
-      /* Don't compress images but no need to expand FMASK. */
+      /* FMASK is in a decompressed state (after FMASK_DECOMPRESS). */
       return RADV_FMASK_COMPRESSION_PARTIAL;
    case VK_IMAGE_LAYOUT_ATTACHMENT_FEEDBACK_LOOP_OPTIMAL_EXT:
-      /* Don't compress images that are in feedback loops. */
+      /* FMASK is in an expanded state (identity mapping). */
       return RADV_FMASK_COMPRESSION_NONE;
    default:
       /* Don't compress images that are concurrent. */
@@ -1724,12 +1759,20 @@ radv_image_queue_family_mask(const struct radv_image *image, enum radv_queue_fam
 }
 
 bool
-radv_image_is_renderable(const struct radv_image *image)
+radv_image_is_renderable(const struct radv_physical_device *pdev, const struct radv_image *image)
 {
    if (vk_format_is_96bit(image->vk.format))
       return false;
 
    if (image->planes[0].surface.flags & RADEON_SURF_NO_RENDER_TARGET)
+      return false;
+
+   /* TODO: investigate Fiji.
+    * GFX copy/clear on sparse images sometimes causes page faults on Fiji.
+    * Note that this issue is not documented or acknowledged by AMD.
+    * Prefer the compute shader code path until this is better investigated.
+    */
+   if (pdev->info.family == CHIP_FIJI && (image->vk.create_flags & VK_IMAGE_CREATE_SPARSE_BINDING_BIT))
       return false;
 
    return true;
@@ -1739,7 +1782,7 @@ VKAPI_ATTR VkResult VKAPI_CALL
 radv_CreateImage(VkDevice _device, const VkImageCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator,
                  VkImage *pImage)
 {
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
    const VkNativeBufferANDROID *gralloc_info = vk_find_struct_const(pCreateInfo->pNext, NATIVE_BUFFER_ANDROID);
 
    if (gralloc_info)
@@ -1825,7 +1868,7 @@ radv_BindImageMemory2(VkDevice _device, uint32_t bindInfoCount, const VkBindImag
       }
 #endif
 
-#if DETECT_OS_ANDROID
+#ifdef VK_USE_PLATFORM_ANDROID_KHR
       if (!mem) {
          VkDeviceMemory memory_h = VK_NULL_HANDLE;
          VkResult result = radv_android_get_wsi_memory(_device, &pBindInfos[i], &memory_h);
@@ -1958,7 +2001,7 @@ radv_GetImageSubresourceLayout2(VkDevice _device, VkImage _image, const VkImageS
       }
    }
 
-   VkSubresourceHostMemcpySizeEXT *host_memcpy_size = vk_find_struct(pLayout->pNext, SUBRESOURCE_HOST_MEMCPY_SIZE_EXT);
+   VkSubresourceHostMemcpySize *host_memcpy_size = vk_find_struct(pLayout->pNext, SUBRESOURCE_HOST_MEMCPY_SIZE);
    if (host_memcpy_size)
       host_memcpy_size->size = pLayout->subresourceLayout.size;
 }
@@ -2000,4 +2043,30 @@ radv_GetImageOpaqueCaptureDataEXT(VkDevice device, uint32_t imageCount, const Vk
    }
 
    return VK_SUCCESS;
+}
+
+void
+radv_image_get_cmask_clear_copy_buffer_range(const struct radv_image *image, unsigned z, unsigned layer_count,
+                                             uint64_t *offset, uint64_t *size)
+{
+   const unsigned slice_size = image->planes[0].surface.cmask_slice_size;
+   const unsigned slices_per_group = image->planes[0].surface.cmask_slices_per_group;
+   const uint64_t cmask_offset_layer0 = image->planes[0].surface.cmask_offset;
+   const unsigned cmask_size = image->planes[0].surface.cmask_size;
+   /* Note: This is needed even if the image has only 1 layer because a CMASK slice can have holes
+    * reserved for other slices.
+    */
+   const bool return_remainder = slices_per_group > 1 && z + layer_count == image->vk.array_layers;
+
+   /* Slices can only be copied in groups of "cmask_slices_per_group" slices except the last group. */
+   const bool ranged_clear_valid = !(z % slices_per_group) && (return_remainder || !(layer_count % slices_per_group));
+   assert(ranged_clear_valid);
+
+   const uint64_t slice_offset = slice_size * z;
+   *offset = cmask_offset_layer0 + slice_offset;
+
+   /* If we clear the last layer, we should clear the whole remainder of CMASK because slice_size is unusable
+    * if the layer count is not aligned to cmask_slices_per_group.
+    */
+   *size = return_remainder ? cmask_size - slice_offset : slice_size * layer_count;
 }

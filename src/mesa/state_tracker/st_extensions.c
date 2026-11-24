@@ -1180,6 +1180,7 @@ void st_init_extensions(struct pipe_screen *screen,
    EXT_CAP(OES_texture_view,                 sampler_view_target);
    EXT_CAP(INTEL_blackhole_render,           frontend_noop);
    EXT_CAP(ARM_shader_framebuffer_fetch_depth_stencil, fbfetch_zs);
+   EXT_CAP(MESA_map_buffer_client_pointer,   map_client_pointer);
    EXT_CAP(MESA_texture_const_bandwidth,     has_const_bw);
 
 #undef EXT_CAP
@@ -1813,8 +1814,6 @@ void st_init_extensions(struct pipe_screen *screen,
 
    extensions->OES_primitive_bounding_box =
       extensions->ARB_ES3_1_compatibility || ESSLVersion >= 310;
-
-   consts->NoPrimitiveBoundingBoxOutput = true;
 
    extensions->ANDROID_extension_pack_es31a =
       consts->Program[MESA_SHADER_FRAGMENT].MaxImageUniforms &&

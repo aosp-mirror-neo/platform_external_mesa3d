@@ -56,6 +56,9 @@ struct ir3_compiler_options {
    bool dual_color_blend_by_location;
 
    uint64_t uche_trap_base;
+
+   /* If draw_id should be lowered in nir */
+   bool lower_draw_id;
 };
 
 struct ir3_compiler {
@@ -95,8 +98,8 @@ struct ir3_compiler {
     */
    bool unminify_coords;
 
-   /* on a3xx do txf_ms w/ isaml and scaled coords: */
-   bool txf_ms_with_isaml;
+   /* on a3xx do txf_ms w/ isam and scaled coords: */
+   bool txf_ms_with_isam;
 
    /* on a4xx, for array textures we need to add 0.5 to the array
     * index coordinate:

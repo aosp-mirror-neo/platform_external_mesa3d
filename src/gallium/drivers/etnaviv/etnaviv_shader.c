@@ -41,6 +41,7 @@
 #include "util/u_cpu_detect.h"
 #include "util/u_math.h"
 #include "util/u_memory.h"
+#include "util/shader_stats.h"
 
 static inline bool
 upload_bo(struct etna_context *ctx, struct etna_bo **bo, const void *data, uint32_t size)
@@ -518,13 +519,16 @@ dump_shader_info(struct etna_shader_variant *v, struct util_debug_callback *debu
    if (!DBG_ENABLED(ETNA_DBG_SHADERDB))
       return;
 
-   util_debug_message(debug, SHADER_INFO,
-         "%s shader: %u instructions, %u temps, "
-         "%u immediates",
-         etna_shader_stage(v->shader),
-         v->code_size / 4,
-         v->num_temps,
-         v->uniforms.count);
+   const struct vivante_stats stats = {
+      .instrs = v->code_size / 4,
+      .temps = v->num_temps,
+      .uniforms_used = v->uniforms.count / 4,
+      .code_size = v->code_size * 4,
+   };
+
+   const shader_info *info = &v->shader->nir->info;
+
+   vivante_stats_util_debug(debug, _mesa_shader_stage_to_abbrev(info->stage), &stats);
 }
 
 bool
@@ -705,6 +709,8 @@ etna_create_shader_state(struct pipe_context *pctx,
    if (ctx->mag_switchover_half)
       gather_tex_lod_samplers(shader->nir, &shader->tex_lod_samplers);
 
+   shader->textures_used = shader->nir->info.textures_used[0];
+
    etna_disk_cache_init_shader_key(screen, shader);
 
    if (initial_variants_synchronous(ctx)) {
@@ -759,8 +765,7 @@ etna_set_max_shader_compiler_threads(struct pipe_screen *pscreen,
 {
    struct etna_screen *screen = etna_screen(pscreen);
 
-   util_queue_adjust_num_threads(&screen->shader_compiler_queue, max_threads,
-                                 false);
+   util_queue_adjust_num_threads(&screen->shader_compiler_queue, max_threads);
 }
 
 static bool

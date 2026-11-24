@@ -104,9 +104,8 @@ This would avoid churn for those who often re-create full Android trees.
 - *Transpilation commit*:
 
   ```sh
-  git clone -b meson2hermetic https://github.com/magma-gpu/mesonbuild.git
   cd main/external/mesa3d
-  python3 ~/meson/meson.py convert android aosp_mesa3d
+  ./meson2hermetic.sh
   ```
 
 - *Push commits*:

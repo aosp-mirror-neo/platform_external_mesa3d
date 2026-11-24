@@ -156,6 +156,9 @@ struct radv_physical_device {
    /* Bitmask of memory types that are protected. */
    uint32_t memory_types_protected;
 
+   /* Bitmask of memory types that are device coherent. */
+   uint32_t memory_types_device_coherent;
+
 #ifndef _WIN32
    int available_nodes;
    drmPciBusInfo bus_info;
@@ -230,8 +233,7 @@ radv_dedicated_sparse_queue_enabled(const struct radv_physical_device *pdev)
 {
    /* Dedicated sparse queue requires VK_QUEUE_SUBMIT_MODE_THREADED, which is incompatible with
     * VK_DEVICE_TIMELINE_MODE_EMULATED. */
-   return pdev->info.has_timeline_syncobj &&
-          radv_sparse_enabled(pdev);
+   return pdev->info.has_timeline_syncobj && radv_sparse_enabled(pdev);
 }
 
 static inline bool
